@@ -1,3 +1,80 @@
+# ==========================
+# PHP / Composer
+# ==========================
 vendor/
-./google_oauth_client.php
-./composer.lock
+composer.lock
+
+# ==========================
+# Môi trường và cấu hình
+# ==========================
+.env
+.env.*
+*.env
+*.local
+*.config
+
+# ==========================
+# Hệ thống tạm và cache
+# ==========================
+*.log
+*.tmp
+*.cache
+*.bak
+*.swp
+*.swo
+*.pid
+*.seed
+*.old
+
+# ==========================
+# Ảnh, file tạm và upload người dùng
+# ==========================
+uploads/
+storage/
+public/uploads/
+tmp/
+cache/
+session/
+
+# ==========================
+# IDE & Editor (VSCode, PhpStorm, Notepad++, …)
+# ==========================
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+
+# ==========================
+# OS-specific
+# ==========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==========================
+# Node / Frontend (nếu có Tailwind, npm, React FE)
+# ==========================
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+dist/
+build/
+.next/
+.cache/
+
+# ==========================
+# Backup hoặc output tạm của XAMPP
+# ==========================
+xamppfiles/
+error_log
+logs/
+sessions/
+
+# ==========================
+# File riêng không nên public
+# ==========================
+database/config.php
+app/Pages/components/auth_check.php
+app/Pages/components/config.php
+google_oauth_client.php

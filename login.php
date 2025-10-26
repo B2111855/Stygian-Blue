@@ -1,20 +1,22 @@
 <?php
 session_start();
 
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+require_once 'vendor/autoload.php'; // không dùng __DIR__
 
-// Kết nối DB
-include './database/config.php';
+use Dotenv\Dotenv;
 
-// Nếu bạn có file khởi tạo Google Client (Google_Client $client, redirect URI, scopes,...)
-if (file_exists('./google_oauth_client.php')) {
-    include './google_oauth_client.php'; // file này nên tạo biến $client
-}
+// 1. NẠP .ENV
+$dotenv = Dotenv::createImmutable('.'); // dấu chấm = thư mục hiện tại
+$dotenv->load();
 
-// Tạo link đăng nhập Google (nếu $client hợp lệ). Nếu chưa cấu hình OAuth thì để "#"
-$login_url = (isset($client) && $client) ? $client->createAuthUrl() : '#';
+// 2. KẾT NỐI DB
+include 'database/config.php';
+
+// 3. GỌI FILE TẠO GOOGLE CLIENT
+include 'google_oauth_client.php';
+
+// 4. TẠO LINK LOGIN GOOGLE
+$login_url = $client->createAuthUrl();
 
 $error = "";
 

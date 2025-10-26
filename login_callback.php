@@ -5,13 +5,18 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
-// Kết nối DB
-include './database/config.php';
+// 0. Autoload + Dotenv (giống login.php, không dùng __DIR__)
+require_once 'vendor/autoload.php';
 
-// Google client
-include './google_oauth_client.php'; // file này phải tạo $client cấu hình OAuth
+use Dotenv\Dotenv;
 
-// Helper: giống login.php
+$dotenv = Dotenv::createImmutable('.'); // nạp biến môi trường từ .env ở thư mục hiện tại
+$dotenv->load();
+
+// 1. Kết nối DB
+include 'database/config.php';
+
+// 2. Hàm helper đăng nhập và redirect (giữ nguyên của bạn)
 function finishLoginAndRedirect($conn, $userRow) {
     // Lấy thông tin nhân viên (LOAI_NV, ID_CN) nếu có
     $stmt2 = $conn->prepare("
@@ -30,6 +35,7 @@ function finishLoginAndRedirect($conn, $userRow) {
     $_SESSION['ID_QUYEN']  = $userRow['ID_QUYEN'];
     $_SESSION['branch_id'] = $nvRow ? intval($nvRow['ID_CN']) : null;
 
+    // Xác định role
     if ($userRow['ID_QUYEN'] == '1') {
         $_SESSION['role'] = 'admin';
     } elseif ($userRow['ID_QUYEN'] == '2' && $nvRow) {
@@ -42,7 +48,7 @@ function finishLoginAndRedirect($conn, $userRow) {
         $_SESSION['role'] = 'customer';
     }
 
-    // Redirect theo role
+    // Điều hướng dựa trên role
     if ($_SESSION['role'] === 'admin') {
         header("Location: /StygianBlue/app/admin/admin_dashboard.php");
         exit;
@@ -70,36 +76,52 @@ function finishLoginAndRedirect($conn, $userRow) {
     exit;
 }
 
-// ===================
-// 1. Nhận code từ Google
-// ===================
+// 3. Kiểm tra code từ Google
 if (!isset($_GET['code'])) {
-    // Không có code nghĩa là user vào thẳng file này hoặc Google từ chối
     header("Location: /StygianBlue/login.php?err=google_denied");
     exit;
 }
 
-// 2. Đổi code -> access token
+// 4. Tạo Google Client trực tiếp ở đây (không rely google_oauth_client.php)
+$googleId       = $_ENV['GOOGLE_CLIENT_ID']     ?? getenv('GOOGLE_CLIENT_ID')     ?? '';
+$googleSecret   = $_ENV['GOOGLE_CLIENT_SECRET'] ?? getenv('GOOGLE_CLIENT_SECRET') ?? '';
+$googleRedirect = $_ENV['GOOGLE_REDIRECT_URI']  ?? getenv('GOOGLE_REDIRECT_URI')  ?? '';
+
+if ($googleId === '' || $googleSecret === '' || $googleRedirect === '') {
+    die('Google OAuth env vars are missing in callback. Kiểm tra .env.');
+}
+
+$client = new Google_Client();
+$client->setClientId($googleId);
+$client->setClientSecret($googleSecret);
+$client->setRedirectUri($googleRedirect);
+$client->addScope("email");
+$client->addScope("profile");
+$client->setAccessType('offline');
+$client->setPrompt('select_account consent');
+
+// 5. Đổi code -> access token
 $token = $client->fetchAccessTokenWithAuthCode($_GET['code']);
 if (isset($token['error'])) {
     header("Location: /StygianBlue/login.php?err=google_token");
     exit;
 }
 
-// Gắn token vào client để gọi API userinfo
+// 6. Gắn token lại để gọi API userinfo
 $client->setAccessToken($token['access_token']);
 
-// 3. Lấy thông tin user từ Google
+// 7. Lấy thông tin người dùng Google
 $oauth2 = new Google_Service_Oauth2($client);
 $googleUser = $oauth2->userinfo->get();
 
+// 8. Lấy email (bắt buộc để map vào tài khoản hệ thống)
 $email = $googleUser->email ?? null;
 if (!$email) {
     header("Location: /StygianBlue/login.php?err=no_email");
     exit;
 }
 
-// 4. Tìm user trong DB theo email
+// 9. Tìm user tương ứng trong DB
 $stmt = $conn->prepare("
     SELECT ID_TK, ID_QUYEN, EMAIL
     FROM tai_khoan
@@ -111,14 +133,12 @@ $stmt->execute();
 $res = $stmt->get_result();
 
 if (!$res || $res->num_rows === 0) {
-    // Ở đây bạn chọn policy:
-    //  - Nếu muốn auto-register Google user => thêm insert.
-    //  - Hiện tại, mình từ chối nếu email chưa có trong hệ thống.
+    // Tùy chính sách: auto-register hay chặn
     header("Location: /StygianBlue/login.php?err=not_registered");
     exit;
 }
 
 $userRow = $res->fetch_assoc();
 
-// 5. Hoàn tất login giống local
+// 10. Đăng nhập và điều hướng như tài khoản nội bộ
 finishLoginAndRedirect($conn, $userRow);
