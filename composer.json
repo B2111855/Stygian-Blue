@@ -1,0 +1,8 @@
+{
+    "require": {
+      "google/apiclient": "2.13",
+        "phpmailer/phpmailer": "^6.9",
+        "guzzlehttp/guzzle": "7.2",
+        "phpoffice/phpspreadsheet": "1.29"
+    }
+  }
