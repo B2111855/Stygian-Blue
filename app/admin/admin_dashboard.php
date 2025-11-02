@@ -45,6 +45,7 @@ $pageTitle = 'Admin Dashboard';
             'branches'          => 'manage_branches.php',
             'assignments'       => 'manage_assignments.php',
             'equipment'         => 'manage_equipment.php',
+            'costumes'          => 'manage_costumes.php',
             'expenses'          => 'manager_expenses.php',
             'feedback'          => 'manage_feedback.php',
             'selfInfo'          => 'manage_selfInfo.php',

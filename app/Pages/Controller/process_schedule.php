@@ -90,7 +90,7 @@ if (!empty($errors)) {
     $_SESSION['message'] = implode("<br>", $errors);
     $_SESSION['message_type'] = "error";
     // Bạn có thể đổi 'lienhe.php' thành trang form đặt lịch thực tế
-    header("Location: ../lienhe.php");
+    header("Location: ../Views/lienhe.php");
     exit();
 }
 

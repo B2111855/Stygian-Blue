@@ -98,11 +98,12 @@
                     <?php if ($menuCombos && $menuCombos->num_rows): ?>
                       <?php $menuCombos->data_seek(0); while ($pkg = $menuCombos->fetch_assoc()): ?>
                         <li role="none">
-                          <a role="menuitem" href="../views/goi_chitiet.php?id=<?= (int)$pkg['ID_GOI'] ?>"
-                             class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100">
-                            <i class="fas fa-gift text-gray-500"></i>
-                            <span class="truncate"><?= htmlspecialchars($pkg['TEN_GOI']) ?></span>
-                          </a>
+                          <a role="menuitem" href="../views/goi_chitiet.php?id_goi=<?= (int)$pkg['ID_GOI'] ?>"
+   class="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100">
+    <i class="fas fa-gift text-gray-500"></i>
+    <span class="truncate"><?= htmlspecialchars($pkg['TEN_GOI']) ?></span>
+</a>
+
                         </li>
                       <?php endwhile; ?>
                     <?php else: ?>
@@ -124,7 +125,7 @@
           </div>
 
           <a href="../views/albums.php" class="hover:text-indigo-700 transition">Phòng Trưng Bày</a>
-          <a href="../views/thietbi.php" class="hover:text-indigo-700 transition">Trang Phục & Thiết Bị</a>
+          <a href="../views/thietbi.php" class="hover:text-indigo-700 transition">Thuê trang phục</a>
           <a href="../views/gioithieu.php" class="hover:text-indigo-700 transition">Giới Thiệu</a>
           <a href="../views/lienhe.php" class="hover:text-indigo-700 transition">Liên Hệ Đặt Lịch</a>
         </nav>
@@ -189,7 +190,12 @@
             <ul class="space-y-1">
               <?php $menuCombos2 = $conn->query("SELECT ID_GOI, TEN_GOI FROM goi_dich_vu WHERE TRANG_THAI='ban' AND (HIEU_LUC_TU IS NULL OR HIEU_LUC_TU<=NOW()) AND (HIEU_LUC_DEN IS NULL OR HIEU_LUC_DEN>=NOW()) ORDER BY TEN_GOI ASC LIMIT 8");
               if ($menuCombos2 && $menuCombos2->num_rows): while ($pkg = $menuCombos2->fetch_assoc()): ?>
-                <li><a class="block px-3 py-1 rounded hover:bg-white" href="../views/goi_chitiet.php?id=<?= (int)$pkg['ID_GOI'] ?>"><?= htmlspecialchars($pkg['TEN_GOI']) ?></a></li>
+<li>
+  <a class="block px-3 py-1 rounded hover:bg-white"
+     href="../views/goi_chitiet.php?id_goi=<?= (int)$pkg['ID_GOI'] ?>">
+     <?= htmlspecialchars($pkg['TEN_GOI']) ?>
+  </a>
+</li>
               <?php endwhile; else: ?>
                 <li class="px-3 py-1 text-gray-500 italic">Chưa có gói</li>
               <?php endif; ?>
@@ -202,7 +208,7 @@
         </details>
 
         <a href="../views/albums.php" class="px-4 py-2 text-gray-700 hover:text-indigo-700 transition">Phòng Trưng Bày</a>
-        <a href="../views/thietbi.php" class="px-4 py-2 text-gray-700 hover:text-indigo-700 transition">Trang Phục & Thiết Bị</a>
+        <a href="../views/thietbi.php" class="px-4 py-2 text-gray-700 hover:text-indigo-700 transition">Thuê trang phục</a>
         <a href="../views/gioithieu.php" class="px-4 py-2 text-gray-700 hover:text-indigo-700 transition">Giới Thiệu</a>
         <a href="../views/lienhe.php" class="px-4 py-2 text-gray-700 hover:text-indigo-700 transition">Liên Hệ</a>
 

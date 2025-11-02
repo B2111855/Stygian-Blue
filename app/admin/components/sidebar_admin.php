@@ -19,6 +19,7 @@
       <li><a href="?page=services" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-concierge-bell"></i>Quản lý dịch vụ</a></li>
       <li><a href="?page=branches" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-code-branch"></i>Quản lý chi nhánh</a></li>
       <li><a href="?page=equipment" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-cogs"></i>Quản lý thiết bị</a></li>
+      <li><a href="?page=costumes" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-tshirt"></i>Quản lý trang phục</a></li>
       <li><a href="?page=feedback" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-comment-dots"></i>Phản hồi của khách</a></li>
       <li><a href="?page=selfInfo" class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-user-circle"></i>Thông tin cá nhân</a></li>
       <li>

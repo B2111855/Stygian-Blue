@@ -12,11 +12,40 @@ $dotenv->load();
 // 2. KẾT NỐI DB
 include 'database/config.php';
 
-// 3. GỌI FILE TẠO GOOGLE CLIENT
-include 'google_oauth_client.php';
+// 3. TỰ TẠO GOOGLE CLIENT
+$googleId       = $_ENV['GOOGLE_CLIENT_ID']     ?? getenv('GOOGLE_CLIENT_ID')     ?? '';
+$googleSecret   = $_ENV['GOOGLE_CLIENT_SECRET'] ?? getenv('GOOGLE_CLIENT_SECRET') ?? '';
+$googleRedirect = $_ENV['GOOGLE_REDIRECT_URI']  ?? getenv('GOOGLE_REDIRECT_URI')  ?? '';
+
+$googleConfigError = '';
+$client = null;
+
+if ($googleId === '' || $googleSecret === '' || $googleRedirect === '') {
+    $googleConfigError = 'Chưa cấu hình đầy đủ Google OAuth. Vui lòng kiểm tra .env';
+} else {
+    $client = new Google_Client();
+    $client->setClientId($googleId);
+    $client->setClientSecret($googleSecret);
+    $client->setRedirectUri($googleRedirect);
+    $client->addScope('email');
+    $client->addScope('profile');
+    $client->setAccessType('offline');
+    $client->setPrompt('select_account consent');
+}
 
 // 4. TẠO LINK LOGIN GOOGLE
 $login_url = $client->createAuthUrl();
+$login_url = $client ? $client->createAuthUrl() : '#';
+$googleButtonClasses = 'w-full py-2 flex items-center justify-center gap-2 '
+    . 'bg-white hover:bg-gray-50 '
+    . 'text-gray-700 font-medium '
+    . 'rounded-lg border border-gray-300 shadow-sm transition';
+
+if (!$client) {
+    $googleButtonClasses = 'w-full py-2 flex items-center justify-center gap-2 '
+        . 'bg-white text-gray-400 font-medium '
+        . 'rounded-lg border border-gray-300 opacity-60 cursor-not-allowed';
+}
 
 $error = "";
 

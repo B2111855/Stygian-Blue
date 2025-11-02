@@ -2,7 +2,7 @@
 <?php include '../components/auth_state_boot.php'; ?>
 <?php include '../components/auth_check.php'; ?>
 <?php include '../components/header.php'; ?>
-
+<?php include '../components/thongbao.php'; ?>
 <body>
     <div id="app">
         <div class="page-layout">
