@@ -4,7 +4,7 @@ require_once '../../middlewares/require_admin.php';
 include './components/head.php';
 
 
-$pageTitle = 'Admin Dashboard';
+$pageTitle = 'Quản trị hệ thống';
 ?>
 <!DOCTYPE html>
 <html lang="vi">

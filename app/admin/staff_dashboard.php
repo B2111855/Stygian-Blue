@@ -4,7 +4,7 @@ require_once '..\..\middlewares\require_staff_specialist.php'
 <!DOCTYPE html>
 <html lang="vi">
 <?php 
-  $pageTitle = 'Staff Dashboard'; 
+  $pageTitle = 'Nhân viên chuyên trách'; 
   include './components/head.php'; // dùng chung head của admin
 ?>
 <body class="bg-gray-100 font-sans text-gray-800">

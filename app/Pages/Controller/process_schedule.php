@@ -7,7 +7,7 @@ include '../../../database/config.php';
  *
  * - Giữ nguyên kiểu insert vào lich_hen / lich_hen_thiet_bi giống file cũ (để chắc chắn chạy)
  * - Bổ sung validate thời gian (không quá khứ, không quá 6 tháng)
- * - Bổ sung transaction cho tính toàn vẹn
+* - Bổ sung transaction cho tính toàn vẹn
  * - Bổ sung rollback + error_log thay vì die()
  * - Bổ sung SO_LUONG = 1 khi lưu thiết bị (ổn hơn cho tương lai)
  * - Đồng bộ khách hàng từ tai_khoan -> khach_hang (giữ nguyên logic bạn đang dùng)
@@ -32,13 +32,24 @@ include '../../../database/config.php';
 // =====================================================
 // 1. LẤY INPUT TỪ FORM
 // =====================================================
-$branchId   = $_POST['branch_id']    ?? null;
-$ngayHen    = $_POST['ngayHen']      ?? null; // yyyy-mm-dd
-$gioHen     = $_POST['gioHen']       ?? null; // HH:mm hoặc HH:mm:ss
-$address    = $_POST['address']      ?? '';
-$serviceId  = $_POST['service_id']   ?? null;
-$userId     = $_SESSION['ID_TK']     ?? null;
+$branchId      = $_POST['branch_id']    ?? null;
+$ngayHen       = $_POST['ngayHen']      ?? null; // yyyy-mm-dd
+$gioHen        = $_POST['gioHen']       ?? null; // HH:mm hoặc HH:mm:ss
+$address       = $_POST['address']      ?? '';
+$serviceId     = $_POST['service_id']   ?? null;
+$packageId     = $_POST['package_id']   ?? null;
+$bookingType   = $_POST['booking_type'] ?? 'service';
+$userId        = $_SESSION['ID_TK']     ?? null;
 $selectedDevices = isset($_POST['thiet_bi_id']) ? $_POST['thiet_bi_id'] : [];
+
+if (!$userId && isset($_SESSION['user']['ID_TK'])) {
+    $userId = $_SESSION['user']['ID_TK'];
+}
+
+$bookingType = $bookingType === 'package' ? 'package' : 'service';
+$branchId    = $branchId !== null ? (int)$branchId : null;
+$serviceId   = ctype_digit((string)$serviceId) ? (int)$serviceId : null;
+$packageId   = ctype_digit((string)$packageId) ? (int)$packageId : null;
 
 // Chuẩn hoá giờ HH:mm -> HH:mm:00
 if ($gioHen && preg_match('/^\d{2}:\d{2}$/', $gioHen)) {
@@ -55,9 +66,13 @@ $errors = [];
 
 if (!$userId)     $errors[] = "Không xác định được tài khoản người dùng.";
 if (!$branchId)   $errors[] = "Thiếu chi nhánh.";
-if (!$serviceId)  $errors[] = "Thiếu dịch vụ.";
 if (!$startTime)  $errors[] = "Thiếu thời gian hẹn.";
-if (trim($address) === '') $errors[] = "Vui lòng nhập địa điểm.";
+if ($bookingType === 'service' && !$serviceId) {
+    $errors[] = "Thiếu dịch vụ.";
+}
+if ($bookingType === 'package' && !$packageId) {
+    $errors[] = "Thiếu gói dịch vụ.";
+}
 
 $currentDateTime  = new DateTime('now');
 $selectedDateTime = $startTime
@@ -95,6 +110,33 @@ if (!empty($errors)) {
 }
 
 
+if ($bookingType === 'package' && $packageId) {
+    $stmtPackage = $conn->prepare(
+        "SELECT ID_DV FROM goi_dich_vu_chi_tiet WHERE ID_GOI = ? ORDER BY COALESCE(THU_TU,1), ID_DV LIMIT 1"
+    );
+    if ($stmtPackage === false) {
+        $_SESSION['message'] = "Không xác định được dịch vụ đại diện cho gói đã chọn.";
+        $_SESSION['message_type'] = "error";
+        header("Location: ../Views/lienhe.php");
+        exit();
+    }
+    $stmtPackage->bind_param('i', $packageId);
+    $stmtPackage->execute();
+    $stmtPackage->bind_result($serviceFromPackage);
+    if ($stmtPackage->fetch()) {
+        $serviceId = (int)$serviceFromPackage;
+    }
+    $stmtPackage->close();
+
+    if (!$serviceId) {
+        $_SESSION['message'] = "Gói dịch vụ chưa được cấu hình chi tiết. Vui lòng chọn gói khác.";
+        $_SESSION['message_type'] = "error";
+        header("Location: ../Views/lienhe.php");
+        exit();
+    }
+}
+
+
 // =====================================================
 // 3. TRANSACTION: tạo lịch hẹn + thiết bị
 // =====================================================
@@ -103,12 +145,21 @@ $conn->begin_transaction();
 try {
 
     // 3.1 Thêm lịch hẹn
-    $sqlInsertLich = "
-        INSERT INTO lich_hen 
-            (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, TRANGTHAI, ID_CHINHANH)
-        VALUES (?, ?, ?, ?, 'Đang chờ', ?)
-    ";
-    $stmt = $conn->prepare($sqlInsertLich);
+    if ($bookingType === 'package') {
+        $sqlInsertLich = "
+            INSERT INTO lich_hen
+                (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
+            VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?)
+        ";
+        $stmt = $conn->prepare($sqlInsertLich);
+    } else {
+        $sqlInsertLich = "
+            INSERT INTO lich_hen
+                (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
+            VALUES (?, ?, ?, ?, NULL, 'Đang chờ', ?)
+        ";
+        $stmt = $conn->prepare($sqlInsertLich);
+    }
     if ($stmt === false) {
         throw new Exception("Lỗi chuẩn bị truy vấn lịch hẹn: " . $conn->error);
     }
@@ -116,7 +167,11 @@ try {
     // Ép thời gian về định dạng MySQL chuẩn Y-m-d H:i:s
     $startTimeMySQL = $selectedDateTime->format('Y-m-d H:i:s');
 
-    $stmt->bind_param("sssii", $userId, $startTimeMySQL, $address, $serviceId, $branchId);
+    if ($bookingType === 'package') {
+        $stmt->bind_param("sssiii", $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId);
+    } else {
+        $stmt->bind_param("sssii", $userId, $startTimeMySQL, $address, $serviceId, $branchId);
+    }
 
     if (!$stmt->execute()) {
         throw new Exception("Lỗi khi đặt lịch: " . $stmt->error);

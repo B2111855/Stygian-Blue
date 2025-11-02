@@ -5,7 +5,7 @@ require_once '..\..\middlewares\require_staff_manager.php';
 <!DOCTYPE html>
 <html lang="vi">
 <?php 
-  $pageTitle = 'Manager Dashboard';
+  $pageTitle = 'Quản lý chi nhánh';
   include './components/head.php'; 
 ?>
 <body class="bg-gray-100 font-sans text-gray-800">

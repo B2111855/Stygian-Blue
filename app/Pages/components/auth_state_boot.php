@@ -10,18 +10,28 @@ if (session_status() === PHP_SESSION_NONE) {
 // 2. Kết nối DB (nếu trang trước đó chưa include)
 require_once '../../../database/config.php';
 
-// 3. Xác định trạng thái đăng nhập
-$isLoggedIn = !empty($_SESSION['ID_TK']); // bạn đang dùng ID_TK trong session
-$redirect   = urlencode($_SERVER['REQUEST_URI'] ?? '/');
+if (!function_exists('sbSyncLoginState')) {
+    function sbSyncLoginState(): bool
+    {
+        $loggedIn = !empty($_SESSION['ID_TK']);
 
-// 4. Đồng bộ cookie để JS có thể biết trạng thái login "thời điểm hiện tại"
-if ($isLoggedIn) {
-    setcookie('sb_logged_in', '1', 0, '/');
-} else {
-    setcookie('sb_logged_in', '', time() - 3600, '/');
+        if (!headers_sent()) {
+            if ($loggedIn) {
+                setcookie('sb_logged_in', '1', 0, '/');
+            } else {
+                setcookie('sb_logged_in', '', time() - 3600, '/');
+            }
+        }
+
+        return $loggedIn;
+    }
 }
 
-// 5. Dữ liệu header cần (trước đây header tự làm -> bây giờ boot làm, header chỉ render)
+// 3. Xác định trạng thái đăng nhập
+$isLoggedIn = sbSyncLoginState();
+$redirect   = urlencode($_SERVER['REQUEST_URI'] ?? '/');
+
+// 4. Dữ liệu header cần (trước đây header tự làm -> bây giờ boot làm, header chỉ render)
 $unpaidCount = 0;
 if ($isLoggedIn) {
     $userId = mysqli_real_escape_string($conn, $_SESSION['ID_TK']);

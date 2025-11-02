@@ -2,7 +2,7 @@
 <aside class="w-64 bg-gradient-to-b from-gray-900 to-indigo-900 text-white flex flex-col shadow-2xl">
   <div class="p-6 flex items-center gap-3 border-b border-gray-700">
     <i class="fas fa-user-tie text-3xl"></i>
-    <h1 class="text-2xl font-extrabold">Staff Panel</h1>
+    <h1 class="text-2xl font-extrabold">Nhân viên</h1>
   </div>
   <nav class="flex-1">
     <ul class="space-y-1 p-4 text-sm font-medium">

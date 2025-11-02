@@ -12,22 +12,34 @@
 //  ✅ Không phụ thuộc vào Tailwind build
 // ========================================================
 
-$isLoggedIn = isset($_SESSION['user']);
-$redirect   = urlencode($_SERVER['REQUEST_URI'] ?? '/');
-
-// Đặt cookie đánh dấu trạng thái đăng nhập để JS đọc được
-if ($isLoggedIn) {
-    // Phiên hiện tại đã đăng nhập → đặt cookie tạm (sẽ mất khi đóng trình duyệt)
-    setcookie('sb_logged_in', '1', 0, '/');
-} else {
-    // Chưa đăng nhập → xóa cookie nếu còn sót
-    setcookie('sb_logged_in', '', time() - 3600, '/');
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
+
+if (!function_exists('sbSyncLoginState')) {
+    function sbSyncLoginState(): bool
+    {
+        $loggedIn = !empty($_SESSION['ID_TK']);
+
+        if (!headers_sent()) {
+            if ($loggedIn) {
+                setcookie('sb_logged_in', '1', 0, '/');
+            } else {
+                setcookie('sb_logged_in', '', time() - 3600, '/');
+            }
+        }
+
+        return $loggedIn;
+    }
+}
+
+$isLoggedIn = sbSyncLoginState();
+$redirect   = urlencode($_SERVER['REQUEST_URI'] ?? '/');
 
 ?>
 
 <script>
-window.__SB_IS_LOGGED_IN__ = <?= $isLoggedIn ? 'true' : 'false' ?>;
+window.__SB_IS_LOGGED_IN__ = <?= json_encode($isLoggedIn); ?>;
 </script>
 
 <?php if (!$isLoggedIn): ?>
