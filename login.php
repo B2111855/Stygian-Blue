@@ -1,7 +1,11 @@
++35
+-66
+
 <?php
 session_start();
 
-require_once 'vendor/autoload.php'; // không dùng __DIR__
+require_once './vendor/autoload.php'; 
+require_once './app/helpers/auth_background.php';
 
 use Dotenv\Dotenv;
 
@@ -34,7 +38,6 @@ if ($googleId === '' || $googleSecret === '' || $googleRedirect === '') {
 }
 
 // 4. TẠO LINK LOGIN GOOGLE
-$login_url = $client->createAuthUrl();
 $login_url = $client ? $client->createAuthUrl() : '#';
 $googleButtonClasses = 'w-full py-2 flex items-center justify-center gap-2 '
     . 'bg-white hover:bg-gray-50 '
@@ -48,6 +51,13 @@ if (!$client) {
 }
 
 $error = "";
+
+// Cấu hình nền cho trang đăng nhập (cập nhật đường dẫn/overlay nếu cần)
+$authBodyAttributes = buildAuthBodyAttributes([
+    'image'   => '',
+    'overlay' => '',
+    'blur'    => '',
+]);
 
 // Ghi nhớ nơi user đang cố truy cập trước khi bị yêu cầu login
 if (isset($_GET['redirect'])) {
@@ -161,51 +171,31 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 <head>
     <meta charset="UTF-8" />
     <title>Đăng nhập - Stygian Blue Studio</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
-    <style>
-        body {
-            background: linear-gradient(to bottom right, #e6f0ff, #cfd9e8);
-            font-family: 'Segoe UI', sans-serif;
-        }
-        .glass {
-            backdrop-filter: blur(12px);
-            background-color: rgba(255,255,255,0.7);
-            box-shadow: 0 8px 24px rgba(0,0,0,0.1);
-        }
-        .input-style {
-            background-color: #f4f6f9;
-        }
-        .input-style:focus {
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(59,130,246,0.3);
-        }
-    </style>
+    <link rel="stylesheet" href="public/css/auth.css">
 </head>
 
-<body class="flex items-center justify-center min-h-screen px-4">
-    <div class="w-full max-w-md glass p-8 rounded-xl border border-blue-100">
-        <!-- Logo -->
-        <div class="flex justify-center mb-6">
+<body <?= $authBodyAttributes ?>>
+    <!-- Để hiển thị ảnh nền, thiết lập giá trị cho --auth-background-image trong thuộc tính style của thẻ body -->
+    <div class="auth-card">
+        <div class="auth-card__logo">
             <a href="./app/Pages/Views/home.php" title="Về trang chủ">
                 <img
                     src="public/images/logo5.png"
                     alt="Logo"
-                    class="h-20 w-20 rounded-lg shadow-md hover:scale-105 transition-transform"
                 />
             </a>
         </div>
 
-        <h2 class="text-2xl font-bold text-center text-blue-800 mb-6">Đăng nhập</h2>
+        <h2 class="auth-heading">Đăng nhập</h2>
 
         <!-- FORM ĐĂNG NHẬP TÀI KHOẢN NỘI BỘ -->
-        <form method="POST" action="" class="space-y-4">
+        <form method="POST" action="" class="auth-form">
             <input
                 type="text"
                 name="username"
                 placeholder="Mã người dùng"
                 required
-                class="w-full px-4 py-2 rounded-lg border input-style focus:outline-none"
+                class="auth-form__field"
             />
 
             <input
@@ -213,67 +203,49 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 name="password"
                 placeholder="Mật khẩu"
                 required
-                class="w-full px-4 py-2 rounded-lg border input-style focus:outline-none"
+                class="auth-form__field"
             />
 
             <button
                 type="submit"
-                class="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition"
+                class="auth-form__button"
             >
                 Đăng nhập
             </button>
 
             <?php if (!empty($error)): ?>
-                <div class="text-sm text-red-600 font-medium mt-2">
+                <div class="auth-form__message auth-form__message--error">
                     <?= htmlspecialchars($error) ?>
                 </div>
             <?php endif; ?>
 
-            <a
-                href="forgot_password.php"
-                class="text-sm text-blue-700 hover:underline block mt-3 text-center"
-            >
-                Quên mật khẩu hoặc mã người dùng?
-            </a>
+            <div class="auth-helper">
+                <a href="forgot_password.php" class="auth-helper__link">Quên mật khẩu hoặc mã người dùng?</a>
+            </div>
         </form>
 
-        <!-- NGĂN CÁCH -->
-        <div class="relative my-6">
-            <div class="w-full h-px bg-gray-300"></div>
-            <div class="absolute inset-0 flex justify-center">
-                <span class="bg-white/70 text-gray-500 text-xs px-3 py-0.5 rounded-full border border-gray-300 shadow-sm">
-                    hoặc
-                </span>
-            </div>
+        <div class="auth-divider">
+            <span class="auth-divider__text">hoặc</span>
         </div>
 
-        <!-- NÚT GOOGLE -->
-        <div class="space-y-3">
+        <div>
             <a
                 href="<?= htmlspecialchars($login_url) ?>"
-                class="block w-full"
+                class="auth-social-button <?= $client ? '' : 'is-disabled' ?>"
+                role="button"
+                <?= $client ? '' : 'aria-disabled="true" tabindex="-1"' ?>
             >
-                <button
-                    type="button"
-                    class="w-full py-2 flex items-center justify-center gap-2
-                           bg-white hover:bg-gray-50
-                           text-gray-700 font-medium
-                           rounded-lg border border-gray-300 shadow-sm transition"
-                >
-                    <img
-                        src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-                        alt=""
-                        class="h-5 w-5"
-                    />
-                    <span>Đăng nhập bằng Google</span>
-                </button>
+                <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt="Google"
+                />
+                <span>Đăng nhập bằng Google</span>
             </a>
         </div>
 
-        <!-- LINK ĐĂNG KÝ -->
-        <div class="mt-8 text-center text-sm text-gray-600">
+        <div class="auth-footer">
             Chưa có tài khoản?
-            <a href="register.php" class="text-blue-700 hover:underline font-semibold">Đăng ký</a>
+            <a href="register.php" class="auth-footer__link">Đăng ký</a>
         </div>
     </div>
 </body>

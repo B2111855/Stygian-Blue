@@ -1,5 +1,7 @@
 <?php
 session_start();
+require_once __DIR__ . '/app/helpers/auth_background.php';
+
 $message = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -12,6 +14,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $message = "Mã xác nhận không đúng.";
     }
 }
+// Cấu hình nền cho trang xác nhận mã (cập nhật đường dẫn/overlay nếu cần)
+$authBodyAttributes = buildAuthBodyAttributes([
+    'image'   => '',
+    'overlay' => '',
+    'blur'    => '',
+]);
 ?>
 
 <!-- ... phần xử lý PHP giữ nguyên ... -->
@@ -21,39 +29,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
   <meta charset="UTF-8">
   <title>Xác nhận mã</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="public/css/auth.css">
 </head>
-<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-100 via-blue-100 to-green-100">
-  <div class="bg-white/80 backdrop-blur-lg shadow-xl rounded-xl p-8 w-full max-w-md border border-indigo-200 relative">
-
-    <!-- Logo -->
-    <div class="flex justify-center mb-6">
-      <img src="public/images/logo5.png" alt="Logo Stygian Blue" class="w-16 h-16 rounded-lg shadow-md">
+<body <?= $authBodyAttributes ?>>
+  <!-- Để hiển thị ảnh nền, thiết lập giá trị cho --auth-background-image trong thuộc tính style của thẻ body -->
+  <div class="auth-card">
+    <div class="auth-card__logo">
+      <a href="./app/Pages/Views/home.php" title="Về trang chủ">
+        <img src="public/images/logo5.png" alt="Logo Stygian Blue">
+      </a>
     </div>
 
-    <h2 class="text-2xl font-bold text-center text-green-700 mb-4">🔑 Nhập mã xác nhận</h2>
+    <h2 class="auth-heading">Nhập mã xác nhận</h2>
 
-    <form method="POST" class="space-y-4">
-      <input type="text" name="code" placeholder="Nhập mã xác nhận"
-             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" required>
+    <form method="POST" class="auth-form">
+      <input type="text" name="code" placeholder="Nhập mã xác nhận" class="auth-form__field" required>
 
-      <button type="submit"
-              class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg transition font-semibold shadow">
+      <button type="submit" class="auth-form__button">
         Xác nhận
       </button>
     </form>
 
     <?php if (!empty($message)): ?>
-      <p class="mt-4 text-red-600 text-center font-medium"><?= htmlspecialchars($message) ?></p>
+      <p class="auth-form__message auth-form__message--error"><?= htmlspecialchars($message) ?></p>
     <?php endif; ?>
 
-    <!-- Quay lại -->
-    <div class="text-center mt-6">
-      <a href="login.php" class="text-indigo-600 hover:underline hover:text-indigo-800 transition text-sm">
-        ⬅ Quay lại đăng nhập
-      </a>
+    <div class="auth-helper">
+      <a href="login.php" class="auth-helper__link">Quay lại đăng nhập</a>
     </div>
   </div>
 </body>
 </html>
-

@@ -1,259 +1,257 @@
 <?php
-
 error_reporting(E_ALL);
-ini_set('display_errors', 1);
+ini_set('display_errors', '1');
 session_start();
-include 'C:/xampp/htdocs/StygianBlue/database/config.php'; // Đường dẫn chính xác đến config.php
 
-// Caching & Security Headers
-header("Cache-Control: private, no-store, no-cache, must-revalidate");
-header("X-Content-Type-Options: nosniff");
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-$error = "";   // Initialize error variable
-$success = ""; // Initialize success variable
+require  './database/config.php';
+require './app/helpers/auth_background.php';
 
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Lấy dữ liệu từ biểu mẫu
-    $inputUsername = $_POST['username'];
-    $inputPassword = trim($_POST['password']);
-    $inputFullName = $_POST['full_name'];
-    $inputBirthDate = $_POST['birth_date'];
-    $inputAddress = $_POST['address'];
-    $inputEmail = $_POST['email'];
-    $inputPhone = $_POST['phone'];
-    $inputRole = 3; // Giả sử role khách hàng là 3
+header('Cache-Control: private, no-store, no-cache, must-revalidate');
+header('X-Content-Type-Options: nosniff');
 
-    // Kiểm tra các trường bắt buộc
-    if (empty($inputUsername) || empty($inputPassword) || empty($inputFullName) || empty($inputEmail) || empty($inputPhone)) {
-        $error = "Vui lòng điền đầy đủ thông tin.";
-    } elseif (strlen($inputUsername) < 8 || strlen($inputUsername) > 16) {
-        $error = "Mã đăng nhập phải từ 8 đến 16 ký tự.";
-    } elseif (strlen($inputPassword) < 6 || strlen($inputPassword) > 22) {
-        $error = "Mật khẩu phải từ 6 đến 22 ký tự."; 
-    } elseif (!preg_match("/^0[0-9]{9,11}$/", $inputPhone)) {
-        $error = "Số điện thoại không hợp lệ. Vui lòng nhập lại.";         
-    } elseif (!filter_var($inputEmail, FILTER_VALIDATE_EMAIL)) {
-        $error = "Địa chỉ email không hợp lệ.";
-    } else {
-        // Mã hóa mật khẩu
-        $hashedPassword = password_hash($inputPassword, PASSWORD_DEFAULT);
+$authBodyAttributes = buildAuthBodyAttributes([
+    'image'   => '',
+    'overlay' => '',
+    'blur'    => '',
+]);
 
-        // Kiểm tra xem ID_TK đã tồn tại hay chưa
-        $checkStmt = $conn->prepare("SELECT ID_TK FROM tai_khoan WHERE ID_TK = ?");
-        $checkStmt->bind_param("s", $inputUsername);
-        $checkStmt->execute();
-        $checkResult = $checkStmt->get_result();
+$errors = [];
+$success = '';
 
-        if ($checkResult && $checkResult->num_rows > 0) {
-            $error = "Tên đăng nhập đã tồn tại. Vui lòng chọn tên khác.";
-        } else {
-            // Thêm tài khoản mới vào bảng TAI_KHOAN
-            $stmt = $conn->prepare("INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-            if ($stmt) {
-                $stmt->bind_param("ssssssss", $inputUsername, $inputRole, $inputFullName, $inputBirthDate, $inputAddress, $inputEmail, $inputPhone, $hashedPassword);
-                if ($stmt->execute()) {
-                    // Thêm vào bảng KHACH_HANG
-                    $stmt2 = $conn->prepare("INSERT INTO khach_hang (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                    if ($stmt2) {
-                        $stmt2->bind_param("ssssssss", $inputUsername, $inputRole, $inputFullName, $inputBirthDate, $inputAddress, $inputEmail, $inputPhone, $hashedPassword);
-                        if ($stmt2->execute()) {
-                            $_SESSION['message'] = "Tạo tài khoản thành công!";
-                            $_SESSION['message_type'] = "success";
-                            // Chuyển hướng đến trang đăng nhập                           
-                            if (empty($error)) {
-                                header("Location: login.php");
-                                exit();
-                            }
-                        } else {
-                            $error = "Lỗi khi thêm vào bảng khách hàng: " . $stmt2->error;
-                        }
-                    } else {
-                        $error = "Lỗi chuẩn bị câu lệnh thêm vào bảng khách hàng: " . $conn->error;
-                    }
-                } else {
-                    $error = "Lỗi khi thêm vào bảng tài khoản: " . $stmt->error;
-                }
+$input = [
+    'full_name'  => '',
+    'username'   => '',
+    'email'      => '',
+    'address'    => '',
+    'phone'      => '',
+    'birth_date' => '',
+];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    foreach ($input as $field => $default) {
+        $input[$field] = isset($_POST[$field]) ? trim((string) $_POST[$field]) : '';
+    }
+
+    $rawPassword = isset($_POST['password']) ? trim((string) $_POST['password']) : '';
+    $roleId = 3;
+
+    if ($input['full_name'] === '' || $input['username'] === '' || $rawPassword === '' || $input['email'] === '' || $input['phone'] === '') {
+        $errors[] = 'Vui lòng điền đầy đủ thông tin bắt buộc.';
+    }
+
+    $usernameLength = strlen($input['username']);
+    if ($usernameLength < 8 || $usernameLength > 16) {
+        $errors[] = 'Mã đăng nhập phải từ 8 đến 16 ký tự.';
+    }
+
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', $input['username'])) {
+        $errors[] = 'Mã đăng nhập chỉ được chứa chữ cái, số và dấu gạch dưới.';
+    }
+
+    $passwordLength = strlen($rawPassword);
+    if ($passwordLength < 6 || $passwordLength > 22) {
+        $errors[] = 'Mật khẩu phải từ 6 đến 22 ký tự.';
+    }
+
+    if (!preg_match('/^0[0-9]{9,11}$/', $input['phone'])) {
+        $errors[] = 'Số điện thoại không hợp lệ. Vui lòng nhập lại.';
+    }
+
+    if (!filter_var($input['email'], FILTER_VALIDATE_EMAIL)) {
+        $errors[] = 'Địa chỉ email không hợp lệ.';
+    }
+
+    if ($input['birth_date'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $input['birth_date'])) {
+        $errors[] = 'Ngày sinh không hợp lệ.';
+    }
+
+    if (!$errors) {
+        try {
+            $conn->begin_transaction();
+
+            $checkStmt = $conn->prepare('SELECT 1 FROM tai_khoan WHERE ID_TK = ? LIMIT 1');
+            $checkStmt->bind_param('s', $input['username']);
+            $checkStmt->execute();
+            $checkStmt->store_result();
+
+            if ($checkStmt->num_rows > 0) {
+                $checkStmt->close();
+                $errors[] = 'Tên đăng nhập đã tồn tại. Vui lòng chọn tên khác.';
+                $conn->rollback();
             } else {
-                $error = "Lỗi chuẩn bị câu lệnh thêm tài khoản: " . $conn->error;
+                $hashedPassword = password_hash($rawPassword, PASSWORD_DEFAULT);
+
+                $username = $input['username'];
+                $fullName = $input['full_name'];
+                $birthDate = $input['birth_date'] !== '' ? $input['birth_date'] : null;
+                $address = $input['address'];
+                $email = $input['email'];
+                $phone = $input['phone'];
+
+                $insertAccount = $conn->prepare(
+                    'INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+                    . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                );
+                $insertAccount->bind_param(
+                    'sissssss',
+                    $username,
+                    $roleId,
+                    $fullName,
+                    $birthDate,
+                    $address,
+                    $email,
+                    $phone,
+                    $hashedPassword
+                );
+                $insertAccount->execute();
+
+                $insertCustomer = $conn->prepare(
+                    'INSERT INTO khach_hang (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+                    . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                );
+                $insertCustomer->bind_param(
+                    'sissssss',
+                    $username,
+                    $roleId,
+                    $fullName,
+                    $birthDate,
+                    $address,
+                    $email,
+                    $phone,
+                    $hashedPassword
+                );
+                $insertCustomer->execute();
+
+                $insertAccount->close();
+                $insertCustomer->close();
+                $checkStmt->close();
+
+                $conn->commit();
+
+                $_SESSION['message'] = 'Tạo tài khoản thành công! Vui lòng đăng nhập.';
+                $_SESSION['message_type'] = 'success';
+                header('Location: login.php');
+                exit;
             }
+        } catch (mysqli_sql_exception $exception) {
+            if (isset($insertAccount) && $insertAccount instanceof mysqli_stmt) {
+                $insertAccount->close();
+            }
+            if (isset($insertCustomer) && $insertCustomer instanceof mysqli_stmt) {
+                $insertCustomer->close();
+            }
+            if (isset($checkStmt) && $checkStmt instanceof mysqli_stmt) {
+                $checkStmt->close();
+            }
+
+            $conn->rollback();
+            $errors[] = 'Không thể tạo tài khoản. Vui lòng thử lại sau.';
+            error_log('Registration error: ' . $exception->getMessage());
         }
     }
 }
 
 ?>
-
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="UTF-8">
-  <title>Đăng ký - Stygian Blue Studio</title>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet"/>
-  <style>
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      padding: 0;
-      font-family: 'Roboto', sans-serif;
-      background: linear-gradient(135deg, #0B1C2C, #1e2d3f, #2c3e50);
-      height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .register-container {
-      background: rgba(255, 255, 255, 0.08);
-      backdrop-filter: blur(12px);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 16px;
-      padding: 40px;
-      width: 380px;
-      max-width: 90%;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-      color: #fff;
-      text-align: center;
-    }
-
-    .register-container h1 {
-      margin-bottom: 24px;
-      font-size: 28px;
-      font-weight: 700;
-      color: #00b4d8;
-    }
-
-    form input {
-      width: 100%;
-      padding: 12px 14px;
-      margin: 8px 0;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      background-color: #0f2027;
-      color: #fff;
-      font-size: 15px;
-      transition: border-color 0.3s, box-shadow 0.3s;
-    }
-
-    form input:focus {
-      border-color: #00b4d8;
-      box-shadow: 0 0 8px rgba(0, 180, 216, 0.4);
-      outline: none;
-    }
-
-    form button {
-      width: 100%;
-      padding: 12px;
-      margin-top: 16px;
-      background-color: #00a8e8;
-      border: none;
-      border-radius: 8px;
-      color: #fff;
-      font-size: 16px;
-      font-weight: bold;
-      cursor: pointer;
-      transition: background-color 0.3s, box-shadow 0.3s;
-    }
-
-    form button:hover {
-      background-color: #0077b6;
-      box-shadow: 0 0 10px #00b4d8;
-    }
-
-    .error {
-      color: #ff6b6b;
-      margin-top: 12px;
-    }
-
-    .success {
-      color: #32cd99;
-      margin-top: 12px;
-    }
-
-    .login-link {
-      display: block;
-      margin-top: 20px;
-      color: #ccc;
-      font-size: 14px;
-      text-decoration: none;
-    }
-
-    .login-link:hover {
-      text-decoration: underline;
-      color: #fff;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <title>Đăng ký - Stygian Blue Studio</title>
+    <link rel="stylesheet" href="public/css/auth.css">
 </head>
+<body <?= $authBodyAttributes ?>>
+    <div class="auth-card">
+        <div class="auth-card__logo">
+            <a href="./app/Pages/Views/home.php" title="Về trang chủ">
+                <img src="public/images/logo5.png" alt="Logo Stygian Blue Studio">
+            </a>
+        </div>
 
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8">
-  <title>Đăng ký - Stygian Blue Studio</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
-  <style>
-    body {
-      background: linear-gradient(to bottom right, #e6f0ff, #cfd9e8);
-      font-family: 'Segoe UI', sans-serif;
-    }
-    .glass {
-      backdrop-filter: blur(12px);
-      background-color: rgba(255, 255, 255, 0.7);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-    }
-    .input-style {
-      background-color: #f4f6f9;
-    }
-    .input-style:focus {
-      border-color: #2563eb;
-      box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
-    }
-  </style>
-</head>
-<body class="flex items-center justify-center min-h-screen px-4">
+        <h2 class="auth-heading">Đăng ký tài khoản</h2>
 
-  <div class="w-full max-w-md glass p-8 rounded-xl border border-blue-100">
-    <div class="flex justify-center mb-6">
-      <img src="public/images/logo5.png" alt="Logo" class="h-20 w-20 rounded-lg shadow-md">
+        <?php if ($errors): ?>
+            <div class="auth-form__message auth-form__message--error">
+                <?= implode('<br>', array_map(function ($message) {
+                    return htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+                }, $errors)) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($success !== ''): ?>
+            <div class="auth-form__message auth-form__message--success">
+                <?= htmlspecialchars($success, ENT_QUOTES, 'UTF-8') ?>
+            </div>
+        <?php endif; ?>
+
+        <form method="POST" action="" class="auth-form" autocomplete="off">
+            <input
+                type="text"
+                name="full_name"
+                class="auth-form__field"
+                placeholder="Họ tên"
+                value="<?= htmlspecialchars($input['full_name'], ENT_QUOTES, 'UTF-8') ?>"
+                required
+            />
+            <input
+                type="text"
+                name="username"
+                class="auth-form__field"
+                placeholder="Mã đăng nhập"
+                minlength="8"
+                maxlength="16"
+                value="<?= htmlspecialchars($input['username'], ENT_QUOTES, 'UTF-8') ?>"
+                required
+            />
+            <input
+                type="email"
+                name="email"
+                class="auth-form__field"
+                placeholder="Email"
+                value="<?= htmlspecialchars($input['email'], ENT_QUOTES, 'UTF-8') ?>"
+                required
+            />
+            <input
+                type="text"
+                name="address"
+                class="auth-form__field"
+                placeholder="Địa chỉ"
+                value="<?= htmlspecialchars($input['address'], ENT_QUOTES, 'UTF-8') ?>"
+                required
+            />
+            <input
+                type="tel"
+                name="phone"
+                class="auth-form__field"
+                placeholder="Số điện thoại"
+                pattern="0[0-9]{9,11}"
+                value="<?= htmlspecialchars($input['phone'], ENT_QUOTES, 'UTF-8') ?>"
+                required
+            />
+            <input
+                type="password"
+                name="password"
+                class="auth-form__field"
+                placeholder="Mật khẩu"
+                minlength="6"
+                maxlength="22"
+                required
+            />
+            <input
+                type="date"
+                name="birth_date"
+                class="auth-form__field"
+                value="<?= htmlspecialchars($input['birth_date'], ENT_QUOTES, 'UTF-8') ?>"
+            />
+
+            <button type="submit" class="auth-form__button">Đăng ký</button>
+        </form>
+
+        <div class="auth-footer">
+            Đã có tài khoản?
+            <a href="login.php" class="auth-footer__link">Đăng nhập</a>
+        </div>
     </div>
-    <h2 class="text-2xl font-bold text-center text-blue-800 mb-6">Đăng ký tài khoản</h2>
-
-    <form method="POST" action="" class="space-y-4">
-      <input type="text" name="full_name" placeholder="Họ tên" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="text" name="username" placeholder="Mã đăng nhập" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="email" name="email" placeholder="Email" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="text" name="address" placeholder="Địa chỉ" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="tel" name="phone" placeholder="Số điện thoại" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="password" name="password" placeholder="Mật khẩu" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-      <input type="date" name="birth_date" required
-        class="w-full px-4 py-2 rounded-lg border input-style text-gray-800 focus:outline-none" />
-
-      <button type="submit"
-        class="w-full py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold transition">
-        Đăng ký
-      </button>
-
-      <?php if (!empty($error)) : ?>
-        <div class="text-sm text-red-600 font-medium mt-2"><?= htmlspecialchars($error) ?></div>
-      <?php endif; ?>
-
-      <?php if (!empty($success)) : ?>
-        <div class="text-sm text-green-600 font-medium mt-2"><?= htmlspecialchars($success) ?></div>
-      <?php endif; ?>
-    </form>
-
-    <div class="mt-6 text-center text-sm text-gray-600">
-      Đã có tài khoản?
-      <a href="login.php" class="text-blue-700 hover:underline font-semibold">Đăng nhập</a>
-    </div>
-  </div>
 </body>
 </html>

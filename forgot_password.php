@@ -2,6 +2,7 @@
 session_start();
 require './database/config.php';
 require './vendor/autoload.php';
+require_once __DIR__ . '/app/helpers/auth_background.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
@@ -59,6 +60,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Cấu hình nền cho trang quên mật khẩu (cập nhật đường dẫn/overlay nếu cần)
+$authBodyAttributes = buildAuthBodyAttributes([
+    'image'   => '',
+    'overlay' => '',
+    'blur'    => '',
+]);
 ?>
 
 <!DOCTYPE html>
@@ -66,37 +74,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
   <meta charset="UTF-8">
   <title>Quên mật khẩu</title>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="public/css/auth.css">
 </head>
-<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-blue-100 to-indigo-200">
-  <div class="bg-white/80 backdrop-blur-lg shadow-xl rounded-xl p-8 w-full max-w-md border border-indigo-200 relative">
-    
-    <!-- Logo -->
-    <div class="flex justify-center mb-6">
-      <img src="public/images/logo5.png" alt="Logo Stygian Blue" class="w-16 h-16 rounded-lg shadow-md">
+<body <?= $authBodyAttributes ?>>
+  <!-- Để hiển thị ảnh nền, thiết lập giá trị cho --auth-background-image trong thuộc tính style của thẻ body -->
+  <div class="auth-card">
+    <div class="auth-card__logo">
+      <a href="./app/Pages/Views/home.php" title="Về trang chủ">
+        <img src="public/images/logo5.png" alt="Logo Stygian Blue">
+      </a>
     </div>
 
-    <h2 class="text-2xl font-bold text-center text-indigo-700 mb-4">🔐 Quên mật khẩu</h2>
+    <h2 class="auth-heading">Quên mật khẩu</h2>
 
-    <form method="POST" class="space-y-4">
-      <input type="email" name="email" placeholder="Nhập email đăng ký"
-             class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" required>
+    <form method="POST" class="auth-form">
+      <input type="email" name="email" placeholder="Nhập email đăng ký" class="auth-form__field" required>
 
-      <button type="submit"
-              class="w-full bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 transition font-semibold shadow">
+      <button type="submit" class="auth-form__button">
         Gửi mã xác nhận
       </button>
     </form>
 
     <?php if (!empty($message)) : ?>
-      <p class="mt-4 text-red-600 text-center font-medium"><?= htmlspecialchars($message) ?></p>
+      <p class="auth-form__message auth-form__message--error"><?= htmlspecialchars($message) ?></p>
     <?php endif; ?>
 
-    <!-- Link quay về -->
-    <div class="text-center mt-6">
-      <a href="login.php" class="text-indigo-600 hover:underline hover:text-indigo-800 transition text-sm">
-        ⬅ Quay lại trang đăng nhập
-      </a>
+    <div class="auth-helper">
+      <a href="login.php" class="auth-helper__link">Quay lại trang đăng nhập</a>
     </div>
   </div>
 </body>

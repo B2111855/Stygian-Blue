@@ -1,6 +1,7 @@
 <?php
 session_start();
 require './database/config.php';
+require_once __DIR__ . '/app/helpers/auth_background.php';
 
 $message = '';
 
@@ -44,46 +45,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Cấu hình nền cho trang đặt lại mật khẩu (cập nhật đường dẫn/overlay nếu cần)
+$authBodyAttributes = buildAuthBodyAttributes([
+    'image'   => '',
+    'overlay' => '',
+    'blur'    => '',
+]);
 ?>
 
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <title>Đặt lại mật khẩu</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <meta charset="UTF-8">
+  <title>Đặt lại mật khẩu</title>
+  <link rel="stylesheet" href="public/css/auth.css">
 </head>
-<body class="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-100 via-indigo-100 to-blue-100">
-
-    <div class="bg-white/90 backdrop-blur-lg shadow-xl rounded-xl p-8 w-full max-w-md border border-purple-200">
-        <!-- Logo -->
-        <div class="flex justify-center mb-6">
-            <img src="public/images/logo5.png" alt="Logo Stygian Blue" class="w-16 h-16 rounded-lg shadow-md">
-        </div>
-
-        <h2 class="text-2xl font-bold text-center text-purple-700 mb-6">🔒 Đặt lại mật khẩu</h2>
-
-        <form method="POST" class="space-y-4">
-            <input type="password" name="new_password" placeholder="Mật khẩu mới"
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" required>
-
-            <input type="password" name="confirm_password" placeholder="Xác nhận mật khẩu"
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" required>
-
-            <button type="submit"
-                    class="w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-lg transition font-semibold shadow">
-                Xác nhận
-            </button>
-        </form>
-
-        <?php if (!empty($message)): ?>
-            <p class="mt-4 text-red-600 text-center font-medium"><?= htmlspecialchars($message) ?></p>
-        <?php endif; ?>
-
-        <div class="text-center mt-6">
-            <a href="login.php" class="text-indigo-600 hover:underline text-sm">⬅ Quay lại đăng nhập</a>
-        </div>
+<body <?= $authBodyAttributes ?>>
+  <!-- Để hiển thị ảnh nền, thiết lập giá trị cho --auth-background-image trong thuộc tính style của thẻ body -->
+  <div class="auth-card">
+    <div class="auth-card__logo">
+      <a href="./app/Pages/Views/home.php" title="Về trang chủ">
+        <img src="public/images/logo5.png" alt="Logo Stygian Blue">
+      </a>
     </div>
+
+    <h2 class="auth-heading">Đặt lại mật khẩu</h2>
+
+    <form method="POST" class="auth-form">
+      <input type="password" name="new_password" placeholder="Mật khẩu mới" class="auth-form__field" required>
+      <input type="password" name="confirm_password" placeholder="Xác nhận mật khẩu" class="auth-form__field" required>
+
+      <button type="submit" class="auth-form__button">
+        Xác nhận
+      </button>
+    </form>
+
+    <?php if (!empty($message)): ?>
+      <p class="auth-form__message auth-form__message--error"><?= htmlspecialchars($message) ?></p>
+    <?php endif; ?>
+
+    <div class="auth-helper">
+      <a href="login.php" class="auth-helper__link">Quay lại đăng nhập</a>
+    </div>
+  </div>
 </body>
 </html>
-

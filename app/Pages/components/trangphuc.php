@@ -10,7 +10,6 @@ function selected($a,$b){ return $a===$b ? 'selected' : ''; }
 $kw        = trim($_GET['q'] ?? '');
 $branch    = $_GET['cn'] ?? '';
 $category  = $_GET['loai'] ?? '';
-$status    = $_GET['st'] ?? '';
 $size      = $_GET['size'] ?? '';
 $color     = $_GET['mau'] ?? '';
 $minPrice  = $_GET['min'] ?? '';
@@ -97,14 +96,7 @@ if ($category !== '' && ctype_digit($category)) {
   $types .= 'i';
   $params[] = (int)$category;
 }
-if ($status !== '') {
-  $allowed = ['san_sang','dang_thue','bao_tri','ngung'];
-  if (in_array($status, $allowed, true)) {
-    $sql .= " AND tp.TINH_TRANG = ?";
-    $types .= 's';
-    $params[] = $status;
-  }
-}
+$sql .= " AND tp.TINH_TRANG = 'san_sang'";
 if ($size !== '') {
   $sql .= " AND tp.SIZE = ?";
   $types .= 's';
@@ -158,11 +150,57 @@ if (!$stmt) {
 }
 
 $statusMap = [
-  'san_sang' => ['Sẵn sàng', 'bg-emerald-50 text-emerald-700 ring-emerald-200'],
-  'dang_thue' => ['Đang thuê', 'bg-indigo-50 text-indigo-700 ring-indigo-200'],
-  'bao_tri' => ['Bảo trì', 'bg-amber-50 text-amber-700 ring-amber-200'],
-  'ngung' => ['Ngưng cho thuê', 'bg-rose-50 text-rose-700 ring-rose-200'],
+  'san_sang' => ['Sẵn sàng', 'bg-emerald-100/80 text-emerald-700 border border-emerald-200/70'],
+  'dang_thue' => ['Đang thuê', 'bg-indigo-100/80 text-indigo-700 border border-indigo-200/70'],
+  'bao_tri' => ['Bảo trì', 'bg-amber-100/80 text-amber-700 border border-amber-200/70'],
+  'ngung' => ['Ngưng cho thuê', 'bg-rose-100/80 text-rose-700 border border-rose-200/70'],
 ];
+
+$totalFound = $result ? $result->num_rows : 0;
+
+$activeFilters = [];
+if ($kw !== '') {
+  $activeFilters[] = 'Từ khóa: “' . h($kw) . '”';
+}
+if ($branch !== '' && ctype_digit($branch)) {
+  foreach ($branches as $b) {
+    if ((string)$b['ID_CN'] === (string)$branch) {
+      $activeFilters[] = 'Chi nhánh: ' . h($b['TEN_CN']);
+      break;
+    }
+  }
+}
+if ($category !== '' && ctype_digit($category)) {
+  foreach ($categories as $c) {
+    if ((string)$c['ID_LOAI'] === (string)$category) {
+      $activeFilters[] = 'Loại: ' . h($c['TEN_LOAI']);
+      break;
+    }
+  }
+}
+if ($size !== '') {
+  $activeFilters[] = 'Size: ' . h($size);
+}
+if ($color !== '') {
+  $activeFilters[] = 'Màu: ' . h($color);
+}
+if ($minPrice !== '') {
+  $activeFilters[] = 'Giá từ: ' . number_format((int)$minPrice, 0, ',', '.') . '₫';
+}
+if ($maxPrice !== '') {
+  $activeFilters[] = 'Giá đến: ' . number_format((int)$maxPrice, 0, ',', '.') . '₫';
+}
+if ($rentFrom !== '') {
+  $activeFilters[] = 'Thuê từ: ' . h($rentFrom);
+}
+if ($rentTo !== '') {
+  $activeFilters[] = 'Đến: ' . h($rentTo);
+}
+if ($qty > 1) {
+  $activeFilters[] = 'Số lượng: ' . h($qty);
+}
+
+$advancedOpen = $size !== '' || $color !== '' || $minPrice !== '' || $maxPrice !== '' || $rentFrom !== '' || $rentTo !== '' || $qty > 1;
 
 $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
 ?>
@@ -174,213 +212,362 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
   <title>Thuê trang phục</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    .square-img{width:100%;aspect-ratio:3/4;object-fit:cover}
+    :root {
+      color-scheme: light;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    body {
+      background: linear-gradient(180deg, #f5f6fa 0%, #ffffff 45%, #f2f5ff 100%);
+    }
+    .page-shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 4rem;
+    }
+    .hero-title {
+      letter-spacing: -0.02em;
+    }
+    .info-card {
+      background: rgba(255, 255, 255, 0.85);
+      border-radius: 1.25rem;
+      border: 1px solid rgba(119, 127, 252, 0.12);
+      box-shadow: 0 24px 60px -35px rgba(46, 64, 161, 0.35);
+      backdrop-filter: blur(8px);
+    }
+    .filter-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.35rem 0.9rem;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #3b3b9a;
+      background: rgba(87, 97, 255, 0.14);
+      border: 1px solid rgba(94, 103, 255, 0.15);
+      margin: 0.25rem 0.4rem 0 0;
+    }
+    .filter-shell {
+      position: relative;
+      background: rgba(255, 255, 255, 0.92);
+      border-radius: 1.1rem;
+      border: 1px solid rgba(203, 213, 225, 0.55);
+      box-shadow: 0 18px 50px -30px rgba(30, 64, 175, 0.28);
+    }
+    .filter-shell::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      border: 1px solid rgba(147, 197, 253, 0.2);
+      opacity: 0;
+      transition: opacity 0.25s ease;
+    }
+    .filter-shell:focus-within::after {
+      opacity: 1;
+    }
+    .square-img {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      object-fit: cover;
+      border-radius: 1rem;
+    }
+    .result-card {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 255, 0.92) 100%);
+      border-radius: 1.25rem;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      box-shadow: 0 18px 40px -28px rgba(30, 64, 175, 0.35);
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .result-card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 28px 60px -28px rgba(46, 64, 161, 0.35);
+    }
+    .status-badge {
+      position: absolute;
+      top: 0.75rem;
+      left: 0.75rem;
+      border-radius: 999px;
+      padding: 0.35rem 0.9rem;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      box-shadow: 0 10px 25px -18px rgba(17, 24, 39, 0.5);
+    }
+    .estimate-text {
+      color: #0f766e;
+      font-weight: 600;
+    }
+    .advanced-panel {
+      transition: max-height 0.35s ease;
+      overflow: hidden;
+    }
+    .advanced-panel.hidden {
+      max-height: 0;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+    }
+    .advanced-panel.visible {
+      max-height: 800px;
+    }
   </style>
 </head>
-<body class="bg-gradient-to-br from-pink-50 via-purple-100 to-indigo-100 min-h-screen text-gray-800">
-  <div class="max-w-7xl mx-auto px-4 py-8">
-    <header class="mb-8 text-center">
-      <h1 class="text-4xl font-extrabold text-indigo-900">Bộ sưu tập trang phục</h1>
-      <p class="text-gray-700 mt-2">Tìm và chọn trang phục phù hợp cho buổi chụp hoặc sự kiện của bạn.</p>
+<body class="min-h-screen text-slate-800">
+  <div class="page-shell">
+    <header class="text-center space-y-3 mb-10">
+      <p class="text-sm font-medium uppercase tracking-[0.3em] text-indigo-500">Stygian Blue Studio</p>
+      <h1 class="hero-title text-4xl md:text-5xl font-semibold text-slate-900">Khám phá tủ đồ phù hợp cho từng khoảnh khắc</h1>
+      <p class="max-w-2xl mx-auto text-base text-slate-600">
+        Lọc nhanh, xem thông tin rõ ràng và đặt lịch thuê chỉ trong một bước để bạn luôn sẵn sàng cho mọi sự kiện.
+      </p>
+      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 border border-indigo-100 text-indigo-700 font-semibold shadow-sm">
+        <?= number_format($totalFound, 0, ',', '.') ?> trang phục sẵn sàng phù hợp với tiêu chí của bạn
+      </div>
     </header>
 
-    <form class="bg-white/80 backdrop-blur rounded-2xl shadow p-4 mb-8">
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+    <?php if ($activeFilters): ?>
+      <section class="info-card px-6 py-5 mb-8">
+        <p class="text-sm font-semibold text-indigo-900 mb-2">Bộ lọc đang áp dụng</p>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Tìm theo tên</label>
-          <input type="text" name="q" value="<?=h($kw)?>" placeholder="Áo cưới, cosplay, vest..."
-                 class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
+          <?php foreach ($activeFilters as $label): ?>
+            <span class="filter-chip"><?= $label ?></span>
+          <?php endforeach; ?>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Chi nhánh</label>
-          <select name="cn" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="">Tất cả</option>
-            <?php foreach($branches as $b): ?>
-              <option value="<?=$b['ID_CN']?>" <?=selected($branch,(string)$b['ID_CN'])?>><?=h($b['TEN_CN'])?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Loại trang phục</label>
-          <select name="loai" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="">Tất cả</option>
-            <?php foreach($categories as $c): ?>
-              <option value="<?=$c['ID_LOAI']?>" <?=selected($category,(string)$c['ID_LOAI'])?>><?=h($c['TEN_LOAI'])?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Tình trạng</label>
-          <select name="st" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="">Tất cả</option>
-            <option value="san_sang" <?=selected($status,'san_sang')?>>Sẵn sàng</option>
-            <option value="dang_thue" <?=selected($status,'dang_thue')?>>Đang thuê</option>
-            <option value="bao_tri" <?=selected($status,'bao_tri')?>>Bảo trì</option>
-            <option value="ngung" <?=selected($status,'ngung')?>>Ngưng cho thuê</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Sắp xếp</label>
-          <select name="sort" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="price_desc" <?=selected($sort,'price_desc')?>>Giá ↓</option>
-            <option value="price_asc"  <?=selected($sort,'price_asc')?>>Giá ↑</option>
-            <option value="name_asc"   <?=selected($sort,'name_asc')?>>Tên A→Z</option>
-            <option value="name_desc"  <?=selected($sort,'name_desc')?>>Tên Z→A</option>
-          </select>
-        </div>
-      </div>
+      </section>
+    <?php endif; ?>
 
-      <div class="grid grid-cols-1 md:grid-cols-5 gap-3 mt-3">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Size</label>
-          <select name="size" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="">Tất cả</option>
-            <?php foreach($sizes as $s): ?>
-              <option value="<?=h($s)?>" <?=selected($size,$s)?>><?=h($s)?></option>
-            <?php endforeach; ?>
-          </select>
+    <div class="grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
+      <aside class="filter-shell p-6 space-y-6">
+        <div class="space-y-1">
+          <h2 class="text-lg font-semibold text-slate-900">Tìm kiếm nhanh</h2>
+          <p class="text-sm text-slate-500">Điền các tiêu chí chính, sau đó mở rộng bộ lọc nâng cao nếu cần chi tiết hơn.</p>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Màu sắc</label>
-          <select name="mau" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-            <option value="">Tất cả</option>
-            <?php foreach($colors as $c): ?>
-              <option value="<?=h($c)?>" <?=selected($color,$c)?>><?=h($c)?></option>
-            <?php endforeach; ?>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Giá từ (₫/ngày)</label>
-          <input type="number" name="min" value="<?=h($minPrice)?>" min="0"
-                 class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Đến (₫/ngày)</label>
-          <input type="number" name="max" value="<?=h($maxPrice)?>" min="0"
-                 class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-        </div>
-        <div class="flex items-end">
-          <button class="w-full bg-indigo-700 hover:bg-indigo-600 text-white font-medium py-2 rounded-lg transition">Áp dụng</button>
-        </div>
-      </div>
+        <form id="filterForm" class="space-y-4">
+          <div class="space-y-1">
+            <label class="text-sm font-semibold text-slate-700" for="q">Từ khóa</label>
+            <input id="q" type="text" name="q" value="<?=h($kw)?>" placeholder="Áo cưới, cosplay, vest..." class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 text-sm shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+          </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-3">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Thuê từ</label>
-          <input type="date" name="from" value="<?=h($rentFrom)?>" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Đến</label>
-          <input type="date" name="to" value="<?=h($rentTo)?>" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Số lượng</label>
-          <input type="number" name="qty" value="<?=h($qty)?>" min="1" class="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-indigo-500">
-        </div>
-        <div class="flex items-end">
-          <a href="?" class="w-full text-center border border-indigo-200 text-indigo-700 font-medium py-2 rounded-lg transition hover:border-indigo-400">Làm mới</a>
-        </div>
-      </div>
-    </form>
+          <div class="grid gap-4">
+            <label class="flex flex-col gap-1 text-sm">
+              <span class="font-semibold text-slate-700">Chi nhánh</span>
+              <select name="cn" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                <option value="">Tất cả</option>
+                <?php foreach($branches as $b): ?>
+                  <option value="<?=$b['ID_CN']?>" <?=selected($branch,(string)$b['ID_CN'])?>><?=h($b['TEN_CN'])?></option>
+                <?php endforeach; ?>
+              </select>
+            </label>
 
-    <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-      <?php if ($errorMessage): ?>
-        <p class="text-center text-red-600 col-span-full"><?=h($errorMessage)?></p>
-      <?php elseif ($result && $result->num_rows > 0): ?>
-        <?php while ($row = $result->fetch_assoc()):
-          $price = (int)$row['DON_GIA'];
-          $statusKey = $row['TINH_TRANG'] ?? '';
-          $badge = $statusMap[$statusKey] ?? ['Chưa rõ', 'bg-gray-50 text-gray-700 ring-gray-200'];
-          $image = $row['HINH_ANH'] ?: '../../../public/images/bg01.png';
-        ?>
-          <div class="bg-white rounded-2xl shadow hover:shadow-xl transition p-4 flex flex-col">
-            <div class="relative mb-3">
-              <img src="<?=h($image)?>" alt="<?=h($row['TEN_TP'])?>" class="square-img rounded-xl shadow-sm">
-              <div class="absolute top-2 left-2 rounded-full px-3 py-1 text-xs font-semibold ring-1 <?=h($badge[1])?>">
-                <?=h($badge[0])?>
+            <label class="flex flex-col gap-1 text-sm">
+              <span class="font-semibold text-slate-700">Loại trang phục</span>
+              <select name="loai" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                <option value="">Tất cả</option>
+                <?php foreach($categories as $c): ?>
+                  <option value="<?=$c['ID_LOAI']?>" <?=selected($category,(string)$c['ID_LOAI'])?>><?=h($c['TEN_LOAI'])?></option>
+                <?php endforeach; ?>
+              </select>
+            </label>
+
+            <label class="flex flex-col gap-1 text-sm">
+              <span class="font-semibold text-slate-700">Sắp xếp</span>
+              <select name="sort" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                <option value="price_desc" <?=selected($sort,'price_desc')?>>Giá giảm dần</option>
+                <option value="price_asc"  <?=selected($sort,'price_asc')?>>Giá tăng dần</option>
+                <option value="name_asc"   <?=selected($sort,'name_asc')?>>Tên A → Z</option>
+                <option value="name_desc"  <?=selected($sort,'name_desc')?>>Tên Z → A</option>
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <button type="button" id="toggleAdvanced" class="w-full rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100" data-open="<?= $advancedOpen ? 'true' : 'false' ?>" aria-expanded="<?= $advancedOpen ? 'true' : 'false' ?>">
+              <?= $advancedOpen ? 'Ẩn bộ lọc nâng cao' : 'Hiện bộ lọc nâng cao' ?>
+            </button>
+            <div id="advancedFilters" class="advanced-panel <?= $advancedOpen ? 'visible' : 'hidden' ?> mt-4 space-y-4">
+              <div class="grid gap-3">
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-semibold text-slate-700">Size</span>
+                  <select name="size" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                    <option value="">Tất cả</option>
+                    <?php foreach($sizes as $s): ?>
+                      <option value="<?=h($s)?>" <?=selected($size,$s)?>><?=h($s)?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </label>
+
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-semibold text-slate-700">Màu sắc</span>
+                  <select name="mau" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                    <option value="">Tất cả</option>
+                    <?php foreach($colors as $c): ?>
+                      <option value="<?=h($c)?>" <?=selected($color,$c)?>><?=h($c)?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </label>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold text-slate-700">Giá từ (₫/ngày)</span>
+                    <input type="number" name="min" value="<?=h($minPrice)?>" min="0" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold text-slate-700">Đến (₫/ngày)</span>
+                    <input type="number" name="max" value="<?=h($maxPrice)?>" min="0" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold text-slate-700">Thuê từ</span>
+                    <input type="date" name="from" value="<?=h($rentFrom)?>" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                  </label>
+                  <label class="flex flex-col gap-1 text-sm">
+                    <span class="font-semibold text-slate-700">Đến</span>
+                    <input type="date" name="to" value="<?=h($rentTo)?>" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                  </label>
+                </div>
+
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-semibold text-slate-700">Số lượng</span>
+                  <input type="number" name="qty" value="<?=h($qty)?>" min="1" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
+                </label>
               </div>
-            </div>
-
-            <h2 class="text-xl font-semibold text-indigo-900"><?=h($row['TEN_TP'])?></h2>
-            <?php if (!empty($row['TEN_LOAI'])): ?>
-              <div class="mt-1 text-sm text-gray-600">Loại: <span class="font-medium text-gray-800"><?=h($row['TEN_LOAI'])?></span></div>
-            <?php endif; ?>
-            <div class="mt-1 text-sm text-gray-600">Chi nhánh: <span class="font-medium text-gray-800"><?=h($row['TEN_CN'])?></span></div>
-            <?php if (!empty($row['SIZE'])): ?>
-              <div class="mt-1 text-sm text-gray-600">Size: <span class="font-medium text-gray-800"><?=h($row['SIZE'])?></span></div>
-            <?php endif; ?>
-            <?php if (!empty($row['MAU'])): ?>
-              <div class="mt-1 text-sm text-gray-600">Màu sắc: <span class="font-medium text-gray-800"><?=h($row['MAU'])?></span></div>
-            <?php endif; ?>
-            <?php if (!empty($row['NGAY_GIAT_CUOI']) && $row['NGAY_GIAT_CUOI'] !== '0000-00-00'): ?>
-              <div class="mt-1 text-sm text-gray-600">Giặt gần nhất: <span class="font-medium text-gray-800"><?=h($row['NGAY_GIAT_CUOI'])?></span></div>
-            <?php endif; ?>
-            <?php if (!empty($row['GHI_CHU'])): ?>
-              <div class="mt-1 text-sm text-gray-600">Ghi chú: <span class="font-medium text-gray-800"><?=h($row['GHI_CHU'])?></span></div>
-            <?php endif; ?>
-
-            <div class="mt-3">
-              <div class="text-2xl font-bold text-indigo-700 tracking-tight"><?= number_format($price, 0, ',', '.') ?> <span class="text-sm font-medium text-gray-500">₫/ngày</span></div>
-              <?php if (!empty($row['HIEU_LUC_TU'])): ?>
-                <div class="text-xs text-gray-500 mt-1">Giá áp dụng từ: <?=h($row['HIEU_LUC_TU'])?></div>
-              <?php endif; ?>
-              <div class="text-xs text-gray-500 mt-1">Ước tính chi phí dựa trên khoảng ngày & số lượng bạn chọn.</div>
-              <div class="mt-1 text-sm">
-                <span class="text-gray-600">Ước tính:</span>
-                <span class="font-semibold text-emerald-700" data-estimate-for="<?= (int)$row['ID_TP'] ?>">—</span>
-              </div>
-            </div>
-
-            <div class="mt-4 pt-4 border-t border-gray-100">
-              <form action="lienhe.php" method="POST" class="flex flex-col gap-2">
-                <input type="hidden" name="id_tp" value="<?=h($row['ID_TP'])?>">
-                <input type="hidden" name="service_id" value="thue_trang_phuc">
-                <input type="hidden" name="ID_KH" value="<?=h($currentCustomerId ?? '')?>">
-                <input type="hidden" name="from" value="<?=h($rentFrom)?>">
-                <input type="hidden" name="to" value="<?=h($rentTo)?>">
-                <input type="hidden" name="qty" value="<?=h($qty)?>">
-                <button type="submit"
-                  class="w-full bg-indigo-800 hover:bg-indigo-600 text-white font-medium py-2.5 rounded-lg transition disabled:opacity-60"
-                  <?= ($statusKey !== 'san_sang') ? 'disabled' : '' ?>
-                >
-                  Đặt lịch thuê
-                </button>
-              </form>
             </div>
           </div>
-        <?php endwhile; ?>
-      <?php else: ?>
-        <p class="text-center text-red-600 col-span-full">Không có trang phục nào phù hợp!</p>
-      <?php endif; ?>
+
+          <div class="flex flex-col gap-3 pt-2">
+            <button type="submit" class="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-sky-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:shadow-lg">Áp dụng bộ lọc</button>
+            <a href="?" class="w-full text-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600">Làm mới lựa chọn</a>
+          </div>
+        </form>
+      </aside>
+
+      <section class="space-y-6">
+        <?php if ($errorMessage): ?>
+          <div class="info-card px-6 py-6 text-center text-rose-600 font-semibold"><?=h($errorMessage)?></div>
+        <?php elseif ($result && $result->num_rows > 0): ?>
+          <div class="grid gap-6 sm:grid-cols-2">
+            <?php while ($row = $result->fetch_assoc()):
+              $price = (int)$row['DON_GIA'];
+              $statusKey = $row['TINH_TRANG'] ?? '';
+              $badge = $statusMap[$statusKey] ?? ['Chưa rõ', 'bg-slate-100/90 text-slate-600 border border-slate-200/80'];
+              $image = $row['HINH_ANH'] ?: '../../../public/images/bg01.png';
+            ?>
+              <article class="result-card p-5 flex flex-col">
+                <div class="relative mb-4">
+                  <img src="<?=h($image)?>" alt="<?=h($row['TEN_TP'])?>" class="square-img shadow-sm">
+                  <div class="status-badge <?=h($badge[1])?>">
+                    <?=h($badge[0])?>
+                  </div>
+                </div>
+
+                <h2 class="text-xl font-semibold text-slate-900 mb-2"><?=h($row['TEN_TP'])?></h2>
+                <ul class="space-y-1 text-sm text-slate-600">
+                  <?php if (!empty($row['TEN_LOAI'])): ?>
+                    <li>Loại: <span class="font-medium text-slate-800"><?=h($row['TEN_LOAI'])?></span></li>
+                  <?php endif; ?>
+                  <li>Chi nhánh: <span class="font-medium text-slate-800"><?=h($row['TEN_CN'])?></span></li>
+                  <?php if (!empty($row['SIZE'])): ?>
+                    <li>Size: <span class="font-medium text-slate-800"><?=h($row['SIZE'])?></span></li>
+                  <?php endif; ?>
+                  <?php if (!empty($row['MAU'])): ?>
+                    <li>Màu sắc: <span class="font-medium text-slate-800"><?=h($row['MAU'])?></span></li>
+                  <?php endif; ?>
+                  <?php if (!empty($row['NGAY_GIAT_CUOI']) && $row['NGAY_GIAT_CUOI'] !== '0000-00-00'): ?>
+                    <li>Giặt gần nhất: <span class="font-medium text-slate-800"><?=h($row['NGAY_GIAT_CUOI'])?></span></li>
+                  <?php endif; ?>
+                  <?php if (!empty($row['GHI_CHU'])): ?>
+                    <li>Ghi chú: <span class="font-medium text-slate-800"><?=h($row['GHI_CHU'])?></span></li>
+                  <?php endif; ?>
+                </ul>
+
+                <div class="mt-4 space-y-1">
+                  <p class="text-2xl font-bold text-indigo-700"><?= number_format($price, 0, ',', '.') ?> <span class="text-sm font-medium text-slate-500">₫/ngày</span></p>
+                  <?php if (!empty($row['HIEU_LUC_TU'])): ?>
+                    <p class="text-xs text-slate-500">Giá áp dụng từ: <?=h($row['HIEU_LUC_TU'])?></p>
+                  <?php endif; ?>
+                  <p class="text-xs text-slate-500">Ước tính tự động cập nhật khi bạn chọn ngày và số lượng.</p>
+                  <p class="text-sm"><span class="text-slate-600">Ước tính:</span> <span class="estimate-text" data-estimate-for="<?= (int)$row['ID_TP'] ?>">—</span></p>
+                </div>
+
+                <form action="lienhe.php" method="POST" class="mt-5 pt-5 border-t border-slate-200 space-y-3">
+                  <input type="hidden" name="id_tp" value="<?=h($row['ID_TP'])?>">
+                  <input type="hidden" name="service_id" value="thue_trang_phuc">
+                  <input type="hidden" name="ID_KH" value="<?=h($currentCustomerId ?? '')?>">
+                  <input type="hidden" name="from" value="<?=h($rentFrom)?>">
+                  <input type="hidden" name="to" value="<?=h($rentTo)?>">
+                  <input type="hidden" name="qty" value="<?=h($qty)?>">
+                  <button type="submit" class="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-400" <?= ($statusKey !== 'san_sang') ? 'disabled' : '' ?>>Đặt lịch thuê</button>
+                </form>
+              </article>
+            <?php endwhile; ?>
+          </div>
+        <?php else: ?>
+          <div class="info-card px-6 py-6 text-center text-slate-600 font-medium">Không có trang phục nào phù hợp với bộ lọc hiện tại.</div>
+        <?php endif; ?>
+      </section>
     </div>
   </div>
 
   <script>
     (function(){
-      const from = document.querySelector('input[name="from"]').value;
-      const to   = document.querySelector('input[name="to"]').value;
-      const qty  = Math.max(1, parseInt(document.querySelector('input[name="qty"]').value || '1', 10));
+      const advanced = document.getElementById('advancedFilters');
+      const toggleBtn = document.getElementById('toggleAdvanced');
+
+      if (advanced && toggleBtn) {
+        const setState = (open) => {
+          advanced.classList.toggle('hidden', !open);
+          advanced.classList.toggle('visible', open);
+          toggleBtn.dataset.open = open ? 'true' : 'false';
+          toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+          toggleBtn.textContent = open ? 'Ẩn bộ lọc nâng cao' : 'Hiện bộ lọc nâng cao';
+        };
+
+        if (toggleBtn.dataset.open === 'true') {
+          setState(true);
+        }
+
+        toggleBtn.addEventListener('click', () => {
+          const next = toggleBtn.dataset.open !== 'true';
+          setState(next);
+        });
+      }
+
+      const fromInput = document.querySelector('input[name="from"]');
+      const toInput = document.querySelector('input[name="to"]');
+      const qtyInput = document.querySelector('input[name="qty"]');
+
+      const from = fromInput ? fromInput.value : '';
+      const to = toInput ? toInput.value : '';
+      const qty = Math.max(1, qtyInput ? parseInt(qtyInput.value || '1', 10) : 1);
 
       function daysBetween(a, b){
-        const d1 = new Date(a), d2 = new Date(b);
-        if (isNaN(d1) || isNaN(d2)) return 0;
-        const ms = d2.setHours(12,0,0,0) - d1.setHours(12,0,0,0);
+        const start = new Date(a);
+        const end = new Date(b);
+        if (isNaN(start) || isNaN(end)) return 0;
+        const ms = end.setHours(12,0,0,0) - start.setHours(12,0,0,0);
         return Math.max(0, Math.ceil(ms / 86400000));
       }
+
       const days = daysBetween(from, to);
 
-      if (days > 0) {
-        document.querySelectorAll('[data-estimate-for]').forEach(span => {
-          const priceEl = span.closest('div').previousElementSibling.querySelector('.text-2xl');
-          if (!priceEl) return;
-          const raw = priceEl.textContent.replace(/[^\d]/g, '');
-          const price = parseInt(raw || '0', 10);
-          const est = price * days * qty;
-          span.textContent = new Intl.NumberFormat('vi-VN').format(est) + ' ₫ ('+ days +' ngày × ' + qty + ')';
-        });
-      } else {
-        document.querySelectorAll('[data-estimate-for]').forEach(span => { span.textContent = 'Chọn ngày để ước tính'; });
-      }
+      document.querySelectorAll('[data-estimate-for]').forEach(span => {
+        if (days <= 0) {
+          span.textContent = 'Chọn ngày để ước tính';
+          return;
+        }
+
+        const priceContainer = span.closest('article');
+        if (!priceContainer) return;
+        const priceText = priceContainer.querySelector('.text-2xl');
+        if (!priceText) return;
+        const numeric = priceText.textContent.replace(/[^\d]/g, '');
+        const price = parseInt(numeric || '0', 10);
+        const estimate = price * days * qty;
+        span.textContent = new Intl.NumberFormat('vi-VN').format(estimate) + ' ₫ (' + days + ' ngày × ' + qty + ')';
+      });
     })();
   </script>
 </body>
