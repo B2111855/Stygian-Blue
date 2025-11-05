@@ -467,7 +467,7 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
                 <ul class="space-y-1 text-sm text-slate-600">
                   <?php if (!empty($row['TEN_LOAI'])): ?>
                     <li>Loại: <span class="font-medium text-slate-800"><?=h($row['TEN_LOAI'])?></span></li>
-                  <?php endif; ?>
+                   <?php endif; ?>
                   <li>Chi nhánh: <span class="font-medium text-slate-800"><?=h($row['TEN_CN'])?></span></li>
                   <?php if (!empty($row['SIZE'])): ?>
                     <li>Size: <span class="font-medium text-slate-800"><?=h($row['SIZE'])?></span></li>
@@ -492,15 +492,36 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
                   <p class="text-sm"><span class="text-slate-600">Ước tính:</span> <span class="estimate-text" data-estimate-for="<?= (int)$row['ID_TP'] ?>">—</span></p>
                 </div>
 
-                <form action="lienhe.php" method="POST" class="mt-5 pt-5 border-t border-slate-200 space-y-3">
-                  <input type="hidden" name="id_tp" value="<?=h($row['ID_TP'])?>">
-                  <input type="hidden" name="service_id" value="thue_trang_phuc">
-                  <input type="hidden" name="ID_KH" value="<?=h($currentCustomerId ?? '')?>">
-                  <input type="hidden" name="from" value="<?=h($rentFrom)?>">
-                  <input type="hidden" name="to" value="<?=h($rentTo)?>">
-                  <input type="hidden" name="qty" value="<?=h($qty)?>">
-                  <button type="submit" class="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:bg-slate-400" <?= ($statusKey !== 'san_sang') ? 'disabled' : '' ?>>Đặt lịch thuê</button>
-                </form>
+                <div class="mt-5 pt-5 border-t border-slate-200 grid gap-3 sm:grid-cols-2">
+                  <a
+                    href="trangphuc_chitiet.php?id=<?= $row['ID_TP'] ?>"
+                    class="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-600"
+                    aria-label="Xem chi tiết trang phục <?= h($row['TEN_TP']) ?>"
+                  >
+                    Xem chi tiết
+                  </a>
+
+                  <?php if ($statusKey === 'san_sang'): ?>
+                    <?php
+                      $bookingQuery = http_build_query([
+                        'id'  => $row['ID_TP'],
+                        'from' => $rentFrom,
+                        'to'   => $rentTo,
+                        'qty'  => $qty,
+                      ]);
+                    ?>
+                    <a
+                      href="trangphuc_datthue.php?<?= h($bookingQuery) ?>"
+                      class="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                    >
+                      Đặt thuê trực tuyến
+                    </a>
+                  <?php else: ?>
+                    <span class="inline-flex items-center justify-center rounded-xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-500">
+                      Tạm thời không thể đặt
+                    </span>
+                  <?php endif; ?>
+                </div>
               </article>
             <?php endwhile; ?>
           </div>

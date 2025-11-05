@@ -11,6 +11,7 @@
       <li><a href="?page=appointments"      class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-calendar-check"></i>Lịch hẹn chi nhánh</a></li>
       <li><a href="?page=salaries"          class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-hand-holding-usd"></i>Lương/duyệt lương</a></li>
       <li><a href="?page=equipment"         class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-cogs"></i>Thiết bị/tồn kho</a></li>
+      <li><a href="?page=costumes"          class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-tshirt"></i>Trang phục chi nhánh</a></li>
       <li><a href="?page=customers"         class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-user-friends"></i>Khách hàng chi nhánh</a></li>
       <li><a href="?page=expenses"          class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-money-bill-wave"></i>Chi phí phát sinh</a></li>
       <li><a href="?page=feedback"          class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-indigo-600 transition"><i class="fas fa-comments"></i>Phản hồi khách</a></li>

@@ -17,6 +17,7 @@ $pageTitle = 'Quản trị hệ thống';
 
     <!-- Main content -->
     <div class="flex-1 relative overflow-hidden">
+      <?php include '../Pages/components/thongbao.php'; ?>
       <img src="https://storage.googleapis.com/a1aa/image/Fuczd4lY6jrjNZZrBoHIu8nkMLFP5TpPG7lwv9u4f24Wjd7JA.jpg"
            alt="Background"
            class="absolute inset-0 w-full h-full object-cover opacity-10" />

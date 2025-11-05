@@ -16,6 +16,7 @@ require_once '..\..\middlewares\require_staff_manager.php';
 
     <!-- Main content -->
     <div class="flex-1 relative overflow-hidden">
+      <?php include '../Pages/components/thongbao.php'; ?>
       <img src="https://storage.googleapis.com/a1aa/image/Fuczd4lY6jrjNZZrBoHIu8nkMLFP5TpPG7lwv9u4f24Wjd7JA.jpg" alt="Background" class="absolute inset-0 w-full h-full object-cover opacity-10" />
       <div class="relative z-10 p-8">
         <div class="bg-white bg-opacity-90 backdrop-blur-md rounded-xl p-6 shadow-xl min-h-[80vh]">
@@ -32,6 +33,7 @@ require_once '..\..\middlewares\require_staff_manager.php';
             'assignments'       => 'manager_assignments.php',
             'appointments'      => 'manager_appointments.php',
             'expenses'          => 'manager_expenses.php',
+            'costumes'          => 'manage_costumes.php',
             'salaries'          => 'manager_salaries.php',
             'equipment'         => 'equipment_branch.php',     // có thể dùng chung với admin nếu bạn muốn
             'customers'         => 'customers_branch.php',

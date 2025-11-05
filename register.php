@@ -26,7 +26,6 @@ $input = [
     'email'      => '',
     'address'    => '',
     'phone'      => '',
-    'birth_date' => '',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -63,10 +62,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errors[] = 'Địa chỉ email không hợp lệ.';
     }
 
-    if ($input['birth_date'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $input['birth_date'])) {
-        $errors[] = 'Ngày sinh không hợp lệ.';
-    }
-
     if (!$errors) {
         try {
             $conn->begin_transaction();
@@ -85,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $username = $input['username'];
                 $fullName = $input['full_name'];
-                $birthDate = $input['birth_date'] !== '' ? $input['birth_date'] : null;
+                $birthDate = null;
                 $address = $input['address'];
                 $email = $input['email'];
                 $phone = $input['phone'];
@@ -238,13 +233,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 maxlength="22"
                 required
             />
-            <input
-                type="date"
-                name="birth_date"
-                class="auth-form__field"
-                value="<?= htmlspecialchars($input['birth_date'], ENT_QUOTES, 'UTF-8') ?>"
-            />
-
             <button type="submit" class="auth-form__button">Đăng ký</button>
         </form>
 

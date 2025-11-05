@@ -52,6 +52,19 @@ if (!$client) {
 
 $error = "";
 
+$flashMessage = $_SESSION['message'] ?? '';
+$flashType = $_SESSION['message_type'] ?? 'success';
+$flashClass = 'auth-form__message--success';
+
+if ($flashMessage !== '') {
+    if ($flashType !== 'success') {
+        $flashClass = 'auth-form__message--error';
+    }
+    unset($_SESSION['message'], $_SESSION['message_type']);
+} else {
+    $flashType = '';
+}
+
 // Cấu hình nền cho trang đăng nhập (cập nhật đường dẫn/overlay nếu cần)
 $authBodyAttributes = buildAuthBodyAttributes([
     'image'   => '',
@@ -153,6 +166,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             if (password_verify($inputPassword, $user['MAT_KHAU'])) {
                 // Thành công → set session + redirect
+                $_SESSION['message'] = 'Đăng nhập thành công!';
+                $_SESSION['message_type'] = 'success';
                 finishLoginAndRedirect($conn, $user);
             } else {
                 $error = "Mật khẩu không chính xác.";
@@ -190,6 +205,12 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
         <!-- FORM ĐĂNG NHẬP TÀI KHOẢN NỘI BỘ -->
         <form method="POST" action="" class="auth-form">
+            <?php if ($flashMessage !== ''): ?>
+                <div class="auth-form__message <?= htmlspecialchars($flashClass) ?>">
+                    <?= htmlspecialchars($flashMessage) ?>
+                </div>
+            <?php endif; ?>
+
             <input
                 type="text"
                 name="username"

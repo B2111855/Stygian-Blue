@@ -27,11 +27,6 @@
 </head>
 
 <body class="bg-gray-50 pt-24">
-  <!-- Loader (tuỳ chọn, nếu bạn đang dùng) -->
-  <div class="loader-box fixed inset-0 bg-[#060935] z-[9999] hidden items-center justify-center transition-opacity duration-700">
-    <i class="fas fa-eye text-6xl text-white animate-pulse"></i>
-  </div>
-
   <!-- Header -->
   <header data-sb-header class="fixed top-0 inset-x-0 z-50">
     <!-- Gradient top bar -->
