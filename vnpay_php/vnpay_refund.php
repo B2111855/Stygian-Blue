@@ -1,97 +1,113 @@
-<html lang="en">
+<?php
+
+use App\Payments\VNPayService;
+
+/** @var VNPayService $service */
+$service = require './config.php';
+$config = $service->config();
+
+$refundResponse = null;
+$errors = [];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $orderId = trim($_POST['orderid'] ?? '');
+    $transactionType = trim($_POST['trantype'] ?? '02');
+    $amount = (float) ($_POST['amount'] ?? 0);
+    $paymentDate = trim($_POST['paymentdate'] ?? '');
+    $createdBy = trim($_POST['mail'] ?? '');
+
+    if ($orderId === '') {
+        $errors[] = 'Vui lòng nhập mã đơn hàng cần hoàn.';
+    }
+
+    if ($amount <= 0) {
+        $errors[] = 'Số tiền hoàn phải lớn hơn 0.';
+    }
+
+    if ($paymentDate === '') {
+        $errors[] = 'Vui lòng nhập thời điểm thanh toán ban đầu (YmdHis).';
+    }
+
+    if (count($errors) === 0) {
+        $refundUrl = $service->buildRefundUrl([
+            'orderId' => $orderId,
+            'transactionType' => $transactionType,
+            'amount' => $amount,
+            'paymentDate' => $paymentDate,
+            'createdBy' => $createdBy,
+            'ipAddress' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
+        ]);
+
+        $client = curl_init($refundUrl);
+        curl_setopt($client, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($client, CURLOPT_HEADER, false);
+        $refundResponse = curl_exec($client);
+        curl_close($client);
+    }
+}
+?>
+<!DOCTYPE html>
+<html lang="vi">
     <head>
         <meta charset="utf-8">
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
-        <meta name="description" content="">
-        <meta name="author" content="">
-        <title>Tra cứu giao dịch</title>
-        <!-- Bootstrap core CSS -->
+        <meta name="description" content="Hoàn tiền giao dịch VNPAY">
+        <title>Hoàn tiền VNPAY</title>
         <link href="/vnpay_php/assets/bootstrap.min.css" rel="stylesheet"/>
-        <!-- Custom styles for this template -->
-        <link href="/vnpay_php/assets/jumbotron-narrow.css" rel="stylesheet">  
-        <script src="/vnpay_php/assets/jquery-1.11.3.min.js"></script>
+        <link href="/vnpay_php/assets/jumbotron-narrow.css" rel="stylesheet">
     </head>
     <body>
         <div class="container">
             <div class="header clearfix">
-                <h3 class="text-muted">VNPAY DEMO</h3>
+                <h3 class="text-muted">Hoàn tiền giao dịch VNPAY</h3>
             </div>
-            <div style="width: 100%;padding-top:0px;font-weight: bold;color: #333333"><h3>Refund</h3></div>
-            <div style="width: 100% ;border-bottom: 2px solid black;padding-bottom: 20px" >
-                <form action="/vnpay_php/vnpay_refund.php" id="frmCreateOrder" method="post">        
-                    <div class="form-group">
-                        <label >OrderID</label>
-                        <input class="form-control" data-val="true"  name="orderid" type="text" value="" />
-                    </div>
-                    <div class="form-group">
-                        <label>Kiểu hoàn tiền </label>
-                        <select name="trantype" id="trantype" class="form-control">
-                            <option value="02">Hoàn tiền toàn phần</option>
-                            <option value="03">Hoàn tiền 1 phần</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label for="amount">Số tiền</label>
-                        <input class="form-control" data-val="true" data-val-number="The field Amount must be a number." data-val-required="The Amount field is required." id="amount" max="100000000" min="1" name="amount" type="number" value="10000" />
-                    </div>
-                    <div class="form-group">
-                        <label>Payment Date</label>
-                        <input class="form-control" data-val="true"  name="paymentdate" type="text" value="" />
-                    </div>
-                    <div class="form-group">
-                        <label >Mail người khởi tạo GD hoàn tiền</label>
-                        <input class="form-control" data-val="true"  name="mail" type="text" value="" />
-                    </div>
-                    <input type="submit"  class="btn btn-default" value="Refund" />
-                </form>
-            </div>
-            <?php
-            require_once("config.php");
-            if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-                $amount = ($_POST["amount"]) * 100;
-                $ipaddr = $_SERVER['REMOTE_ADDR'];
-                $inputData = array(
-                    "vnp_Version" => '2.1.0',
-                    "vnp_TransactionType" => $_POST["trantype"],
-                    "vnp_Command" => "refund",
-                    "vnp_CreateBy" => $_POST["mail"],
-                    "vnp_TmnCode" => $vnp_TmnCode,
-                    "vnp_TxnRef" => $_POST["orderid"],
-                    "vnp_Amount" => $amount,
-                    "vnp_OrderInfo" => 'Noi dung thanh toan',
-                    "vnp_TransDate" => $_POST['paymentdate'],
-                    "vnp_CreateDate" => date('YmdHis'),
-                    "vnp_IpAddr" => $ipaddr
-                );
-                ksort($inputData);
-                $query = "";
-                $i = 0;
-                $hashdata = "";
-                foreach ($inputData as $key => $value) {
-                    if ($i == 1) {
-                        $hashdata .= '&' . urlencode($key) . "=" . urlencode($value);
-                    } else {
-                        $hashdata .= urlencode($key) . "=" . urlencode($value);
-                        $i = 1;
-                    }
-                    $query .= urlencode($key) . "=" . urlencode($value) . '&';
-                }
+            <?php if (count($errors) > 0): ?>
+                <div class="alert alert-danger">
+                    <ul class="mb-0">
+                        <?php foreach ($errors as $error): ?>
+                            <li><?php echo htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+            <form action="/vnpay_php/vnpay_refund.php" method="post" class="mb-4">
+                <div class="form-group">
+                    <label for="orderid">Mã đơn hàng</label>
+                    <input class="form-control" name="orderid" id="orderid" type="text" value="<?php echo htmlspecialchars($_POST['orderid'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required />
+                </div>
+                <div class="form-group">
+                    <label for="trantype">Kiểu hoàn tiền</label>
+                    <select name="trantype" id="trantype" class="form-control">
+                        <option value="02" <?php echo (($_POST['trantype'] ?? '02') === '02') ? 'selected' : ''; ?>>Hoàn toàn phần</option>
+                        <option value="03" <?php echo (($_POST['trantype'] ?? '') === '03') ? 'selected' : ''; ?>>Hoàn một phần</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="amount">Số tiền hoàn (VND)</label>
+                    <input class="form-control" name="amount" id="amount" type="number" min="1" value="<?php echo htmlspecialchars($_POST['amount'] ?? '10000', ENT_QUOTES, 'UTF-8'); ?>" required />
+                </div>
+                <div class="form-group">
+                    <label for="paymentdate">Thời điểm thanh toán ban đầu (YmdHis)</label>
+                    <input class="form-control" name="paymentdate" id="paymentdate" type="text" value="<?php echo htmlspecialchars($_POST['paymentdate'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" required />
+                </div>
+                <div class="form-group">
+                    <label for="mail">Email người khởi tạo</label>
+                    <input class="form-control" name="mail" id="mail" type="email" value="<?php echo htmlspecialchars($_POST['mail'] ?? '', ENT_QUOTES, 'UTF-8'); ?>" />
+                </div>
+                <button type="submit" class="btn btn-warning">Gửi yêu cầu hoàn tiền</button>
+            </form>
 
-                $vnp_apiUrl = $vnp_apiUrl . "?" . $query;
-                if (isset($vnp_HashSecret)) {
-                    $vnpSecureHash = hash_hmac('sha512', $hashdata, $vnp_HashSecret);
-                    $vnp_apiUrl .= 'vnp_SecureHash=' . $vnpSecureHash;
-                }
-                $ch = curl_init($vnp_apiUrl);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_HEADER, 0);
-                $data = curl_exec($ch);
-                curl_close($ch);
-                echo $data;
-            }
-            ?>
+            <?php if ($refundResponse !== null): ?>
+                <div class="alert alert-info">
+                    <strong>Phản hồi từ API:</strong>
+                    <pre class="mt-2"><?php echo htmlspecialchars($refundResponse, ENT_QUOTES, 'UTF-8'); ?></pre>
+                </div>
+            <?php endif; ?>
+
+            <footer class="footer">
+                <p>&copy; VNPay Sandbox <?php echo $config->now()->format('Y'); ?></p>
+            </footer>
         </div>
     </body>
 </html>
