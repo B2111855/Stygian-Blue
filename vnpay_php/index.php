@@ -52,8 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="description" content="VNPay sandbox demo">
         <title>Tạo mới đơn hàng VNPAY</title>
-        <link href="/vnpay_php/assets/bootstrap.min.css" rel="stylesheet"/>
-        <link href="/vnpay_php/assets/jumbotron-narrow.css" rel="stylesheet">
+        <link href="assets/bootstrap.min.css" rel="stylesheet"/>
+        <link href="assets/jumbotron-narrow.css" rel="stylesheet">
     </head>
 
     <body>
