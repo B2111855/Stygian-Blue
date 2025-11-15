@@ -24,27 +24,78 @@ if ($flashNotice !== '') {
     unset($_SESSION['payment_notice'], $_SESSION['payment_notice_type']);
 }
 
-// Đếm tổng hóa đơn
-$countQuery = "
-    SELECT COUNT(*) as total
+// Thống kê nhanh tình trạng hóa đơn
+$statsQuery = "
+    SELECT
+        COUNT(*) AS total,
+        SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN 1 ELSE 0 END) AS paid,
+        SUM(
+            CASE
+                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND h.YEU_CAU_XAC_NHAN = 1 THEN 1
+                ELSE 0
+            END
+        ) AS verifying,
+        SUM(
+            CASE
+                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (h.YEU_CAU_XAC_NHAN IS NULL OR h.YEU_CAU_XAC_NHAN = 0) THEN 1
+                ELSE 0
+            END
+        ) AS unpaid
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
     WHERE l.ID_TK = '$userId'
 ";
-$countResult = mysqli_query($conn, $countQuery);
-$totalRows = mysqli_fetch_assoc($countResult)['total'] ?? 0;
-$totalPages = (int) ceil($totalRows / $limit);
+$statsResult = mysqli_query($conn, $statsQuery);
+$statsRow = $statsResult ? mysqli_fetch_assoc($statsResult) : [];
+$statusStats = [
+    'total' => (int) ($statsRow['total'] ?? 0),
+    'paid' => (int) ($statsRow['paid'] ?? 0),
+    'verifying' => (int) ($statsRow['verifying'] ?? 0),
+    'unpaid' => (int) ($statsRow['unpaid'] ?? 0),
+];
 
-// Truy vấn phân trang
+// Bộ lọc trạng thái
+$activeState = isset($_GET['state']) ? strtolower($_GET['state']) : 'all';
+$stateFilterClause = '';
+switch ($activeState) {
+    case 'paid':
+        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN = 'Đã thanh toán'";
+        break;
+    case 'verifying':
+        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND h.YEU_CAU_XAC_NHAN = 1";
+        break;
+    case 'unpaid':
+        $stateFilterClause = " AND (h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (h.YEU_CAU_XAC_NHAN IS NULL OR h.YEU_CAU_XAC_NHAN = 0))";
+        break;
+    default:
+        $activeState = 'all';
+        break;
+}
+
+// Đếm tổng hóa đơn sau khi áp dụng bộ lọc
+$countQuery = "
+    SELECT COUNT(*) AS total
+    FROM hoa_don h
+    JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
+    WHERE l.ID_TK = '$userId' $stateFilterClause
+";
+$countResult = mysqli_query($conn, $countQuery);
+$totalRows = (int) ($countResult ? (mysqli_fetch_assoc($countResult)['total'] ?? 0) : 0);
+$totalPages = $totalRows > 0 ? (int) ceil($totalRows / $limit) : 1;
+
+// Truy vấn phân trang kèm thông tin lịch hẹn và chi nhánh
 $sql = "
     SELECT h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN, h.YEU_CAU_XAC_NHAN,
            h.PHUONGTHUC_THANHTOAN, k.HO_TEN, k.EMAIL, k.SDT, d.TEN_DV,
+           l.THOI_GIAN_BAT_DAU, l.DIA_CHI_HEN, l.TRANGTHAI AS LICH_TRANGTHAI,
+           cn.TEN_CN,
            tt.TRANG_THAI AS VNPAY_TRANG_THAI, tt.MA_THAM_CHIEU, tt.SO_TIEN AS VNPAY_SO_TIEN,
            tt.CREATED_AT AS VNPAY_CREATED_AT
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
     JOIN khach_hang k ON l.ID_TK = k.ID_TK
     JOIN dich_vu d ON l.ID_DV = d.ID_DV
+    LEFT JOIN chi_nhanh cn ON l.ID_CHINHANH = cn.ID_CN
     LEFT JOIN (
         SELECT t1.ID_HD, t1.TRANG_THAI, t1.MA_THAM_CHIEU, t1.SO_TIEN, t1.CREATED_AT
         FROM thanh_toan_truc_tuyen t1
@@ -56,130 +107,476 @@ $sql = "
         ) latest ON latest.ID_HD = t1.ID_HD AND latest.max_created = t1.CREATED_AT
         WHERE t1.GATEWAY = 'vnpay'
     ) tt ON tt.ID_HD = h.ID_HD
-    WHERE l.ID_TK = '$userId'
+    WHERE l.ID_TK = '$userId' $stateFilterClause
     ORDER BY h.NGAY_GIO DESC
     LIMIT $limit OFFSET $offset
 ";
 
 $result = mysqli_query($conn, $sql);
+$invoices = [];
+$invoiceIds = [];
+
+if ($result) {
+    while ($row = mysqli_fetch_assoc($result)) {
+        $invoices[] = $row;
+        $invoiceIds[] = (int) $row['ID_HD'];
+    }
+}
+
+$nextSchedule = null;
+if (!empty($invoices)) {
+    foreach ($invoices as $row) {
+        $startTimestamp = !empty($row['THOI_GIAN_BAT_DAU']) ? strtotime($row['THOI_GIAN_BAT_DAU']) : null;
+        if ($startTimestamp && ($nextSchedule === null || $startTimestamp < $nextSchedule['time'])) {
+            $nextSchedule = [
+                'time' => $startTimestamp,
+                'service' => $row['TEN_DV'] ?? '',
+                'branch' => $row['TEN_CN'] ?? ''
+            ];
+        }
+    }
+}
+
+$paymentHistory = [];
+if (!empty($invoiceIds)) {
+    $idList = implode(',', array_map('intval', $invoiceIds));
+
+    // Lịch sử thanh toán trực tuyến (VNPAY và cổng khác)
+    $onlineQuery = "
+        SELECT ID_HD, GATEWAY, MA_THAM_CHIEU, SO_TIEN, TRANG_THAI, CREATED_AT
+        FROM thanh_toan_truc_tuyen
+        WHERE ID_HD IN ($idList)
+        ORDER BY CREATED_AT DESC
+    ";
+    $onlineResult = mysqli_query($conn, $onlineQuery);
+    if ($onlineResult) {
+        while ($row = mysqli_fetch_assoc($onlineResult)) {
+            $invoiceId = (int) $row['ID_HD'];
+            $paymentHistory[$invoiceId][] = [
+                'type' => strtoupper($row['GATEWAY']),
+                'reference' => $row['MA_THAM_CHIEU'],
+                'amount' => $row['SO_TIEN'],
+                'status' => $row['TRANG_THAI'],
+                'time' => $row['CREATED_AT'],
+                'note' => ''
+            ];
+        }
+    }
+
+    // Lịch sử xác nhận thủ công từ chứng từ thanh toán
+    $manualQuery = "
+        SELECT b.ID_HD, b.TEP_MINH_CHUNG, b.GHI_CHU, b.NGUOI_XAC_NHAN, b.THOI_GIAN_XN, b.KET_QUA
+        FROM bang_chung_thanh_toan b
+        WHERE b.ID_HD IN ($idList)
+        ORDER BY b.THOI_GIAN_XN DESC
+    ";
+    $manualResult = mysqli_query($conn, $manualQuery);
+    if ($manualResult) {
+        while ($row = mysqli_fetch_assoc($manualResult)) {
+            $invoiceId = (int) $row['ID_HD'];
+            $paymentHistory[$invoiceId][] = [
+                'type' => 'XÁC MINH',
+                'reference' => $row['TEP_MINH_CHUNG'],
+                'amount' => null,
+                'status' => $row['KET_QUA'] ?? 'pending',
+                'time' => $row['THOI_GIAN_XN'],
+                'note' => $row['GHI_CHU'] !== null ? $row['GHI_CHU'] : ''
+            ];
+        }
+    }
+}
+
+function formatCurrency($amount)
+{
+    if ($amount === null || $amount === '') {
+        return '';
+    }
+    return number_format((float) $amount, 0, ',', '.') . ' VNĐ';
+}
+
+function formatDateTime($datetime)
+{
+    if (empty($datetime)) {
+        return '';
+    }
+    return date('d/m/Y H:i', strtotime($datetime));
+}
+
+function resolveInvoiceState($statusText, $requestConfirm)
+{
+    $normalized = trim((string) $statusText);
+    if ($normalized === 'Đã thanh toán') {
+        return 'paid';
+    }
+    if ((int) $requestConfirm === 1) {
+        return 'verifying';
+    }
+    return 'unpaid';
+}
+
+function getPaymentBadgeClasses($status, $requestConfirm)
+{
+    if (trim($status) === 'Đã thanh toán') {
+        return ['label' => 'Đã thanh toán', 'class' => 'bg-green-500 text-white'];
+    }
+    if ((int) $requestConfirm === 1) {
+        return ['label' => 'Chờ xác minh', 'class' => 'bg-yellow-400 text-black'];
+    }
+    return ['label' => 'Chưa thanh toán', 'class' => 'bg-slate-200 text-slate-700'];
+}
+
+$filterOptions = [
+    'all' => [
+        'label' => 'Tất cả',
+        'hint' => 'Danh sách đầy đủ',
+        'count' => $statusStats['total']
+    ],
+    'unpaid' => [
+        'label' => 'Chưa thanh toán',
+        'hint' => 'Ưu tiên xử lý sớm',
+        'count' => $statusStats['unpaid']
+    ],
+    'verifying' => [
+        'label' => 'Chờ xác minh',
+        'hint' => 'Đang duyệt chứng từ',
+        'count' => $statusStats['verifying']
+    ],
+    'paid' => [
+        'label' => 'Đã thanh toán',
+        'hint' => 'Hoàn tất và lưu trữ',
+        'count' => $statusStats['paid']
+    ],
+];
+
+$activeFilter = $filterOptions[$activeState] ?? $filterOptions['all'];
+$hasAnyInvoices = $statusStats['total'] > 0;
+$stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) : '';
 ?>
 
-<div class="bg-white p-6 rounded-xl shadow-lg">
-    <h2 class="text-3xl font-extrabold text-indigo-700 mb-4 text-center">Danh sách hóa đơn của bạn</h2>
+<div class="space-y-10">
+    <section class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-indigo-800 to-slate-900 p-8 text-white shadow-2xl">
+        <div class="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+            <div class="space-y-4">
+                <p class="text-xs uppercase tracking-[0.3em] text-indigo-200">Invoice Center</p>
+                <h1 class="text-3xl font-bold leading-tight md:text-4xl">Quản lý hóa đơn &amp; thanh toán</h1>
+                <p class="text-sm text-indigo-100 md:text-base">Theo dõi trọn vẹn hành trình từ đặt lịch đến thanh toán và lưu trữ chứng từ trong một màn hình thống nhất.</p>
+                <?php if ($nextSchedule): ?>
+                    <div class="flex items-center gap-4 rounded-2xl bg-white/10 px-4 py-3 text-sm text-indigo-100 backdrop-blur">
+                        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/20 text-xs font-semibold tracking-widest">CAL</div>
+                        <div>
+                            <p class="text-xs uppercase tracking-wide text-indigo-200">Lịch sắp tới</p>
+                            <p class="text-sm font-semibold text-white">
+                                <?= htmlspecialchars(formatDateTime(date('Y-m-d H:i:s', $nextSchedule['time']))) ?>
+                                • <?= htmlspecialchars($nextSchedule['service']) ?>
+                                <?php if (!empty($nextSchedule['branch'])): ?>
+                                    • <?= htmlspecialchars($nextSchedule['branch']) ?>
+                                <?php endif; ?>
+                            </p>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
+            <?php
+            $heroTiles = [
+                ['label' => 'Tổng hóa đơn', 'value' => number_format($statusStats['total']), 'sub' => 'Toàn bộ lịch sử'],
+                ['label' => 'Chưa thanh toán', 'value' => number_format($statusStats['unpaid']), 'sub' => 'Đang chờ xử lý'],
+                ['label' => 'Chờ xác minh', 'value' => number_format($statusStats['verifying']), 'sub' => 'Đang kiểm tra'],
+                ['label' => 'Đã thanh toán', 'value' => number_format($statusStats['paid']), 'sub' => 'Hoàn tất'],
+            ];
+            ?>
+            <div class="grid flex-1 gap-4 sm:grid-cols-2">
+                <?php foreach ($heroTiles as $tile): ?>
+                    <div class="rounded-2xl bg-white/10 p-4 text-left">
+                        <p class="text-xs uppercase tracking-wide text-indigo-200"><?= htmlspecialchars($tile['label']) ?></p>
+                        <p class="mt-2 text-3xl font-semibold text-white"><?= htmlspecialchars($tile['value']) ?></p>
+                        <p class="text-xs text-indigo-100"><?= htmlspecialchars($tile['sub']) ?></p>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
 
     <?php if ($flashNotice !== ''): ?>
-        <div class="mb-6 rounded-lg border px-4 py-3 text-sm <?php echo $flashType === 'success' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-700'; ?>">
+        <div class="rounded-2xl border px-4 py-3 text-sm <?php echo $flashType === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'; ?>">
             <?php echo htmlspecialchars($flashNotice); ?>
         </div>
     <?php endif; ?>
 
-    <?php if ($result && mysqli_num_rows($result) > 0): ?>
-        <div class="overflow-x-auto">
-            <table class="min-w-full text-sm text-center border border-gray-200 shadow-sm rounded-md overflow-hidden">
-                <thead class="bg-indigo-700 text-white">
-                    <tr>
-                        <th class="p-4">Mã HĐ</th>
-                        <th class="p-4">Dịch Vụ</th>
-                        <th class="p-4">Thời Gian</th>
-                        <th class="p-4">Tổng Tiền</th>
-                        <th class="p-4">Thanh Toán</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    <?php while ($row = mysqli_fetch_assoc($result)):
-                        $qrData = "STK:1234567890|TONGTIEN:" . $row['TONG_TIEN'] . "|ND:THANHTOAN_HD_" . $row['ID_HD'];
-                        $qrImg = "https://api.qrserver.com/v1/create-qr-code/?data=" . urlencode($qrData) . "&size=180x180";
-                        $trangthai = trim($row['TRANGTHAI_THANHTOAN']);
-                        $yeuCau = $row['YEU_CAU_XAC_NHAN'];
-                        $vnpayStatus = $row['VNPAY_TRANG_THAI'] ?? null;
-                        $vnpayReference = $row['MA_THAM_CHIEU'] ?? null;
-                        $vnpayCreated = $row['VNPAY_CREATED_AT'] ?? null;
+    <section class="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+                <p class="text-sm font-semibold text-slate-900">Bộ lọc trạng thái</p>
+                <p class="text-xs text-slate-500">Chọn nhanh nhóm hóa đơn cần kiểm tra</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <?php foreach ($filterOptions as $key => $filter): ?>
+                    <?php
+                    $isActive = $activeState === $key;
+                    $baseClasses = $isActive
+                        ? 'border-slate-900 bg-slate-900 text-white shadow-lg shadow-slate-900/20'
+                        : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50';
                     ?>
-                    <tr class="hover:bg-indigo-50 transition-all duration-200">
-                        <td class="p-3 font-semibold text-gray-800">#<?= $row['ID_HD'] ?></td>
-                        <td class="p-3 text-gray-600"><?= htmlspecialchars($row['TEN_DV']) ?></td>
-                        <td class="p-3 text-gray-600"><?= htmlspecialchars($row['NGAY_GIO']) ?></td>
-                        <td class="p-3 text-blue-600 font-bold text-base">
-                            <?= number_format($row['TONG_TIEN'], 0, ',', '.') ?> VNĐ
-                        </td>
-                        <td class="p-3">
-                            <?php if ($trangthai === 'Đã thanh toán'): ?>
-                                <span class="inline-block bg-green-500 text-white px-4 py-1.5 rounded-full shadow">Đã thanh toán</span>
-                            <?php elseif ((int)$yeuCau === 1): ?>
-                                <span class="inline-block bg-yellow-400 text-black px-4 py-1.5 rounded-full shadow">Chờ xác minh</span>
-                            <?php else: ?>
-                                <button class="bg-blue-600 text-white px-4 py-1.5 rounded-lg shadow hover:bg-blue-700 transition" onclick="togglePaymentOptions(<?= $row['ID_HD'] ?>)">
-                                    Chọn phương thức
-                                </button>
-                                <div id="payment-options-<?= $row['ID_HD'] ?>" class="payment-options mt-3 hidden animate-fade-in">
-                                    <div class="bg-indigo-50 border border-indigo-200 p-4 rounded-md space-y-4">
-                                        <div>
-                                            <h3 class="text-lg font-semibold text-indigo-800 mb-2">Chuyển khoản ngân hàng</h3>
-                                            <p class="mb-2 font-semibold text-gray-700">Chuyển đến STK: <span class="text-indigo-800">1234567890</span></p>
-                                            <img src="<?= $qrImg ?>" alt="QR Code" class="mx-auto mb-2 w-44 h-44 rounded-md border">
-                                            <p class="text-sm text-gray-700">Nội dung: <span class="font-semibold">THANHTOAN_HD_<?= $row['ID_HD'] ?></span></p>
-                                            <form method="POST" action="../Controller/process_payment.php" class="mt-3">
-                                                <input type="hidden" name="invoice_id" value="<?= $row['ID_HD'] ?>">
-                                                <button type="submit" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg transition">Tôi đã chuyển tiền</button>
-                                            </form>
-                                        </div>
-                                        <div class="border-t border-indigo-200 pt-4">
-                                            <h3 class="text-lg font-semibold text-indigo-800 mb-2">Thanh toán qua VNPAY</h3>
-                                            <?php if ($vnpayStatus === 'pending'): ?>
-                                                <p class="text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-3 py-2">
-                                                    Đang chờ xác nhận từ VNPAY. Mã tham chiếu: <?= htmlspecialchars($vnpayReference) ?>.
-                                                </p>
-                                            <?php elseif ($vnpayStatus === 'failed'): ?>
-                                                <p class="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 mb-3">
-                                                    Giao dịch VNPAY gần nhất không thành công. Vui lòng thử lại.
-                                                </p>
-                                            <?php elseif ($vnpayStatus === 'success'): ?>
-                                                <p class="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2 mb-3">
-                                                    Giao dịch VNPAY gần nhất đã thành công vào <?= htmlspecialchars($vnpayCreated) ?>.
-                                                </p>
-                                            <?php endif; ?>
+                    <a href="<?= $key === 'all' ? '?' : '?state=' . urlencode($key) ?>" class="inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition <?= $baseClasses ?>" title="<?= htmlspecialchars($filter['hint']) ?>">
+                        <span><?= htmlspecialchars($filter['label']) ?></span>
+                        <span class="inline-flex min-w-[2rem] items-center justify-center rounded-full bg-white/20 px-2 text-xs font-bold <?= $isActive ? 'text-white' : 'text-slate-500' ?>">
+                            <?= htmlspecialchars($filter['count']) ?>
+                        </span>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
 
-                                            <form method="POST" action="../Controller/vnpay_create_payment.php" class="space-y-3">
-                                                <input type="hidden" name="invoice_id" value="<?= $row['ID_HD'] ?>">
-                                                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg transition">
-                                                    Thanh toán với VNPAY
-                                                </button>
-                                            </form>
-                                            <p class="text-xs text-gray-500 mt-2">
-                                                Bạn sẽ được chuyển tới cổng thanh toán VNPAY để hoàn tất giao dịch.
-                                            </p>
-                                        </div>
+    <?php if (!empty($invoices)): ?>
+        <div class="space-y-8">
+            <?php foreach ($invoices as $row):
+                $invoiceId = (int) $row['ID_HD'];
+                $qrData = "STK:1234567890|TONGTIEN:" . $row['TONG_TIEN'] . "|ND:THANHTOAN_HD_" . $invoiceId;
+                $qrImg = "https://api.qrserver.com/v1/create-qr-code/?data=" . urlencode($qrData) . "&size=180x180";
+                $badge = getPaymentBadgeClasses($row['TRANGTHAI_THANHTOAN'], $row['YEU_CAU_XAC_NHAN']);
+                $stateKey = resolveInvoiceState($row['TRANGTHAI_THANHTOAN'], $row['YEU_CAU_XAC_NHAN']);
+                $history = $paymentHistory[$invoiceId] ?? [];
+                $latestHistory = $history[0] ?? null;
+                $timeline = [
+                    [
+                        'label' => 'Đặt lịch',
+                        'description' => 'Lịch hẹn cho dịch vụ ' . $row['TEN_DV'],
+                        'time' => $row['THOI_GIAN_BAT_DAU'],
+                        'state' => 'done'
+                    ],
+                    [
+                        'label' => 'Xuất hóa đơn',
+                        'description' => 'Hóa đơn đã được phát hành và gửi tới bạn.',
+                        'time' => $row['NGAY_GIO'],
+                        'state' => 'done'
+                    ],
+                    [
+                        'label' => 'Thanh toán',
+                        'description' => trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán'
+                            ? 'Khoản phí đã được tất toán đầy đủ.'
+                            : ((int) $row['YEU_CAU_XAC_NHAN'] === 1
+                                ? 'Studio đang kiểm tra chứng từ thanh toán.'
+                                : 'Vui lòng hoàn tất thanh toán để giữ lịch.'),
+                        'time' => $latestHistory['time'] ?? null,
+                        'state' => trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán'
+                            ? 'done'
+                            : (((int) $row['YEU_CAU_XAC_NHAN'] === 1) ? 'processing' : 'pending')
+                    ],
+                    [
+                        'label' => 'Lịch sử thanh toán',
+                        'description' => empty($history)
+                            ? 'Chưa ghi nhận giao dịch nào.'
+                            : 'Nhật ký giao dịch đã được lưu.',
+                        'time' => $latestHistory['time'] ?? null,
+                        'state' => empty($history) ? 'pending' : 'done'
+                    ],
+                ];
+            ?>
+                <div class="rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                    <div class="flex flex-col lg:flex-row">
+                        <div class="flex-1 space-y-6 p-6">
+                            <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                                <div>
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Hóa đơn</p>
+                                    <div class="mt-1 flex flex-wrap items-center gap-3">
+                                        <h2 class="text-3xl font-bold text-slate-900">#<?= $invoiceId ?></h2>
+                                        <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold <?= $badge['class'] ?>">
+                                            <?= htmlspecialchars($badge['label']) ?>
+                                        </span>
                                     </div>
+                                    <p class="mt-1 text-sm text-slate-500">Phát hành <?= htmlspecialchars(formatDateTime($row['NGAY_GIO'])) ?></p>
                                 </div>
+                                <div class="text-left md:text-right">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tổng cộng</p>
+                                    <p class="mt-1 text-3xl font-bold text-slate-900"><?= htmlspecialchars(formatCurrency($row['TONG_TIEN'])) ?></p>
+                                    <p class="text-xs text-slate-500"><?= htmlspecialchars($row['PHUONGTHUC_THANHTOAN'] ? 'Phương thức: ' . $row['PHUONGTHUC_THANHTOAN'] : 'Chưa chọn phương thức') ?></p>
+                                </div>
+                            </div>
+
+                            <div class="grid gap-4 md:grid-cols-2">
+                                <div class="rounded-2xl border border-slate-100 p-4">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Thông tin lịch hẹn</p>
+                                    <dl class="mt-3 space-y-2 text-sm text-slate-600">
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Dịch vụ</dt><dd class="text-right"><?= htmlspecialchars($row['TEN_DV']) ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Thời gian</dt><dd><?= htmlspecialchars(formatDateTime($row['THOI_GIAN_BAT_DAU'])) ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Chi nhánh</dt><dd><?= htmlspecialchars($row['TEN_CN'] ?? 'Đang cập nhật') ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Trạng thái lịch</dt><dd><?= htmlspecialchars($row['LICH_TRANGTHAI'] ?? 'Chưa xác định') ?></dd></div>
+                                        <?php if (!empty($row['DIA_CHI_HEN'])): ?>
+                                            <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Địa điểm</dt><dd class="text-right text-slate-600 md:text-left"><?= htmlspecialchars($row['DIA_CHI_HEN']) ?></dd></div>
+                                        <?php endif; ?>
+                                    </dl>
+                                </div>
+                                <div class="rounded-2xl border border-slate-100 p-4">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Khách hàng</p>
+                                    <dl class="mt-3 space-y-2 text-sm text-slate-600">
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Họ tên</dt><dd><?= htmlspecialchars($row['HO_TEN'] ?? '—') ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Email</dt><dd><?= htmlspecialchars($row['EMAIL'] ?? '—') ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Số điện thoại</dt><dd><?= htmlspecialchars($row['SDT'] ?? '—') ?></dd></div>
+                                        <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Phương thức</dt><dd><?= htmlspecialchars($row['PHUONGTHUC_THANHTOAN'] ?? 'Chưa cập nhật') ?></dd></div>
+                                    </dl>
+                                </div>
+                            </div>
+
+                            <div class="rounded-2xl border border-dashed border-slate-200 p-4">
+                                <div class="flex items-center justify-between">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Lộ trình xử lý</p>
+                                    <?php if ($latestHistory): ?>
+                                        <p class="text-xs text-slate-400">Cập nhật <?= htmlspecialchars(formatDateTime($latestHistory['time'])) ?></p>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                    <?php foreach ($timeline as $step):
+                                        $boxClass = $step['state'] === 'done'
+                                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                            : ($step['state'] === 'processing'
+                                                ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                                : 'border-slate-200 bg-slate-50 text-slate-600');
+                                        $dotClass = $step['state'] === 'done'
+                                            ? 'bg-emerald-500'
+                                            : ($step['state'] === 'processing' ? 'bg-amber-400' : 'bg-slate-300');
+                                    ?>
+                                        <div class="rounded-xl border <?= $boxClass ?> p-3">
+                                            <div class="flex items-center gap-2">
+                                                <span class="h-2 w-2 rounded-full <?= $dotClass ?>"></span>
+                                                <p class="text-sm font-semibold"><?= htmlspecialchars($step['label']) ?></p>
+                                            </div>
+                                            <p class="mt-1 text-xs leading-relaxed"><?= htmlspecialchars($step['description']) ?></p>
+                                            <?php if (!empty($step['time'])): ?>
+                                                <p class="mt-2 text-xs font-medium text-slate-500"><?= htmlspecialchars(formatDateTime($step['time'])) ?></p>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="w-full border-t border-slate-100 bg-slate-50 p-6 lg:w-80 lg:border-t-0 lg:border-l">
+                            <div class="space-y-5">
+                                <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                                    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Hành động nhanh</p>
+                                    <?php if (trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán'): ?>
+                                        <p class="mt-3 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-700">Chúng tôi đã ghi nhận khoản thanh toán hoàn tất. Xin cảm ơn!</p>
+                                    <?php else: ?>
+                                        <div class="space-y-4">
+                                            <div>
+                                                <p class="text-sm font-semibold text-slate-800">Chuyển khoản ngân hàng</p>
+                                                <p class="mt-1 text-xs text-slate-500">Quét QR hoặc nhập STK: <span class="font-semibold text-slate-900">1234567890</span>.</p>
+                                                <img src="<?= $qrImg ?>" alt="QR hóa đơn <?= $invoiceId ?>" class="mx-auto mt-3 w-40 rounded-lg border border-slate-200">
+                                                <p class="mt-2 text-xs text-slate-600">Nội dung chuyển khoản: <span class="font-semibold">THANHTOAN_HD_<?= $invoiceId ?></span></p>
+                                                <p class="pt-2 text-xs text-slate-500">Hệ thống sẽ tự động cập nhật khi xác nhận thanh toán thành công.</p>
+                                            </div>
+                                            <div class="border-t border-dashed border-slate-200 pt-4">
+                                                <p class="text-sm font-semibold text-slate-800">Thanh toán qua VNPAY</p>
+                                                <?php if (!empty($row['VNPAY_TRANG_THAI'])):
+                                                    $vnpayClass = $row['VNPAY_TRANG_THAI'] === 'success'
+                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                                        : ($row['VNPAY_TRANG_THAI'] === 'failed'
+                                                            ? 'border-red-200 bg-red-50 text-red-700'
+                                                            : 'border-amber-200 bg-amber-50 text-amber-700');
+                                                ?>
+                                                    <p class="mt-2 rounded-lg border <?= $vnpayClass ?> px-3 py-2 text-xs">
+                                                        <?php if ($row['VNPAY_TRANG_THAI'] === 'pending'): ?>
+                                                            Đang chờ xác nhận từ VNPAY. Mã tham chiếu: <?= htmlspecialchars($row['MA_THAM_CHIEU']) ?>.
+                                                        <?php elseif ($row['VNPAY_TRANG_THAI'] === 'failed'): ?>
+                                                            Giao dịch VNPAY gần nhất không thành công. Vui lòng thử lại.
+                                                        <?php else: ?>
+                                                            VNPAY báo thành công lúc <?= htmlspecialchars(formatDateTime($row['VNPAY_CREATED_AT'])) ?>.
+                                                        <?php endif; ?>
+                                                    </p>
+                                                <?php endif; ?>
+                                                <form method="POST" action="../Controller/vnpay_create_payment.php" class="space-y-3 pt-2">
+                                                    <input type="hidden" name="invoice_id" value="<?= $invoiceId ?>">
+                                                    <button type="submit" class="w-full rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-700">Thanh toán với VNPAY</button>
+                                                </form>
+                                                <p class="mt-2 text-xs text-slate-500">Bạn sẽ được chuyển sang cổng VNPAY để hoàn tất giao dịch.</p>
+                                            </div>
+                                        </div>
+                                        <?php if ((int) $row['YEU_CAU_XAC_NHAN'] === 1): ?>
+                                            <p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">Đã gửi yêu cầu xác minh chứng từ, vui lòng chờ phản hồi.</p>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="border-t border-slate-100 bg-slate-50 px-6 py-5">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-sm font-semibold uppercase tracking-wide text-slate-500">Nhật ký giao dịch</h3>
+                            <?php if (!empty($history)): ?>
+                                <span class="text-xs text-slate-400"><?= count($history) ?> bản ghi</span>
                             <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endwhile; ?>
-                </tbody>
-            </table>
+                        </div>
+                        <?php if (!empty($history)): ?>
+                            <div class="mt-4 overflow-x-auto">
+                                <table class="min-w-full divide-y divide-slate-200 text-sm">
+                                    <thead class="bg-slate-100">
+                                        <tr>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Thời gian</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Hình thức</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Mã tham chiếu / Tệp</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Số tiền</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Trạng thái</th>
+                                            <th class="px-3 py-2 text-left font-semibold text-slate-600">Ghi chú</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-100 bg-white">
+                                        <?php foreach ($history as $log):
+                                            $statusText = $log['status'] ?? '';
+                                            $statusClass = 'text-slate-600';
+                                            if ($statusText === 'success' || $statusText === 'dong_y') {
+                                                $statusClass = 'text-emerald-600';
+                                            } elseif ($statusText === 'failed' || $statusText === 'tu_choi') {
+                                                $statusClass = 'text-red-600';
+                                            } elseif ($statusText === 'pending') {
+                                                $statusClass = 'text-amber-600';
+                                            }
+                                        ?>
+                                            <tr>
+                                                <td class="px-3 py-2 text-slate-600"><?= htmlspecialchars(formatDateTime($log['time'])) ?></td>
+                                                <td class="px-3 py-2 font-semibold text-slate-700"><?= htmlspecialchars($log['type']) ?></td>
+                                                <td class="px-3 py-2 text-slate-600">
+                                                    <?= htmlspecialchars($log['reference'] ?: '—') ?>
+                                                </td>
+                                                <td class="px-3 py-2 text-slate-600"><?= htmlspecialchars(formatCurrency($log['amount'])) ?></td>
+                                                <td class="px-3 py-2 font-semibold <?= $statusClass ?>">
+                                                    <?= htmlspecialchars(strtoupper($statusText ?: 'ĐANG XỬ LÝ')) ?>
+                                                </td>
+                                                <td class="px-3 py-2 text-slate-600"><?= htmlspecialchars($log['note'] ?: '') ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        <?php else: ?>
+                            <p class="mt-3 rounded-lg bg-white px-4 py-3 text-sm text-slate-600">Chưa có giao dịch hoặc chứng từ nào cho hóa đơn này.</p>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endforeach; ?>
         </div>
 
         <?php if ($totalPages > 1): ?>
-            <div class="mt-6 flex justify-center gap-2">
+            <div class="flex flex-wrap justify-center gap-2">
                 <?php for ($i = 1; $i <= $totalPages; $i++): ?>
-                    <a href="?p=<?= $i ?>" class="px-4 py-2 border rounded-lg text-sm font-semibold transition-all <?= $i == $page ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-indigo-700 hover:bg-indigo-100' ?>">
+                    <a href="?p=<?= $i ?><?= htmlspecialchars($stateQueryParam, ENT_QUOTES, 'UTF-8') ?>" class="rounded-full px-4 py-2 text-sm font-semibold transition <?= $i === $page ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-700 hover:bg-slate-200' ?>">
                         <?= $i ?>
                     </a>
                 <?php endfor; ?>
             </div>
         <?php endif; ?>
     <?php else: ?>
-        <p class="text-center text-red-600 font-semibold mt-6">Không có hóa đơn nào.</p>
+        <div class="rounded-2xl border border-dashed border-slate-300 bg-white p-10 text-center shadow-sm">
+            <?php if ($hasAnyInvoices): ?>
+                <p class="text-base font-semibold text-slate-700">Không tìm thấy hóa đơn phù hợp với bộ lọc "<?= htmlspecialchars($activeFilter['label']) ?>".</p>
+                <p class="mt-2 text-sm text-slate-500">Thử quay lại danh sách đầy đủ để xem tất cả.</p>
+                <a href="?" class="mt-4 inline-flex items-center justify-center rounded-full bg-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow hover:bg-indigo-700">Xem tất cả hóa đơn</a>
+            <?php else: ?>
+                <p class="text-base font-semibold text-slate-700">Bạn chưa có hóa đơn nào.</p>
+                <p class="mt-2 text-sm text-slate-500">Khi hoàn tất lịch hẹn đầu tiên, hóa đơn sẽ xuất hiện tại đây.</p>
+            <?php endif; ?>
+        </div>
     <?php endif; ?>
 </div>
-
-<script>
-function togglePaymentOptions(id) {
-    const div = document.getElementById('payment-options-' + id);
-    if (div) {
-        div.style.display = (div.style.display === 'none' || div.style.display === '') ? 'block' : 'none';
-    }
-}
-</script>
 
 <?php $conn->close(); ?>

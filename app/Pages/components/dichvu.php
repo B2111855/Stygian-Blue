@@ -102,29 +102,65 @@ if ($combos && $combos->num_rows > 0) {
 ?>
 <!-- services-combos.php (v4) — Bright Theme, SCOPED, A11Y -->
 <section data-sb-services role="region" aria-label="Dịch vụ & Gói ưu đãi"
-  class="relative overflow-hidden rounded-3xl m-4 mt-6 min-h-[70vh] flex items-start justify-center text-left
-         bg-[linear-gradient(135deg,#e6f6ff,#ffffff,#ffe9f6)] text-slate-900">
+  class="relative overflow-hidden rounded-3xl m-4 mt-6 min-h-[70vh] flex items-start justify-center text-left text-slate-900">
 
   <!-- Pastel bokeh -->
-  <div aria-hidden="true" class="pointer-events-none absolute -top-24 -left-24 w-[44rem] h-[44rem] rounded-full blur-3xl opacity-30 bg-cyan-200 mix-blend-screen"></div>
-  <div aria-hidden="true" class="pointer-events-none absolute -bottom-24 -right-24 w-[36rem] h-[36rem] rounded-full blur-3xl opacity-25 bg-fuchsia-200 mix-blend-screen"></div>
+  <div aria-hidden="true" class="pointer-events-none absolute -top-24 -left-24 w-[44rem] h-[44rem] rounded-full blur-3xl opacity-35 bg-[#fef3c7] mix-blend-screen"></div>
+  <div aria-hidden="true" class="pointer-events-none absolute -bottom-24 -right-24 w-[36rem] h-[36rem] rounded-full blur-3xl opacity-25 bg-[#fdf2f8] mix-blend-screen"></div>
 
   <div class="relative z-10 w-full max-w-7xl mx-auto p-6">
-    <h1 class="text-3xl md:text-4xl font-extrabold text-center mb-6 text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-fuchsia-600">
+    <div class="sb-hero grid gap-8 md:grid-cols-[1.15fr,1fr] items-center mb-10">
+      <div class="hero-copy">
+        <p class="hero-kicker">Stygian Blue Studio</p>
+        <h1 class="hero-title">Trọn vẹn từng khuôn hình nghệ thuật</h1>
+        <p class="hero-subtitle">
+          Đội ngũ nhiếp ảnh gia của chúng tôi giúp bạn kể lại câu chuyện bằng ánh sáng,
+          gam màu tinh tế và phong cách cá nhân hóa cho từng shoot hình.
+        </p>
+        <div class="hero-tags" aria-label="Các phong cách chủ đạo">
+          <span><i class="fas fa-burst"></i> Fine-art Portrait</span>
+          <span><i class="fas fa-ring"></i> Lễ cưới</span>
+          <span><i class="fas fa-user-tie"></i> Fashion Lookbook</span>
+        </div>
+        <ul class="hero-stats" aria-label="Một số ghi nhận về studio">
+          <li><strong>12+</strong> gói concept độc quyền</li>
+          <li><strong>4K</strong> album trọn bộ đã bàn giao</li>
+          <li><strong>24/7</strong> hỗ trợ đặt lịch linh hoạt</li>
+        </ul>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <div class="hero-lens">
+          <span class="lens-ring ring-1"></span>
+          <span class="lens-ring ring-2"></span>
+          <span class="lens-ring ring-3"></span>
+          <span class="lens-glare"></span>
+          <span class="lens-glow"></span>
+        </div>
+        <div class="hero-film">
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="sb-section-title">
       Dịch vụ & Gói ưu đãi
-    </h1>
+    </h2>
 
     <!-- Tabs + Tools -->
     <div class="flex flex-col md:flex-row md:items-center gap-3 mb-4" role="tablist" aria-label="Chuyển tab dịch vụ/combos">
       <div class="flex items-center gap-2">
         <button role="tab" id="tabbtn-services" aria-controls="tab-services" aria-selected="true"
                 data-tab="tab-services"
-                class="sb-tab px-4 py-2 rounded-xl bg-white text-slate-900 font-medium border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                class="sb-tab px-4 py-2 rounded-xl bg-white text-slate-900 font-medium border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-300/70">
           Dịch vụ lẻ
         </button>
         <button role="tab" id="tabbtn-combos" aria-controls="tab-combos" aria-selected="false"
                 data-tab="tab-combos"
-                class="sb-tab px-4 py-2 rounded-xl bg-white/70 text-slate-700 hover:bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                class="sb-tab px-4 py-2 rounded-xl bg-white/70 text-slate-700 hover:bg-white border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-orange-300/70">
           Combo / Gói
         </button>
       </div>
@@ -132,7 +168,7 @@ if ($combos && $combos->num_rows > 0) {
       <div class="md:ml-auto flex items-center gap-2">
         <label class="relative">
           <input id="sb-search" type="search" placeholder="Tìm theo tên…"
-                 class="peer w-56 md:w-72 px-3 py-2 rounded-xl bg-white/90 text-slate-800 placeholder-slate-400 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                 class="peer w-56 md:w-72 px-3 py-2 rounded-xl bg-white/90 text-slate-800 placeholder-slate-400 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-300/70"
                  aria-label="Tìm kiếm theo tên">
           <i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 peer-focus:text-cyan-500"></i>
         </label>
@@ -140,7 +176,7 @@ if ($combos && $combos->num_rows > 0) {
           <i class="fas fa-times"></i>
         </button>
         <select id="sb-sort" aria-label="Sắp xếp"
-                class="px-3 py-2 rounded-xl bg-white/90 text-slate-800 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-cyan-400">
+          class="px-3 py-2 rounded-xl bg-white/90 text-slate-800 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-orange-300/70">
           <option value="">Sắp xếp</option>
           <option value="priceAsc">Giá thấp → cao</option>
           <option value="priceDesc">Giá cao → thấp</option>
@@ -172,7 +208,7 @@ if ($combos && $combos->num_rows > 0) {
       // Link xem danh sách & giá thiết bị
       $equipListUrl = '/StygianBlue/app/Pages/views/thietbi.php';
   ?>
-  <article class="sb-card group rounded-2xl overflow-hidden bg-white/85 backdrop-blur-xl border border-slate-200 hover:shadow-xl transition focus-within:ring-2 focus-within:ring-cyan-400"
+  <article class="sb-card group rounded-2xl overflow-hidden bg-white/85 backdrop-blur-xl border border-slate-200 hover:shadow-xl transition focus-within:ring-2 focus-within:ring-orange-300/60"
            tabindex="0"
            data-name="<?= htmlspecialchars($s['TEN_DV']) ?>"
            data-price="<?= $giaRaw ?>"
@@ -180,7 +216,7 @@ if ($combos && $combos->num_rows > 0) {
            data-duration="<?= $duration ?>">
 
     <!-- Ảnh: clickable -->
-    <a class="block relative aspect-[16/9] focus:outline-none focus:ring-2 focus:ring-cyan-400"
+     <a class="block relative aspect-[16/9] focus:outline-none focus:ring-2 focus:ring-orange-300/70"
        href="<?= htmlspecialchars($isEquipment ? $equipListUrl : $detailUrl) ?>"
        aria-label="<?= $isEquipment 
           ? 'Xem danh sách & giá thiết bị cho thuê' 
@@ -263,7 +299,7 @@ if ($combos && $combos->num_rows > 0) {
           </a>
         <?php else: ?>
           <!-- DỊCH VỤ THƯỜNG -->
-          <a href="<?= htmlspecialchars($bookingUrl) ?>"
+           <a href="<?= htmlspecialchars($bookingUrl) ?>"
              class="btn-primary flex-1 text-center whitespace-nowrap">
             <i class="fas fa-calendar-check"></i> Đặt lịch
           </a>
@@ -300,13 +336,13 @@ if ($combos && $combos->num_rows > 0) {
           $savePercent = ($tienLe>0 && $tong>0) ? round( (1 - ($tong/$tienLe))*100 ) : 0;
           $comboUrl  = '/StygianBlue/app/Pages/views/chitiet.php?type=combo&id='.$gid;
       ?>
-      <article class="sb-card group rounded-2xl overflow-hidden bg-white/85 backdrop-blur-xl border border-slate-200 hover:shadow-xl transition focus-within:ring-2 focus-within:ring-cyan-400"
+      <article class="sb-card group rounded-2xl overflow-hidden bg-white/85 backdrop-blur-xl border border-slate-200 hover:shadow-xl transition focus-within:ring-2 focus-within:ring-orange-300/60"
                tabindex="0"
                data-name="<?= htmlspecialchars($g['TEN_GOI']) ?>"
                data-price="<?= $tong ?>"
                data-rating="0"
                data-duration="0">
-        <a class="block relative aspect-[16/9] focus:outline-none focus:ring-2 focus:ring-cyan-400"
+        <a class="block relative aspect-[16/9] focus:outline-none focus:ring-2 focus:ring-orange-300/70"
            href="<?= htmlspecialchars($comboUrl) ?>" aria-label="Xem chi tiết gói: <?= htmlspecialchars($g['TEN_GOI']) ?>">
           <img loading="lazy" src="<?= htmlspecialchars($img) ?>" alt="<?= htmlspecialchars($g['TEN_GOI']) ?>" class="w-full h-full object-cover">
           <div class="absolute top-2 left-2 flex items-center gap-2">
@@ -353,18 +389,186 @@ if ($combos && $combos->num_rows > 0) {
   @media (prefers-reduced-motion: reduce){
     [data-sb-services] *{ transition:none !important; animation:none !important; }
   }
-  [data-sb-services]{ overflow-x:hidden; }
+  [data-sb-services]{
+    overflow-x:hidden;
+    background:radial-gradient(circle at top,#fff7ed 0%,#fdf4ff 45%,#ffffff 100%);
+    border:1px solid rgba(15,23,42,.08);
+    box-shadow:0 35px 70px -40px rgba(30,41,59,.55);
+  }
+
+  [data-sb-services] .sb-hero{
+    position:relative;
+    padding:clamp(1.5rem,2vw + 1rem,2.75rem);
+    border-radius:32px;
+    background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(249,250,255,.7));
+    border:1px solid rgba(148,163,184,.2);
+    box-shadow:inset 0 1px 0 rgba(248,250,252,.9),0 20px 45px -35px rgba(15,23,42,.6);
+    overflow:hidden;
+  }
+  [data-sb-services] .sb-hero::after{
+    content:"";
+    position:absolute;
+    inset:-25%;
+    background:radial-gradient(circle at 20% 20%,rgba(125,211,252,.28),transparent 60%),
+               radial-gradient(circle at 80% 30%,rgba(251,191,36,.25),transparent 55%),
+               radial-gradient(circle at 50% 90%,rgba(244,114,182,.22),transparent 55%);
+    z-index:0;
+  }
+  [data-sb-services] .hero-copy,
+  [data-sb-services] .hero-art{
+    position:relative;
+    z-index:1;
+  }
+  [data-sb-services] .hero-kicker{
+    font-size:.75rem;
+    letter-spacing:.32em;
+    text-transform:uppercase;
+    font-weight:700;
+    color:#f97316;
+    margin-bottom:.75rem;
+  }
+  [data-sb-services] .hero-title{
+    font-size:clamp(1.9rem,3vw,2.65rem);
+    font-weight:800;
+    color:#0f172a;
+    margin-bottom:.75rem;
+    line-height:1.2;
+  }
+  [data-sb-services] .hero-subtitle{
+    color:#475569;
+    max-width:38ch;
+    font-size:1rem;
+    margin-bottom:1.6rem;
+  }
+  [data-sb-services] .hero-tags{
+    display:flex;
+    flex-wrap:wrap;
+    gap:.65rem;
+    margin-bottom:1.75rem;
+  }
+  [data-sb-services] .hero-tags span{
+    padding:.45rem .9rem;
+    border-radius:9999px;
+    background:rgba(244,114,182,.12);
+    color:#9d174d;
+    font-size:.85rem;
+    font-weight:600;
+    border:1px solid rgba(244,114,182,.25);
+    backdrop-filter:blur(6px);
+  }
+  [data-sb-services] .hero-stats{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+    gap:.75rem;
+    list-style:none;
+    padding:0;
+    margin:0;
+  }
+  [data-sb-services] .hero-stats li{
+    background:rgba(255,255,255,.82);
+    border:1px solid rgba(148,163,184,.25);
+    border-radius:18px;
+    padding:.9rem 1.1rem;
+    font-size:.85rem;
+    color:#475569;
+    box-shadow:0 20px 40px -35px rgba(15,23,42,.45);
+  }
+  [data-sb-services] .hero-stats strong{
+    display:block;
+    font-size:1.35rem;
+    font-weight:800;
+    color:#0f172a;
+  }
+  [data-sb-services] .hero-art{
+    display:grid;
+    place-items:center;
+    gap:1.25rem;
+  }
+  [data-sb-services] .hero-lens{
+    position:relative;
+    width:min(320px,100%);
+    aspect-ratio:1 / 1;
+    border-radius:50%;
+    background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.65),rgba(14,116,144,.28) 45%,rgba(15,23,42,.55) 100%);
+    box-shadow:inset 0 12px 30px rgba(15,23,42,.32),0 25px 65px -40px rgba(15,23,42,.65);
+    overflow:hidden;
+  }
+  [data-sb-services] .lens-ring{
+    position:absolute;
+    inset:12%;
+    border-radius:50%;
+    border:1px solid rgba(255,255,255,.35);
+    mix-blend-mode:screen;
+  }
+  [data-sb-services] .ring-2{ inset:22%; border-color:rgba(148,163,184,.28); }
+  [data-sb-services] .ring-3{ inset:34%; border-color:rgba(148,163,184,.18); }
+  [data-sb-services] .lens-glare{
+    position:absolute;
+    top:12%;
+    right:16%;
+    width:32%;
+    height:32%;
+    border-radius:50%;
+    background:radial-gradient(circle,rgba(255,255,255,.9),rgba(255,255,255,0));
+    opacity:.6;
+  }
+  [data-sb-services] .lens-glow{
+    position:absolute;
+    bottom:8%;
+    left:10%;
+    width:45%;
+    height:45%;
+    border-radius:50%;
+    background:radial-gradient(circle,rgba(6,182,212,.45),rgba(59,130,246,0));
+    filter:blur(4px);
+    opacity:.55;
+  }
+  [data-sb-services] .hero-film{
+    display:flex;
+    gap:.55rem;
+    justify-content:center;
+    align-items:center;
+  }
+  [data-sb-services] .hero-film span{
+    display:block;
+    width:38px;
+    height:56px;
+    border-radius:10px;
+    background:linear-gradient(180deg,rgba(15,23,42,.12),rgba(15,23,42,.45));
+    position:relative;
+    overflow:hidden;
+    box-shadow:0 10px 28px -20px rgba(15,23,42,.55);
+  }
+  [data-sb-services] .hero-film span::before{
+    content:"";
+    position:absolute;
+    inset:4px;
+    border-radius:8px;
+    border:1px solid rgba(255,255,255,.35);
+    background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.28),rgba(15,23,42,.4));
+  }
+
+  [data-sb-services] .sb-section-title{
+    font-size:clamp(1.65rem,2.5vw,2.3rem);
+    font-weight:800;
+    text-align:center;
+    margin-bottom:2.25rem;
+    background:linear-gradient(90deg,#0ea5e9,#8b5cf6,#f97316);
+    background-clip:text;
+    -webkit-background-clip:text;
+    color:transparent;
+  }
 
   /* Buttons & chips */
   [data-sb-services] .btn-primary{
-    display:inline-flex;align-items:center;gap:.5rem;padding:.6rem .9rem;border-radius:9999px;font-weight:700;
-    color:#fff;background:linear-gradient(90deg,#06b6d4,#a78bfa); border:1px solid transparent;
-    box-shadow:0 8px 20px rgba(6,182,212,.25); transition:transform .15s ease,filter .15s ease;
+    display:inline-flex;align-items:center;gap:.5rem;padding:.62rem .95rem;border-radius:9999px;font-weight:700;
+    color:#fff;background:linear-gradient(90deg,#f97316,#fb7185,#6366f1); border:1px solid transparent;
+    box-shadow:0 12px 30px rgba(249,115,22,.25); transition:transform .2s ease,filter .2s ease;
   }
   [data-sb-services] .btn-primary:hover{ transform:translateY(-1px); filter:brightness(1.05); }
   [data-sb-services] .btn-soft{
-    display:inline-flex;align-items:center;gap:.5rem;padding:.6rem .9rem;border-radius:9999px;font-weight:600;
-    background:linear-gradient(180deg,#fff,#f8fafc); color:#0f172a;border:1px solid #e2e8f0; box-shadow:0 1px 0 rgba(2,6,23,.04);
+    display:inline-flex;align-items:center;gap:.5rem;padding:.6rem .95rem;border-radius:9999px;font-weight:600;
+    background:linear-gradient(180deg,#fff,#f8fafc); color:#0f172a;border:1px solid rgba(148,163,184,.25); box-shadow:0 1px 0 rgba(2,6,23,.04);
   }
 
   [data-sb-services] .chip{
@@ -384,13 +588,44 @@ if ($combos && $combos->num_rows > 0) {
   [data-sb-services] .sb-stars::after{content:"★★★★★";letter-spacing:2px;color:#d1d5db;font-size:14px;position:absolute;left:0;top:0;width:calc(100% - var(--pct));overflow:hidden}
 
   /* Cards */
-  [data-sb-services] .sb-card{ transform:translateZ(0); }
-  [data-sb-services] .sb-card:hover img{ transform:scale(1.03); transition:transform .35s ease; }
-  [data-sb-services] .sb-card img{ transition:transform .35s ease; }
+  [data-sb-services] .sb-card{
+    position:relative;
+    transform:translateZ(0);
+    background:rgba(255,255,255,.92);
+    border:1px solid rgba(148,163,184,.22);
+    box-shadow:0 24px 50px -35px rgba(30,41,59,.45);
+  }
+  [data-sb-services] .sb-card::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    border-radius:inherit;
+    background:linear-gradient(180deg,rgba(255,255,255,0),rgba(255,228,230,.25));
+    opacity:0;
+    transition:opacity .35s ease;
+    pointer-events:none;
+  }
+  [data-sb-services] .sb-card:hover::before{ opacity:1; }
+  [data-sb-services] .sb-card::after{
+    content:"";
+    position:absolute;
+    top:10px;
+    left:50%;
+    transform:translateX(-50%);
+    width:88%;
+    height:14px;
+    background:
+      radial-gradient(circle at 0% 50%,rgba(30,41,59,.28) 0,rgba(30,41,59,0) 65%),
+      radial-gradient(circle at 100% 50%,rgba(30,41,59,.28) 0,rgba(30,41,59,0) 65%);
+    opacity:.28;
+    pointer-events:none;
+  }
+  [data-sb-services] .sb-card:hover img{ transform:scale(1.05); transition:transform .35s ease; }
+  [data-sb-services] .sb-card img{ transition:transform .35s ease; filter:saturate(1.05) contrast(1.05); }
 
   /* Clamp fallback */
-  .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-  .line-clamp-3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-clamp:2;overflow:hidden}
+  .line-clamp-3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;line-clamp:3;overflow:hidden}
 </style>
 
 <script>

@@ -20,7 +20,7 @@ $page       = 1; // trang đầu load qua AJAX nên mặc 1
 
   <div class="relative z-10 w-full max-w-6xl mx-auto p-6">
     <h2 class="text-3xl md:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-sky-600 to-fuchsia-600 mb-6">
-      📝 Phản hồi từ khách hàng
+      Phản hồi từ khách hàng
     </h2>
 
     <!-- Toolbar -->
@@ -78,12 +78,7 @@ $page       = 1; // trang đầu load qua AJAX nên mặc 1
   </div>
 </section>
 
-<!-- (Tùy chọn) Đổi nhãn sắp xếp -->
-<select id="fbSort" class="rounded-xl bg-white/90 border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-400" aria-label="Sắp xếp">
-  <option value="newest">Mới nhất</option>
-  <option value="highest">Điểm cao</option>
-  <option value="byService">Theo dịch vụ (A→Z)</option>
-</select>
+
 
 
 <style>

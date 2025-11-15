@@ -6,6 +6,148 @@ include '../../../database/config.php';
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function selected($a,$b){ return $a===$b ? 'selected' : ''; }
 
+if (!function_exists('tp_app_base_uri')) {
+  function tp_app_base_uri(){
+    static $base = null;
+    if ($base !== null) {
+      return $base;
+    }
+    $script = $_SERVER['SCRIPT_NAME'] ?? '';
+    $script = str_replace('\\', '/', (string)$script);
+    $pos = strpos($script, '/app/');
+    if ($pos !== false) {
+      $base = substr($script, 0, $pos);
+    } else {
+      $base = '';
+    }
+    $base = rtrim($base, '/');
+    return $base;
+  }
+}
+
+if (!function_exists('tp_asset_url')) {
+  function tp_asset_url($path, $fallback = ''){
+    $path = trim((string)$path);
+    if ($path === '' && $fallback !== '') {
+      $path = trim($fallback);
+    }
+    if ($path === '') {
+      return '';
+    }
+    $path = str_replace('\\', '/', $path);
+    if (preg_match('#^(?:https?:)?//#i', $path) || strpos($path, 'data:') === 0) {
+      return $path;
+    }
+    if (strpos($path, '../') === 0 || strpos($path, './') === 0) {
+      return $path;
+    }
+    $normalized = '/' . ltrim($path, '/');
+    $base = tp_app_base_uri();
+    if ($base !== '' && strpos($normalized, $base . '/') === 0) {
+      return $normalized;
+    }
+    return ($base === '' ? '' : $base) . $normalized;
+  }
+}
+
+if (!function_exists('tp_app_root_path')) {
+  function tp_app_root_path(){
+    static $root = null;
+    if ($root !== null) {
+      return $root;
+    }
+    $root = dirname(__DIR__, 3);
+    return $root;
+  }
+}
+
+if (!function_exists('tp_normalize_asset_input')) {
+  function tp_normalize_asset_input($path){
+    $path = trim((string)$path);
+    if ($path === '') {
+      return '';
+    }
+    if (preg_match('#^(?:https?:)?//#i', $path) || strpos($path, 'data:') === 0) {
+      return $path;
+    }
+    $path = str_replace('\\', '/', $path);
+    while (strpos($path, '../') === 0) {
+      $path = substr($path, 3);
+    }
+    $path = preg_replace('#^\./+#', '', $path);
+    return ltrim($path, '/');
+  }
+}
+
+if (!function_exists('tp_asset_exists')) {
+  function tp_asset_exists($path){
+    $normalized = tp_normalize_asset_input($path);
+    if ($normalized === '') {
+      return false;
+    }
+    if (preg_match('#^(?:https?:)?//#i', $normalized) || strpos($normalized, 'data:') === 0) {
+      return true;
+    }
+    $full = rtrim(tp_app_root_path(), '/\\') . '/' . $normalized;
+    if (is_file($full)) {
+      return true;
+    }
+    $fallbackFull = realpath(__DIR__ . '/' . $normalized);
+    return $fallbackFull !== false && is_file($fallbackFull);
+  }
+}
+
+if (!function_exists('tp_find_asset_variant')) {
+  function tp_find_asset_variant($path){
+    $normalized = tp_normalize_asset_input($path);
+    if ($normalized === '' || preg_match('#^(?:https?:)?//#i', $normalized) || strpos($normalized, 'data:') === 0) {
+      return '';
+    }
+    $directory = pathinfo($normalized, PATHINFO_DIRNAME);
+    $directory = $directory === '.' ? '' : $directory;
+    $filename = pathinfo($normalized, PATHINFO_FILENAME);
+    $extension = pathinfo($normalized, PATHINFO_EXTENSION);
+    if ($filename === '') {
+      return '';
+    }
+    if (!preg_match('/^(.+)_\d+$/', $filename, $matches)) {
+      return '';
+    }
+    $baseName = $matches[1];
+    $searchDir = rtrim(tp_app_root_path(), '/\\') . ($directory === '' ? '' : '/' . $directory);
+    if (!is_dir($searchDir)) {
+      return '';
+    }
+    $pattern = $searchDir . '/' . $baseName . '_*' . ($extension !== '' ? '.' . $extension : '');
+    $candidates = glob($pattern);
+    if (!$candidates) {
+      return '';
+    }
+    sort($candidates);
+    $picked = end($candidates);
+    $relative = $directory === '' ? basename($picked) : $directory . '/' . basename($picked);
+    return $relative;
+  }
+}
+
+if (!function_exists('tp_pick_image_path')) {
+  function tp_pick_image_path($path, $fallback = ''){
+    $normalized = tp_normalize_asset_input($path);
+    if ($normalized !== '' && tp_asset_exists($normalized)) {
+      return $normalized;
+    }
+    if ($normalized !== '') {
+      $variant = tp_find_asset_variant($normalized);
+      if ($variant !== '' && tp_asset_exists($variant)) {
+        return $variant;
+      }
+    }
+    return tp_normalize_asset_input($fallback);
+  }
+}
+
+$defaultImagePath = 'public/images/bg01.png';
+
 // ==== Input (GET) ====
 $kw        = trim($_GET['q'] ?? '');
 $branch    = $_GET['cn'] ?? '';
@@ -134,6 +276,8 @@ switch ($sort) {
 
 $errorMessage = null;
 $result = null;
+$rawRows = [];
+$catalogItems = [];
 
 $stmt = $conn->prepare($sql);
 if (!$stmt) {
@@ -149,6 +293,14 @@ if (!$stmt) {
   }
 }
 
+if ($result) {
+  while ($row = $result->fetch_assoc()) {
+    $rawRows[] = $row;
+  }
+  $result->free();
+  $result = null;
+}
+
 $statusMap = [
   'san_sang' => ['Sẵn sàng', 'bg-emerald-100/80 text-emerald-700 border border-emerald-200/70'],
   'dang_thue' => ['Đang thuê', 'bg-indigo-100/80 text-indigo-700 border border-indigo-200/70'],
@@ -156,7 +308,67 @@ $statusMap = [
   'ngung' => ['Ngưng cho thuê', 'bg-rose-100/80 text-rose-700 border border-rose-200/70'],
 ];
 
-$totalFound = $result ? $result->num_rows : 0;
+$groupedMap = [];
+foreach ($rawRows as $row) {
+  $keyParts = [
+    strtolower(trim((string)($row['TEN_TP'] ?? ''))),
+    strtoupper(trim((string)($row['SIZE'] ?? ''))),
+    strtoupper(trim((string)($row['MAU'] ?? ''))),
+  ];
+  $groupKey = implode('|', $keyParts);
+  if ($groupKey === '||') {
+    $groupKey = 'tp_' . $row['ID_TP'];
+  }
+
+  $branchSnapshot = [
+    'ID_TP' => $row['ID_TP'],
+    'ID_CN' => $row['ID_CN'],
+    'TEN_CN' => $row['TEN_CN'],
+    'DON_GIA' => (int)$row['DON_GIA'],
+    'TINH_TRANG' => $row['TINH_TRANG'],
+    'HIEU_LUC_TU' => $row['HIEU_LUC_TU'],
+  ];
+
+  if (!isset($groupedMap[$groupKey])) {
+    $row['DON_GIA'] = (int)$row['DON_GIA'];
+    $row['BRANCHES'] = [$branchSnapshot];
+    $row['PRIMARY_BRANCH_INDEX'] = 0;
+    $groupedMap[$groupKey] = $row;
+    continue;
+  }
+
+  $current = &$groupedMap[$groupKey];
+  $current['BRANCHES'][] = $branchSnapshot;
+  $shouldPromote = false;
+
+  if ($branchSnapshot['TINH_TRANG'] === 'san_sang' && $current['TINH_TRANG'] !== 'san_sang') {
+    $shouldPromote = true;
+  } elseif ($branchSnapshot['TINH_TRANG'] === $current['TINH_TRANG'] && $branchSnapshot['DON_GIA'] < (int)$current['DON_GIA']) {
+    $shouldPromote = true;
+  }
+
+  if ($shouldPromote) {
+    foreach (['ID_TP','ID_CN','TEN_CN','TINH_TRANG','DON_GIA','HIEU_LUC_TU'] as $field) {
+      if (array_key_exists($field, $row)) {
+        $current[$field] = $row[$field];
+      }
+    }
+    $current['DON_GIA'] = (int)$current['DON_GIA'];
+    $current['PRIMARY_BRANCH_INDEX'] = count($current['BRANCHES']) - 1;
+  }
+  unset($current);
+}
+
+$catalogItems = array_values($groupedMap);
+$totalFound = count($catalogItems);
+
+$defaultImageResolved = tp_pick_image_path($defaultImagePath, $defaultImagePath);
+$defaultImageUrl = tp_asset_url($defaultImageResolved === '' ? $defaultImagePath : $defaultImageResolved, $defaultImagePath);
+foreach ($catalogItems as &$item) {
+  $resolvedPath = tp_pick_image_path($item['HINH_ANH'] ?? '', $defaultImagePath);
+  $item['HINH_ANH'] = tp_asset_url($resolvedPath === '' ? $defaultImagePath : $resolvedPath, $defaultImagePath);
+}
+unset($item);
 
 $activeFilters = [];
 if ($kw !== '') {
@@ -203,6 +415,15 @@ if ($qty > 1) {
 $advancedOpen = $size !== '' || $color !== '' || $minPrice !== '' || $maxPrice !== '' || $rentFrom !== '' || $rentTo !== '' || $qty > 1;
 
 $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
+
+$readyCount = 0;
+foreach ($catalogItems as $item) {
+  if (($item['TINH_TRANG'] ?? '') === 'san_sang') {
+    $readyCount++;
+  }
+}
+
+$heroBackgroundUrl = $defaultImageUrl;
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -220,12 +441,83 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
       background: linear-gradient(180deg, #f5f6fa 0%, #ffffff 45%, #f2f5ff 100%);
     }
     .page-shell {
-      max-width: 1200px;
+      max-width: 1440px;
       margin: 0 auto;
-      padding: 3rem 1.5rem 4rem;
+      padding: 3rem 1.75rem 4.5rem;
+    }
+    .hero-grid {
+      display: grid;
+      gap: 2.5rem;
+      align-items: center;
+    }
+    @media (min-width: 1024px) {
+      .hero-grid {
+        grid-template-columns: minmax(0, 1fr) 460px;
+      }
     }
     .hero-title {
       letter-spacing: -0.02em;
+    }
+    .hero-visual {
+      position: relative;
+      border-radius: 1.75rem;
+      overflow: hidden;
+      min-height: 320px;
+      background: radial-gradient(circle at top, rgba(79, 70, 229, 0.3), rgba(15, 23, 42, 0.85)),
+        url('<?=h($heroBackgroundUrl)?>') center/cover;
+      box-shadow: 0 35px 80px -40px rgba(15, 23, 42, 0.7);
+    }
+    .hero-visual::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: inherit;
+    }
+    .hero-quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    .hero-pill {
+      flex: 1 1 220px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.9rem 1.1rem;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.85);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+    }
+    .hero-pill span {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #4338ca;
+    }
+    .hero-metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    .hero-metric {
+      flex: 1 1 160px;
+      padding: 1rem 1.2rem;
+      border-radius: 1.25rem;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: 0 18px 40px -30px rgba(30, 41, 59, 0.4);
+    }
+    .hero-metric p {
+      margin: 0;
+    }
+    .line-clamp-2 {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     .info-card {
       background: rgba(255, 255, 255, 0.85);
@@ -266,34 +558,78 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
     .filter-shell:focus-within::after {
       opacity: 1;
     }
+    @media (min-width: 1024px) {
+      .filter-shell {
+        position: sticky;
+        top: 2rem;
+        align-self: flex-start;
+      }
+    }
     .square-img {
       width: 100%;
       aspect-ratio: 3 / 4;
       object-fit: cover;
       border-radius: 1rem;
     }
+    .meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: #334155;
+      background: rgba(226, 232, 240, 0.75);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+    .branch-chip {
+      color: #1d4ed8;
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.4);
+    }
     .result-card {
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 255, 0.92) 100%);
-      border-radius: 1.25rem;
-      border: 1px solid rgba(148, 163, 184, 0.22);
-      box-shadow: 0 18px 40px -28px rgba(30, 64, 175, 0.35);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 255, 0.92) 100%);
+      border-radius: 1.1rem;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      box-shadow: 0 18px 40px -30px rgba(30, 64, 175, 0.35);
       transition: transform 0.3s ease, box-shadow 0.3s ease;
+      padding: 1.25rem;
+    }
+    .results-grid {
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      align-items: stretch;
     }
     .result-card:hover {
-      transform: translateY(-6px);
+      transform: translateY(-4px);
       box-shadow: 0 28px 60px -28px rgba(46, 64, 161, 0.35);
     }
     .status-badge {
       position: absolute;
-      top: 0.75rem;
-      left: 0.75rem;
+      top: 0.65rem;
+      left: 0.65rem;
       border-radius: 999px;
-      padding: 0.35rem 0.9rem;
-      font-size: 0.7rem;
+      padding: 0.3rem 0.75rem;
+      font-size: 0.65rem;
       font-weight: 700;
       letter-spacing: 0.03em;
       text-transform: uppercase;
       box-shadow: 0 10px 25px -18px rgba(17, 24, 39, 0.5);
+    }
+    .card-attributes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+    }
+    .card-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding-top: 0.75rem;
+    }
+    .card-actions a {
+      flex: 1;
     }
     .estimate-text {
       color: #0f766e;
@@ -315,14 +651,62 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
 </head>
 <body class="min-h-screen text-slate-800">
   <div class="page-shell">
-    <header class="text-center space-y-3 mb-10">
-      <p class="text-sm font-medium uppercase tracking-[0.3em] text-indigo-500">Stygian Blue Studio</p>
-      <h1 class="hero-title text-4xl md:text-5xl font-semibold text-slate-900">Khám phá tủ đồ phù hợp cho từng khoảnh khắc</h1>
-      <p class="max-w-2xl mx-auto text-base text-slate-600">
-        Lọc nhanh, xem thông tin rõ ràng và đặt lịch thuê chỉ trong một bước để bạn luôn sẵn sàng cho mọi sự kiện.
-      </p>
-      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 border border-indigo-100 text-indigo-700 font-semibold shadow-sm">
-        <?= number_format($totalFound, 0, ',', '.') ?> trang phục sẵn sàng phù hợp với tiêu chí của bạn
+    <header class="hero-grid mb-12">
+      <div class="space-y-6">
+        <div class="space-y-3">
+          <p class="text-sm font-medium uppercase tracking-[0.3em] text-indigo-500">Stygian Blue Studio</p>
+          <h1 class="hero-title text-4xl md:text-5xl font-semibold text-slate-900">Khám phá tủ đồ phù hợp cho từng khoảnh khắc</h1>
+          <p class="text-base text-slate-600 max-w-2xl">
+            Lọc nhanh, xem thông tin rõ ràng và đặt lịch thuê chỉ trong một bước để bạn luôn sẵn sàng cho mọi sự kiện.
+          </p>
+        </div>
+        <div class="hero-quick-actions">
+          <div class="hero-pill">
+            <span>Nhập từ khóa yêu thích</span>
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-slate-800"
+              data-scroll-to="filters"
+            >
+              Bắt đầu lọc
+              <svg width="16" height="16" fill="none" stroke="currentColor" class="opacity-80">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m11 11 4 4m-2.5-7a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0Z" />
+              </svg>
+            </button>
+          </div>
+          <div class="hero-pill">
+            <span>Mở bộ lọc nâng cao</span>
+            <button
+              type="button"
+              class="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 bg-white hover:border-slate-300"
+              data-scroll-to="filters"
+            >
+              Xem bộ lọc
+            </button>
+          </div>
+        </div>
+        <div class="hero-metrics">
+          <div class="hero-metric">
+            <p class="text-sm font-medium text-slate-500">Trang phục sẵn sàng</p>
+            <p class="text-3xl font-semibold text-slate-900"><?= number_format($readyCount, 0, ',', '.') ?></p>
+          </div>
+          <div class="hero-metric">
+            <p class="text-sm font-medium text-slate-500">Chi nhánh phục vụ</p>
+            <p class="text-3xl font-semibold text-slate-900"><?= number_format(count($branches), 0, ',', '.') ?></p>
+          </div>
+          <div class="hero-metric">
+            <p class="text-sm font-medium text-slate-500">Nhóm trang phục</p>
+            <p class="text-3xl font-semibold text-slate-900"><?= number_format(count($categories), 0, ',', '.') ?></p>
+          </div>
+        </div>
+      </div>
+      <div class="hero-visual text-white">
+        <div class="absolute inset-0 bg-gradient-to-br from-indigo-500/40 via-transparent to-slate-900/80"></div>
+        <div class="absolute bottom-6 left-6 right-6 rounded-2xl border border-white/20 bg-white/15 p-5 backdrop-blur-md">
+          <p class="text-xs uppercase tracking-[0.3em] text-white/70">Lookbook</p>
+          <p class="text-2xl font-semibold leading-tight">98% khách hàng chọn được trang phục trong <span class="text-indigo-200">dưới 3 phút</span></p>
+          <p class="text-sm text-white/80 mt-2">Bộ lọc thông minh giúp đề xuất đúng size, đúng chi nhánh còn hàng.</p>
+        </div>
       </div>
     </header>
 
@@ -337,7 +721,7 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
       </section>
     <?php endif; ?>
 
-    <div class="grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
+    <div class="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)]">
       <aside class="filter-shell p-6 space-y-6">
         <div class="space-y-1">
           <h2 class="text-lg font-semibold text-slate-900">Tìm kiếm nhanh</h2>
@@ -447,58 +831,75 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
       <section class="space-y-6">
         <?php if ($errorMessage): ?>
           <div class="info-card px-6 py-6 text-center text-rose-600 font-semibold"><?=h($errorMessage)?></div>
-        <?php elseif ($result && $result->num_rows > 0): ?>
-          <div class="grid gap-6 sm:grid-cols-2">
-            <?php while ($row = $result->fetch_assoc()):
+        <?php elseif (!empty($catalogItems)): ?>
+          <div class="results-grid grid gap-4 lg:gap-5">
+            <?php foreach ($catalogItems as $row):
               $price = (int)$row['DON_GIA'];
               $statusKey = $row['TINH_TRANG'] ?? '';
               $badge = $statusMap[$statusKey] ?? ['Chưa rõ', 'bg-slate-100/90 text-slate-600 border border-slate-200/80'];
-              $image = $row['HINH_ANH'] ?: '../../../public/images/bg01.png';
+              $image = $row['HINH_ANH'] ?: $defaultImageUrl;
             ?>
-              <article class="result-card p-5 flex flex-col">
-                <div class="relative mb-4">
-                  <img src="<?=h($image)?>" alt="<?=h($row['TEN_TP'])?>" class="square-img shadow-sm">
+              <article class="result-card flex h-full flex-col gap-3">
+                <div class="relative">
+                  <img src="<?=h($image)?>" alt="<?=h($row['TEN_TP'])?>" class="square-img shadow-sm" loading="lazy" onerror="this.onerror=null;this.src='<?=h($defaultImageUrl)?>';">
                   <div class="status-badge <?=h($badge[1])?>">
                     <?=h($badge[0])?>
                   </div>
                 </div>
 
-                <h2 class="text-xl font-semibold text-slate-900 mb-2"><?=h($row['TEN_TP'])?></h2>
-                <ul class="space-y-1 text-sm text-slate-600">
-                  <?php if (!empty($row['TEN_LOAI'])): ?>
-                    <li>Loại: <span class="font-medium text-slate-800"><?=h($row['TEN_LOAI'])?></span></li>
-                   <?php endif; ?>
-                  <li>Chi nhánh: <span class="font-medium text-slate-800"><?=h($row['TEN_CN'])?></span></li>
-                  <?php if (!empty($row['SIZE'])): ?>
-                    <li>Size: <span class="font-medium text-slate-800"><?=h($row['SIZE'])?></span></li>
-                  <?php endif; ?>
-                  <?php if (!empty($row['MAU'])): ?>
-                    <li>Màu sắc: <span class="font-medium text-slate-800"><?=h($row['MAU'])?></span></li>
-                  <?php endif; ?>
-                  <?php if (!empty($row['NGAY_GIAT_CUOI']) && $row['NGAY_GIAT_CUOI'] !== '0000-00-00'): ?>
-                    <li>Giặt gần nhất: <span class="font-medium text-slate-800"><?=h($row['NGAY_GIAT_CUOI'])?></span></li>
-                  <?php endif; ?>
-                  <?php if (!empty($row['GHI_CHU'])): ?>
-                    <li>Ghi chú: <span class="font-medium text-slate-800"><?=h($row['GHI_CHU'])?></span></li>
-                  <?php endif; ?>
-                </ul>
+                <?php
+                  $branches = $row['BRANCHES'] ?? [];
+                  $primaryIndex = $row['PRIMARY_BRANCH_INDEX'] ?? 0;
+                  $primaryBranch = $branches[$primaryIndex] ?? ($branches[0] ?? null);
+                  $primaryBranchName = $primaryBranch['TEN_CN'] ?? $row['TEN_CN'];
+                  $extraBranches = max(count($branches) - 1, 0);
+                ?>
 
-                <div class="mt-4 space-y-1">
-                  <p class="text-2xl font-bold text-indigo-700"><?= number_format($price, 0, ',', '.') ?> <span class="text-sm font-medium text-slate-500">₫/ngày</span></p>
-                  <?php if (!empty($row['HIEU_LUC_TU'])): ?>
-                    <p class="text-xs text-slate-500">Giá áp dụng từ: <?=h($row['HIEU_LUC_TU'])?></p>
+                <div class="space-y-2">
+                  <?php if (!empty($row['TEN_LOAI'])): ?>
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500"><?=h($row['TEN_LOAI'])?></p>
                   <?php endif; ?>
-                  <p class="text-xs text-slate-500">Ước tính tự động cập nhật khi bạn chọn ngày và số lượng.</p>
-                  <p class="text-sm"><span class="text-slate-600">Ước tính:</span> <span class="estimate-text" data-estimate-for="<?= (int)$row['ID_TP'] ?>">—</span></p>
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0 space-y-1">
+                      <h2 class="text-base font-semibold leading-snug text-slate-900 line-clamp-2"><?=h($row['TEN_TP'])?></h2>
+                      <p class="text-xs text-slate-500">
+                        Có tại <span class="font-semibold text-slate-700"><?=h($primaryBranchName)?></span>
+                        <?php if ($extraBranches > 0): ?>
+                          <span class="text-slate-400">+<?= $extraBranches ?> CN khác</span>
+                        <?php endif; ?>
+                      </p>
+                    </div>
+                    <div class="shrink-0 text-right">
+                      <p class="text-xl font-bold text-indigo-700" data-price="<?= (int)$price ?>"><?= number_format($price, 0, ',', '.') ?></p>
+                      <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500">VND/ngày</p>
+                      <?php if (!empty($row['HIEU_LUC_TU'])): ?>
+                        <p class="text-[11px] text-slate-400">Áp dụng <?=h($row['HIEU_LUC_TU'])?></p>
+                      <?php endif; ?>
+                    </div>
+                  </div>
                 </div>
 
-                <div class="mt-5 pt-5 border-t border-slate-200 grid gap-3 sm:grid-cols-2">
+                <div class="card-attributes pt-1">
+                  <?php if (!empty($row['SIZE'])): ?>
+                    <span class="meta-chip">Size <?=h($row['SIZE'])?></span>
+                  <?php endif; ?>
+                  <?php if (!empty($row['MAU'])): ?>
+                    <span class="meta-chip">Màu <?=h($row['MAU'])?></span>
+                  <?php endif; ?>
+                </div>
+
+                <div class="text-xs text-slate-500 space-y-1">
+                  <p>Tạm tính: <span class="estimate-text font-semibold text-emerald-600" data-estimate-for="<?= (int)$row['ID_TP'] ?>">Chọn ngày để tính</span></p>
+                  <p>Giá sẽ chính xác sau khi chọn ngày và số lượng.</p>
+                </div>
+
+                <div class="card-actions mt-auto">
                   <a
                     href="trangphuc_chitiet.php?id=<?= $row['ID_TP'] ?>"
-                    class="inline-flex items-center justify-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-600"
+                    class="inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 transition hover:border-indigo-200 hover:text-indigo-600"
                     aria-label="Xem chi tiết trang phục <?= h($row['TEN_TP']) ?>"
                   >
-                    Xem chi tiết
+                    Chi tiết
                   </a>
 
                   <?php if ($statusKey === 'san_sang'): ?>
@@ -512,18 +913,18 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
                     ?>
                     <a
                       href="trangphuc_datthue.php?<?= h($bookingQuery) ?>"
-                      class="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                      class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-800"
                     >
-                      Đặt thuê trực tuyến
+                      Đặt thuê
                     </a>
                   <?php else: ?>
-                    <span class="inline-flex items-center justify-center rounded-xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-500">
-                      Tạm thời không thể đặt
+                    <span class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Tạm hết
                     </span>
                   <?php endif; ?>
                 </div>
               </article>
-            <?php endwhile; ?>
+            <?php endforeach; ?>
           </div>
         <?php else: ?>
           <div class="info-card px-6 py-6 text-center text-slate-600 font-medium">Không có trang phục nào phù hợp với bộ lọc hiện tại.</div>
@@ -556,6 +957,19 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
         });
       }
 
+      document.querySelectorAll('[data-scroll-to="filters"]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const form = document.getElementById('filterForm');
+          if (form && form.scrollIntoView) {
+            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          const keyword = document.getElementById('q');
+          if (keyword) {
+            keyword.focus();
+          }
+        });
+      });
+
       const fromInput = document.querySelector('input[name="from"]');
       const toInput = document.querySelector('input[name="to"]');
       const qtyInput = document.querySelector('input[name="qty"]');
@@ -576,20 +990,25 @@ $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
 
       document.querySelectorAll('[data-estimate-for]').forEach(span => {
         if (days <= 0) {
-          span.textContent = 'Chọn ngày để ước tính';
+          span.textContent = 'Chọn ngày để tính';
           return;
         }
 
         const priceContainer = span.closest('article');
         if (!priceContainer) return;
-        const priceText = priceContainer.querySelector('.text-2xl');
+        const priceText = priceContainer.querySelector('[data-price]');
         if (!priceText) return;
-        const numeric = priceText.textContent.replace(/[^\d]/g, '');
-        const price = parseInt(numeric || '0', 10);
+        const raw = priceText.dataset.price || priceText.textContent.replace(/[^\d]/g, '');
+        const price = parseInt(raw || '0', 10);
         const estimate = price * days * qty;
-        span.textContent = new Intl.NumberFormat('vi-VN').format(estimate) + ' ₫ (' + days + ' ngày × ' + qty + ')';
+        span.textContent = new Intl.NumberFormat('vi-VN').format(estimate) + ' VND (' + days + ' ngày x ' + qty + ')';
       });
     })();
   </script>
 </body>
 </html>
+
+
+
+
+

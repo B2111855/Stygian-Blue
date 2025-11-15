@@ -19,7 +19,7 @@ class VNPayService
         $signature = VNPaySignature::generate($params, $this->config->hashSecret);
         $params['vnp_SecureHash'] = $signature;
 
-        return $this->config->paymentUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+        return $this->config->paymentUrl . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC1738);
     }
 
     public function buildPaymentParams(array $payload): array
@@ -31,13 +31,18 @@ class VNPayService
         $amount = isset($payload['amount']) ? (float) $payload['amount'] : 0;
         $amount = $amount > 0 ? $amount : 0;
 
+        $orderDescription = $payload['orderDescription'] ?? 'Thanh toan don hang';
+        $orderInfo = $this->sanitizeOrderInfo($orderDescription);
+        $orderType = $payload['orderType'] ?? 'other';
+        $orderType = $this->sanitizeOrderType($orderType);
+
         $params = [
             'vnp_Version' => '2.1.0',
             'vnp_Command' => 'pay',
             'vnp_TmnCode' => $this->config->tmnCode,
             'vnp_TxnRef' => $payload['orderId'] ?? $now->format('YmdHis'),
-            'vnp_OrderInfo' => $payload['orderDescription'] ?? 'Thanh toan don hang',
-            'vnp_OrderType' => $payload['orderType'] ?? 'other',
+            'vnp_OrderInfo' => $orderInfo,
+            'vnp_OrderType' => $orderType,
             'vnp_Amount' => (int) round($amount * 100),
             'vnp_Locale' => $payload['language'] ?? $this->config->defaultLocale,
             'vnp_IpAddr' => $payload['ipAddress'] ?? '127.0.0.1',
@@ -46,10 +51,6 @@ class VNPayService
             'vnp_ReturnUrl' => $this->config->returnUrl,
             'vnp_CurrCode' => 'VND'
         ];
-
-        if ($this->config->ipnUrl) {
-            $params['vnp_IpnUrl'] = $this->config->ipnUrl;
-        }
 
         if (!empty($payload['bankCode'])) {
             $params['vnp_BankCode'] = $payload['bankCode'];
@@ -124,17 +125,28 @@ class VNPayService
         $signature = $query['vnp_SecureHash'] ?? '';
 
         if (!VNPaySignature::verify($payload, $this->config->hashSecret, $signature)) {
-            return ['RspCode' => '97', 'Message' => 'Invalid signature'];
+            return [
+                'RspCode' => '97',
+                'Message' => 'Invalid signature',
+                'isSuccess' => false,
+                'payload' => $payload,
+                'responseCode' => $query['vnp_ResponseCode'] ?? null,
+                'transactionStatus' => $query['vnp_TransactionStatus'] ?? null,
+            ];
         }
 
         $responseCode = $query['vnp_ResponseCode'] ?? null;
         $transactionStatus = $query['vnp_TransactionStatus'] ?? null;
+        $isSuccess = $responseCode === '00' && ($transactionStatus === null || $transactionStatus === '00');
 
-        if ($responseCode === '00' && ($transactionStatus === null || $transactionStatus === '00')) {
-            return ['RspCode' => '00', 'Message' => 'Confirm Success'];
-        }
-
-        return ['RspCode' => '01', 'Message' => 'Transaction not successful'];
+        return [
+            'RspCode' => '00',
+            'Message' => 'Confirm Success',
+            'isSuccess' => $isSuccess,
+            'payload' => $payload,
+            'responseCode' => $responseCode,
+            'transactionStatus' => $transactionStatus,
+        ];
     }
 
     private function appendBillingData(array &$params, array $billing): void
@@ -193,11 +205,41 @@ class VNPayService
         $result = [];
 
         foreach ($query as $key => $value) {
-            if (str_starts_with($key, 'vnp_') && $key !== 'vnp_SecureHash') {
+            if (!str_starts_with($key, 'vnp_')) {
+                continue;
+            }
+
+            if (in_array($key, ['vnp_SecureHash', 'vnp_SecureHashType'], true)) {
+                continue;
+            }
+
+            if ($value !== null && $value !== '') {
                 $result[$key] = $value;
             }
         }
 
         return $result;
+    }
+
+    private function sanitizeOrderInfo(string $description): string
+    {
+        $normalized = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $description);
+        if ($normalized === false) {
+            $normalized = $description;
+        }
+
+        $normalized = preg_replace('/[^A-Za-z0-9\s]/', ' ', $normalized ?? '');
+        $normalized = preg_replace('/\s+/', ' ', $normalized ?? '');
+        $normalized = trim($normalized ?? '');
+
+        return $normalized !== '' ? $normalized : 'Thanh toan don hang';
+    }
+
+    private function sanitizeOrderType(string $orderType): string
+    {
+        $normalized = preg_replace('/[^A-Za-z0-9_]/', '', $orderType);
+        $normalized = substr($normalized ?? '', 0, 100);
+
+        return $normalized !== '' ? $normalized : 'other';
     }
 }

@@ -7,6 +7,25 @@ use PHPMailer\PHPMailer\Exception;
 require '../../vendor/autoload.php';
 
 
+function tableExists(string $tableName): bool
+{
+    global $conn;
+
+    $table = mysqli_real_escape_string($conn, $tableName);
+    $result = mysqli_query($conn, "SHOW TABLES LIKE '{$table}'");
+
+    if (!$result) {
+        error_log("SHOW TABLES failed for {$tableName}: ".mysqli_error($conn));
+        return false;
+    }
+
+    $exists = mysqli_num_rows($result) > 0;
+    mysqli_free_result($result);
+
+    return $exists;
+}
+
+
 function getAppointmentDetail($id)
 {
     global $conn;
@@ -39,26 +58,82 @@ function calculateTotalPrice($idLichHen)
     $tongTienDV = 0;
     $tongTienTB = 0;
 
-    $queryDV = "SELECT dv.thoi_gian, dg.DON_GIA FROM lich_hen lh JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV JOIN don_gia_dich_vu dg ON dv.ID_DV = dg.ID_DV WHERE lh.ID_LICHHEN = ?";
-    $stmtDV = mysqli_prepare($conn, $queryDV);
-    mysqli_stmt_bind_param($stmtDV, 'i', $idLichHen);
-    mysqli_stmt_execute($stmtDV);
-    $resultDV = mysqli_stmt_get_result($stmtDV);
+    $queryDV = "
+        SELECT dv.thoi_gian,
+               (
+                   SELECT dg.DON_GIA
+                   FROM don_gia_dich_vu dg
+                   WHERE dg.ID_DV = dv.ID_DV
+                   ORDER BY dg.NGAY_GIO DESC
+                   LIMIT 1
+               ) AS DON_GIA
+        FROM lich_hen lh
+        JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+        WHERE lh.ID_LICHHEN = ?
+    ";
 
-    if ($rowDV = mysqli_fetch_assoc($resultDV)) {
-        $soPhut = (int)$rowDV['thoi_gian'];
-        $soGio = $soPhut / 60;
-        $tongTienDV = $soGio * $rowDV['DON_GIA'];
+    $stmtDV = mysqli_prepare($conn, $queryDV);
+    if ($stmtDV) {
+        mysqli_stmt_bind_param($stmtDV, 'i', $idLichHen);
+        if (mysqli_stmt_execute($stmtDV)) {
+            $resultDV = mysqli_stmt_get_result($stmtDV);
+            if ($resultDV && ($rowDV = mysqli_fetch_assoc($resultDV))) {
+                $soPhut = (int)$rowDV['thoi_gian'];
+                $soGio = $soPhut / 60;
+                $donGia = isset($rowDV['DON_GIA']) ? (float)$rowDV['DON_GIA'] : 0;
+                $tongTienDV = $soGio * $donGia;
+            }
+            if ($resultDV) {
+                mysqli_free_result($resultDV);
+            }
+        } else {
+            error_log('Không thể thực thi truy vấn giá dịch vụ: '.mysqli_stmt_error($stmtDV));
+        }
+        mysqli_stmt_close($stmtDV);
+    } else {
+        error_log('Không thể chuẩn bị truy vấn giá dịch vụ: '.mysqli_error($conn));
     }
 
-    $queryTB = "SELECT dgtb.DON_GIA FROM lich_hen_thiet_bi lhtb JOIN trang_thiet_bi tb ON lhtb.ID_TB = tb.ID_TB JOIN don_gia_trang_thiet_bi dgtb ON tb.ID_TB = dgtb.ID_TB WHERE lhtb.ID_LICHHEN = ?";
-    $stmtTB = mysqli_prepare($conn, $queryTB);
-    mysqli_stmt_bind_param($stmtTB, 'i', $idLichHen);
-    mysqli_stmt_execute($stmtTB);
-    $resultTB = mysqli_stmt_get_result($stmtTB);
+    $hasEquipmentTable = tableExists('lich_hen_thiet_bi');
+    $hasEquipmentPrice = $hasEquipmentTable && tableExists('don_gia_trang_thiet_bi');
 
-    while ($rowTB = mysqli_fetch_assoc($resultTB)) {
-        $tongTienTB += $rowTB['DON_GIA'];
+    if ($hasEquipmentPrice) {
+        $queryTB = "
+            SELECT dgtb.DON_GIA, COALESCE(lhtb.SO_LUONG, 1) AS SO_LUONG
+            FROM lich_hen_thiet_bi lhtb
+            JOIN trang_thiet_bi tb ON lhtb.ID_TB = tb.ID_TB
+            JOIN (
+                SELECT ID_TB, DON_GIA
+                FROM don_gia_trang_thiet_bi dgtb1
+                WHERE NGAY_GIO = (
+                    SELECT MAX(NGAY_GIO)
+                    FROM don_gia_trang_thiet_bi dgtb2
+                    WHERE dgtb2.ID_TB = dgtb1.ID_TB
+                )
+            ) dgtb ON tb.ID_TB = dgtb.ID_TB
+            WHERE lhtb.ID_LICHHEN = ?
+        ";
+
+        $stmtTB = mysqli_prepare($conn, $queryTB);
+        if ($stmtTB) {
+            mysqli_stmt_bind_param($stmtTB, 'i', $idLichHen);
+            if (mysqli_stmt_execute($stmtTB)) {
+                $resultTB = mysqli_stmt_get_result($stmtTB);
+                if ($resultTB) {
+                    while ($rowTB = mysqli_fetch_assoc($resultTB)) {
+                        $soLuong = isset($rowTB['SO_LUONG']) ? (int)$rowTB['SO_LUONG'] : 1;
+                        $donGiaTB = isset($rowTB['DON_GIA']) ? (float)$rowTB['DON_GIA'] : 0;
+                        $tongTienTB += $donGiaTB * max($soLuong, 1);
+                    }
+                    mysqli_free_result($resultTB);
+                }
+            } else {
+                error_log('Không thể thực thi truy vấn giá thiết bị: '.mysqli_stmt_error($stmtTB));
+            }
+            mysqli_stmt_close($stmtTB);
+        } else {
+            error_log('Không thể chuẩn bị truy vấn giá thiết bị: '.mysqli_error($conn));
+        }
     }
 
     return $tongTienDV + $tongTienTB;

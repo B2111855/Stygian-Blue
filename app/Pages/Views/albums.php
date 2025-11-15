@@ -1,4 +1,4 @@
-<!-- tranghome.php -->
+<!-- albums.php -->
 
 <?php
 include '../components/auth_state_boot.php';

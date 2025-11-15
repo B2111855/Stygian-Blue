@@ -23,12 +23,7 @@ class VNPaySignature
     public static function buildDataString(array $params): string
     {
         ksort($params);
-        $buffer = [];
 
-        foreach ($params as $key => $value) {
-            $buffer[] = urlencode($key) . '=' . urlencode((string) $value);
-        }
-
-        return implode('&', $buffer);
+        return http_build_query($params, '', '&', PHP_QUERY_RFC1738);
     }
 }

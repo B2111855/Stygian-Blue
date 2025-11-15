@@ -26,7 +26,7 @@ class VNPayConfig
         $config->ipnUrl = isset($env['VNPAY_IPN_URL'])
             ? trim($env['VNPAY_IPN_URL'])
             : 'http://localhost:8080/StygianBlue/app/Pages/Controller/vnpay_ipn.php';
-        $config->apiUrl = trim($env['VNPAY_API_URL'] ?? 'https://sandbox.vnpayment.vn/merchant_webapi/merchant.html');
+        $config->apiUrl = trim($env['VNPAY_API_URL'] ?? 'https://sandbox.vnpayment.vn/merchant_webapi/api/transaction');
         $config->defaultLocale = trim($env['VNPAY_DEFAULT_LOCALE'] ?? 'vn');
         $config->timeZone = trim($env['APP_TIMEZONE'] ?? 'Asia/Ho_Chi_Minh');
         return $config;
