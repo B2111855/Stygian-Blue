@@ -140,324 +140,155 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['current_password'])) 
 ?>
 
 <!-- ====================== UI START ====================== -->
-<body class="bg-slate-900 min-h-screen text-white flex items-start justify-center py-10 px-4">
-
-  <div class="w-full max-w-7xl relative">
-    <!-- background glowing blobs -->
-    <div class="absolute -top-32 -left-24 w-72 h-72 bg-indigo-600/30 blur-[100px] rounded-full pointer-events-none"></div>
-    <div class="absolute top-1/3 -right-24 w-72 h-72 bg-cyan-400/20 blur-[110px] rounded-full pointer-events-none"></div>
-
-    <div class="relative bg-slate-800/70 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-indigo-900/40 overflow-hidden">
-      <!-- HEADER / PROFILE STRIP -->
-      <div class="bg-gradient-to-r from-indigo-600 via-blue-500 to-cyan-400 p-6 md:p-8 text-white">
-        <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-          <!-- avatar + name + badges -->
+<body class="bg-slate-100 text-slate-800 min-h-screen">
+  <div class="mx-auto max-w-6xl px-4 py-12">
+    <div class="space-y-8">
+      <section class="rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-col gap-6 border-b border-slate-200 px-6 py-8 md:flex-row md:items-center md:justify-between">
           <div class="flex items-start gap-4">
-            <div class="shrink-0 w-16 h-16 rounded-xl bg-white/20 ring-2 ring-white/40 flex items-center justify-center font-semibold text-xl">
+            <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-xl font-semibold text-indigo-600">
               <?= strtoupper(substr($hoTen, 0, 1)); ?>
             </div>
             <div>
-              <div class="text-2xl font-extrabold leading-tight">
-                <?= htmlspecialchars($hoTen); ?>
-              </div>
-
-              <div class="text-white/80 text-sm mt-1 flex flex-wrap gap-x-3 gap-y-1">
-                <!-- Quyền -->
-                <span class="inline-flex items-center gap-1 bg-black/20 rounded-md px-2 py-[2px] leading-none text-xs font-medium">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-300 animate-pulse"></span>
-                  <?= htmlspecialchars($TEN_QUYEN_view ?? 'Người dùng'); ?>
-                </span>
-
-                <!-- Loại nhân viên -->
+              <h1 class="text-2xl font-semibold text-slate-900"><?= htmlspecialchars($hoTen); ?></h1>
+              <p class="mt-1 text-sm text-slate-500">Thông tin được đồng bộ với hệ thống quản trị.</p>
+              <div class="mt-3 flex flex-wrap gap-2 text-xs font-medium text-slate-600">
+                <span class="rounded-full bg-slate-100 px-3 py-1"><?= htmlspecialchars($TEN_QUYEN_view ?? 'Người dùng'); ?></span>
                 <?php if (!empty($LOAI_NV_view)): ?>
-                <span class="inline-flex items-center gap-1 bg-black/20 rounded-md px-2 py-[2px] leading-none text-xs font-medium">
-                  <?= htmlspecialchars($LOAI_NV_view); ?>
-                </span>
+                  <span class="rounded-full bg-slate-100 px-3 py-1"><?= htmlspecialchars($LOAI_NV_view); ?></span>
                 <?php endif; ?>
-
-                <!-- Chi nhánh -->
                 <?php if (!empty($TEN_CN_view)): ?>
-                <span class="inline-flex items-center gap-1 bg-black/20 rounded-md px-2 py-[2px] leading-none text-xs font-medium">
-                  CN: <?= htmlspecialchars($TEN_CN_view); ?>
-                </span>
+                  <span class="rounded-full bg-slate-100 px-3 py-1">Chi nhánh: <?= htmlspecialchars($TEN_CN_view); ?></span>
                 <?php endif; ?>
               </div>
             </div>
           </div>
-
-          <!-- quick info cards -->
-          <div class="grid grid-cols-2 gap-4 text-xs md:text-sm">
-            <div class="bg-white/10 rounded-lg p-3 min-w-[8rem]">
-              <div class="text-white/70">Mã tài khoản</div>
-              <div class="font-semibold break-all"><?= htmlspecialchars($idTk); ?></div>
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p class="text-xs uppercase tracking-wide text-slate-500">Mã tài khoản</p>
+              <p class="mt-1 font-semibold text-slate-900 whitespace-nowrap" title="<?= htmlspecialchars($idTk); ?>"><?= htmlspecialchars($idTk); ?></p>
             </div>
-            <div class="bg-white/10 rounded-lg p-3 min-w-[8rem]">
-              <div class="text-white/70">Số điện thoại</div>
-              <div class="font-semibold"><?= htmlspecialchars($sdt); ?></div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p class="text-xs uppercase tracking-wide text-slate-500">Số điện thoại</p>
+              <p class="mt-1 font-semibold text-slate-900"><?= htmlspecialchars($sdt); ?></p>
             </div>
-            <div class="bg-white/10 rounded-lg p-3 min-w-[8rem]">
-              <div class="text-white/70">Email</div>
-              <div class="font-semibold break-all"><?= htmlspecialchars($email); ?></div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p class="text-xs uppercase tracking-wide text-slate-500">Email</p>
+              <p class="mt-1 font-semibold text-slate-900 whitespace-nowrap" title="<?= htmlspecialchars($email); ?>"><?= htmlspecialchars($email); ?></p>
             </div>
-            <div class="bg-white/10 rounded-lg p-3 min-w-[8rem]">
-              <div class="text-white/70">Bảo mật</div>
-              <div class="font-semibold flex items-center gap-1">
-                🔒 Mật khẩu đã mã hoá
-              </div>
+            <div class="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <p class="text-xs uppercase tracking-wide text-slate-500">Bảo mật</p>
+              <p class="mt-1 font-semibold text-slate-900 whitespace-nowrap">Mật khẩu đã mã hoá</p>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- BODY CONTENT -->
-      <div class="p-6 md:p-8 space-y-8">
-
-        <!-- Toast báo lỗi/thành công -->
         <?php if (isset($error) || isset($success)): ?>
-        <div class="grid grid-cols-1">
-          <?php if (isset($error)): ?>
-            <div class="bg-red-500/20 text-red-300 border border-red-500/40 text-[13px] rounded-lg px-4 py-3 mb-2 shadow-lg shadow-red-900/30">
-              <?= $error; ?>
-            </div>
-          <?php endif; ?>
-          <?php if (isset($success)): ?>
-            <div class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[13px] rounded-lg px-4 py-3 mb-2 shadow-lg shadow-emerald-900/30">
-              <?= $success; ?>
-            </div>
-          <?php endif; ?>
-        </div>
+          <div class="px-6 pt-6">
+            <?php if (isset($error)): ?>
+              <div class="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+                <?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8'); ?>
+              </div>
+            <?php endif; ?>
+            <?php if (isset($success)): ?>
+              <div class="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-600">
+                <?= htmlspecialchars($success, ENT_QUOTES, 'UTF-8'); ?>
+              </div>
+            <?php endif; ?>
+          </div>
         <?php endif; ?>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-          <!-- LEFT: SYSTEM INFO (READONLY) -->
-          <section class="lg:col-span-1 bg-slate-800/80 rounded-xl border border-white/5 shadow-inner p-5 space-y-5">
-            <header class="flex items-start justify-between">
+        <div class="grid gap-8 px-6 pb-8 pt-6 lg:grid-cols-3">
+          <section class="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-6 text-sm">
+            <h2 class="text-sm font-semibold text-slate-700">Ngữ cảnh làm việc</h2>
+            <p class="mt-2 text-xs text-slate-500">Các thông tin này được thiết lập bởi bộ phận quản trị và không thể chỉnh sửa tại đây.</p>
+            <div class="mt-5 space-y-4">
               <div>
-                <div class="text-sm text-slate-400 font-medium uppercase tracking-wide">Thông tin hệ thống</div>
-                <div class="text-base font-semibold text-white mt-1">Chỉ đọc</div>
-                <p class="text-[13px] text-slate-400 leading-snug mt-1">
-                  Đây là vai trò và ngữ cảnh làm việc hiện tại của bạn. Không thể tự chỉnh tại đây.
-                </p>
+                <p class="text-xs uppercase tracking-wide text-slate-500">Chi nhánh</p>
+                <input value="<?= htmlspecialchars($TEN_CN_view ?? 'Không thuộc chi nhánh'); ?>" readonly class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700" />
               </div>
-              <div class="text-[10px] leading-tight text-right text-slate-400">
-                Quyền
-                <br>
-                <span class="font-semibold text-white">
-                  <?= htmlspecialchars($TEN_QUYEN_view ?? '—'); ?>
-                </span>
-              </div>
-            </header>
-
-            <div class="space-y-4 text-sm">
               <div>
-                <div class="text-slate-400 text-xs mb-1 flex items-center gap-2">
-                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
-                  Chi nhánh
-                </div>
-                <input
-                  class="w-full bg-slate-700/60 rounded-lg px-3 py-2 text-white text-[13px] border border-slate-600/60 cursor-not-allowed"
-                  value="<?= htmlspecialchars($TEN_CN_view ?? 'Không thuộc chi nhánh'); ?>"
-                  readonly
-                >
-              </div>
-
-              <div>
-                <div class="text-slate-400 text-xs mb-1 flex items-center gap-2">
-                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
-                  Loại nhân viên / Chức vụ
-                </div>
-                <input
-                  class="w-full bg-slate-700/60 rounded-lg px-3 py-2 text-white text-[13px] border border-slate-600/60 cursor-not-allowed"
-                  value="<?php
+                <p class="text-xs uppercase tracking-wide text-slate-500">Loại nhân viên / Chuyên môn</p>
+                <input value="<?php
                     if (!empty($LOAI_NV_view)) {
-                      echo htmlspecialchars($LOAI_NV_view . ($CHUYEN_MON_view ? ' · '.$CHUYEN_MON_view : ''));
+                        echo htmlspecialchars($LOAI_NV_view . ($CHUYEN_MON_view ? ' · ' . $CHUYEN_MON_view : ''));
                     } else {
-                      echo 'Không áp dụng';
+                        echo 'Không áp dụng';
                     }
-                  ?>"
-                  readonly
-                >
+                ?>" readonly class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700" />
               </div>
             </div>
           </section>
 
-          <!-- RIGHT: PERSONAL INFO FORM -->
-          <section class="lg:col-span-2 bg-slate-800/80 rounded-xl border border-white/5 shadow-inner p-5">
-            <header class="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
-              <div>
-                <div class="text-sm text-slate-400 font-medium uppercase tracking-wide">Thông tin cá nhân</div>
-                <h2 class="text-xl font-semibold text-white leading-tight">Cập nhật hồ sơ</h2>
-                <p class="text-[13px] text-slate-400 leading-snug mt-1">
-                  Vui lòng giữ thông tin liên hệ chính xác để chúng tôi có thể xác nhận lịch chụp, gửi hóa đơn và hỗ trợ bạn.
-                </p>
-              </div>
-            </header>
-
-            <form method="POST" action="" class="space-y-6">
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-                <div class="space-y-1">
-                  <label for="id_tk" class="block text-xs font-medium text-slate-400">Mã Tài Khoản</label>
-                  <input
-                    id="id_tk"
-                    name="id_tk"
-                    readonly
-                    value="<?= htmlspecialchars($idTk); ?>"
-                    class="w-full bg-slate-700/60 border border-slate-600/60 rounded-lg px-3 py-2 text-[13px] text-white cursor-not-allowed"
-                  >
+          <section class="rounded-2xl border border-slate-200 bg-white px-5 py-6 lg:col-span-2">
+            <div class="flex flex-col gap-2">
+              <h2 class="text-lg font-semibold text-slate-800">Cập nhật thông tin liên hệ</h2>
+              <p class="text-sm text-slate-500">Giữ thông tin chính xác để chúng tôi có thể hỗ trợ bạn nhanh chóng khi cần.</p>
+            </div>
+            <form method="POST" action="" class="mt-6 space-y-6">
+              <div class="grid gap-5 md:grid-cols-2">
+                <div>
+                  <label for="id_tk" class="text-xs font-medium uppercase tracking-wide text-slate-500">Mã tài khoản</label>
+                  <input id="id_tk" name="id_tk" readonly value="<?= htmlspecialchars($idTk); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600" />
                 </div>
-
-                <div class="space-y-1">
-                  <label for="ho_ten" class="block text-xs font-medium text-slate-200">Họ tên</label>
-                  <input
-                    id="ho_ten"
-                    name="full_name"
-                    type="text"
-                    value="<?= htmlspecialchars($hoTen); ?>"
-                    class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                  >
+                <div>
+                  <label for="ho_ten" class="text-xs font-medium uppercase tracking-wide text-slate-500">Họ tên</label>
+                  <input id="ho_ten" name="full_name" type="text" value="<?= htmlspecialchars($hoTen); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
                 </div>
-
-                <div class="space-y-1">
-                  <label for="ngay_sinh" class="block text-xs font-medium text-slate-200">Ngày sinh</label>
-                  <input
-                    id="ngay_sinh"
-                    name="birth_date"
-                    type="date"
-                    value="<?= htmlspecialchars($ngaySinh); ?>"
-                    class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                  >
+                <div>
+                  <label for="ngay_sinh" class="text-xs font-medium uppercase tracking-wide text-slate-500">Ngày sinh</label>
+                  <input id="ngay_sinh" name="birth_date" type="date" value="<?= htmlspecialchars($ngaySinh); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
                 </div>
-
-                <div class="space-y-1">
-                  <label for="dia_chi" class="block text-xs font-medium text-slate-200">Địa chỉ</label>
-                  <input
-                    id="dia_chi"
-                    name="address"
-                    type="text"
-                    value="<?= htmlspecialchars($diaChi); ?>"
-                    class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                  >
+                <div>
+                  <label for="dia_chi" class="text-xs font-medium uppercase tracking-wide text-slate-500">Địa chỉ</label>
+                  <input id="dia_chi" name="address" type="text" value="<?= htmlspecialchars($diaChi); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
                 </div>
-
-                <div class="space-y-1">
-                  <label for="email" class="block text-xs font-medium text-slate-200">Email</label>
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    value="<?= htmlspecialchars($email); ?>"
-                    class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                  >
+                <div>
+                  <label for="email" class="text-xs font-medium uppercase tracking-wide text-slate-500">Email</label>
+                  <input id="email" name="email" type="email" value="<?= htmlspecialchars($email); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
                 </div>
-
-                <div class="space-y-1">
-                  <label for="sdt" class="block text-xs font-medium text-slate-200">Số điện thoại</label>
-                  <input
-                    id="sdt"
-                    name="phone"
-                    type="text"
-                    value="<?= htmlspecialchars($sdt); ?>"
-                    class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/60"
-                  >
+                <div>
+                  <label for="sdt" class="text-xs font-medium uppercase tracking-wide text-slate-500">Số điện thoại</label>
+                  <input id="sdt" name="phone" type="text" value="<?= htmlspecialchars($sdt); ?>" class="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
                 </div>
               </div>
-
-              <div class="flex flex-col sm:flex-row justify-end gap-4 pt-4 border-t border-white/5">
-                <button
-                  type="button"
-                  onclick="togglePasswordModal()"
-                  class="bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-400/40 text-yellow-300 font-semibold rounded-lg px-4 py-2 text-[13px] flex items-center justify-center gap-2"
-                >
-                  🔐 Đổi mật khẩu
-                </button>
-
-                <button
-                  type="submit"
-                  class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg px-5 py-2 text-[13px] shadow-lg shadow-indigo-900/50 hover:shadow-indigo-700/40 transition"
-                >
-                  💾 Lưu thay đổi
-                </button>
+              <div class="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+                <button type="button" onclick="togglePasswordModal()" class="rounded-lg border border-slate-200 px-5 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-200 hover:text-indigo-600">Đổi mật khẩu</button>
+                <button type="submit" class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-500">Lưu thay đổi</button>
               </div>
             </form>
           </section>
-
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- MODAL ĐỔI MẬT KHẨU -->
-    <div
-      id="password-modal"
-      class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-    >
-      <div class="bg-slate-800 w-full max-w-sm rounded-xl border border-white/10 shadow-2xl shadow-black/80 p-6 relative animate-[fadeUp_.25s_ease-out_forwards]">
-        <button
-          class="absolute top-3 right-3 text-slate-400 hover:text-white text-sm"
-          onclick="togglePasswordModal()"
-        >✕</button>
-
-        <h2 class="text-lg font-semibold text-white mb-1 flex items-center gap-2">
-          <span class="text-yellow-300 text-xl">🔐</span>
-          Đổi mật khẩu
-        </h2>
-        <p class="text-[13px] text-slate-400 leading-snug mb-4">
-          Vui lòng nhập mật khẩu hiện tại trước khi đặt mật khẩu mới.
-        </p>
-
-        <form method="POST" class="space-y-4">
-          <input
-            type="password"
-            name="current_password"
-            placeholder="Mật khẩu hiện tại"
-            class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-yellow-400/60"
-          >
-          <input
-            type="password"
-            name="new_password"
-            placeholder="Mật khẩu mới (6-22 ký tự)"
-            class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-yellow-400/60"
-          >
-          <input
-            type="password"
-            name="confirm_new_password"
-            placeholder="Xác nhận mật khẩu mới"
-            class="w-full bg-slate-900/40 border border-slate-600 rounded-lg px-3 py-2 text-[13px] text-white focus:outline-none focus:ring-2 focus:ring-yellow-400/60"
-          >
-
-          <div class="flex flex-col sm:flex-row justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onclick="togglePasswordModal()"
-              class="bg-red-500/10 hover:bg-red-500/20 border border-red-400/40 text-red-300 font-semibold rounded-lg px-4 py-2 text-[13px] text-center"
-            >
-              Hủy
-            </button>
-
-            <button
-              type="submit"
-              class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg px-4 py-2 text-[13px] shadow-lg shadow-emerald-900/40 text-center"
-            >
-              Xác nhận đổi
-            </button>
-          </div>
-        </form>
+      <div id="password-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+        <div class="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-lg">
+          <button class="float-right text-sm text-slate-400 transition hover:text-slate-600" onclick="togglePasswordModal()">Đóng</button>
+          <h2 class="mt-1 text-lg font-semibold text-slate-800">Đổi mật khẩu</h2>
+          <p class="mt-2 text-sm text-slate-500">Nhập mật khẩu hiện tại và đặt mật khẩu mới an toàn hơn.</p>
+          <form method="POST" class="mt-5 space-y-4">
+            <input type="password" name="current_password" placeholder="Mật khẩu hiện tại" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+            <input type="password" name="new_password" placeholder="Mật khẩu mới (6-22 ký tự)" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+            <input type="password" name="confirm_new_password" placeholder="Xác nhận mật khẩu mới" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+            <div class="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:justify-end">
+              <button type="button" onclick="togglePasswordModal()" class="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-rose-200 hover:text-rose-600">Hủy</button>
+              <button type="submit" class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-500">Xác nhận đổi</button>
+            </div>
+          </form>
+        </div>
       </div>
 
       <style>
-        @keyframes fadeUp {
-          from {opacity:0; transform:translateY(12px) scale(.98)}
-          to   {opacity:1; transform:translateY(0) scale(1)}
-        }
+        @keyframes fade-in {from {opacity: 0; transform: translateY(12px);} to {opacity: 1; transform: translateY(0);} }
+        .fade-in {animation: fade-in .4s ease-out both;}
       </style>
-    </div>
 
-    <script>
-      function togglePasswordModal() {
-        document.getElementById('password-modal').classList.toggle('hidden');
-      }
-    </script>
+      <script>
+        function togglePasswordModal() {
+          document.getElementById('password-modal').classList.toggle('hidden');
+        }
+      </script>
+    </div>
   </div>
 </body>
 <!-- ====================== UI END ====================== -->
