@@ -16,6 +16,8 @@ $dotenv->load();
 // 1. Kết nối DB
 include 'database/config.php';
 
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+
 // 2. Hàm helper đăng nhập và redirect (giữ nguyên của bạn)
 function finishLoginAndRedirect($conn, $userRow) {
     // Lấy thông tin nhân viên (LOAI_NV, ID_CN) nếu có
@@ -76,6 +78,136 @@ function finishLoginAndRedirect($conn, $userRow) {
     exit;
 }
 
+function findUserByEmail(mysqli $conn, string $email): ?array {
+    $stmt = $conn->prepare("
+        SELECT ID_TK, ID_QUYEN, EMAIL
+        FROM tai_khoan
+        WHERE EMAIL = ?
+        LIMIT 1
+    ");
+    $stmt->bind_param('s', $email);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $user = ($result && $result->num_rows > 0) ? $result->fetch_assoc() : null;
+    $stmt->close();
+
+    return $user;
+}
+
+function usernameExists(mysqli $conn, string $username): bool {
+    $stmt = $conn->prepare('SELECT 1 FROM tai_khoan WHERE ID_TK = ? LIMIT 1');
+    $stmt->bind_param('s', $username);
+    $stmt->execute();
+    $stmt->store_result();
+    $exists = $stmt->num_rows > 0;
+    $stmt->close();
+
+    return $exists;
+}
+
+function generateGoogleUsername(mysqli $conn, string $email): string {
+    $emailParts = explode('@', $email, 2);
+    $localPart = strtolower($emailParts[0] ?? '');
+    $localPart = preg_replace('/[^a-z0-9]/', '', $localPart);
+    $localPart = substr($localPart, 0, 8);
+
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        $suffix = $attempt === 0 ? '' : (string) $attempt;
+        $candidate = 'gg' . $localPart . $suffix;
+        if (strlen($candidate) < 8) {
+            $candidate = str_pad($candidate, 8, '0');
+        }
+        $candidate = substr($candidate, 0, 16);
+        if (!usernameExists($conn, $candidate)) {
+            return $candidate;
+        }
+    }
+
+    do {
+        $candidate = 'gg' . substr(bin2hex(random_bytes(6)), 0, 10);
+    } while (usernameExists($conn, $candidate));
+
+    return $candidate;
+}
+
+function registerGoogleAccount(mysqli $conn, $googleUser, string $email): array {
+    $roleId = 3; // khách hàng
+    $username = generateGoogleUsername($conn, $email);
+
+    $fullName = trim($googleUser->name ?? $googleUser->givenName ?? $googleUser->familyName ?? '');
+    if ($fullName === '') {
+        $emailParts = explode('@', $email, 2);
+        $fullName = $emailParts[0] ?? 'Google User';
+    }
+    if (function_exists('mb_substr')) {
+        $fullName = mb_substr($fullName, 0, 50);
+    } else {
+        $fullName = substr($fullName, 0, 50);
+    }
+
+    $birthDate = null;
+    $address = null;
+    $phone = null;
+    $randomPassword = bin2hex(random_bytes(20));
+    $hashedPassword = password_hash($randomPassword, PASSWORD_DEFAULT);
+
+    $conn->begin_transaction();
+    try {
+        $insertAccount = $conn->prepare(
+            'INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $insertAccount->bind_param(
+            'sissssss',
+            $username,
+            $roleId,
+            $fullName,
+            $birthDate,
+            $address,
+            $email,
+            $phone,
+            $hashedPassword
+        );
+        $insertAccount->execute();
+        $insertAccount->close();
+
+        $insertCustomer = $conn->prepare(
+            'INSERT INTO khach_hang (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+            . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $insertCustomer->bind_param(
+            'sissssss',
+            $username,
+            $roleId,
+            $fullName,
+            $birthDate,
+            $address,
+            $email,
+            $phone,
+            $hashedPassword
+        );
+        $insertCustomer->execute();
+        $insertCustomer->close();
+
+        $conn->commit();
+    } catch (Throwable $th) {
+        $conn->rollback();
+        if (isset($insertAccount) && $insertAccount instanceof mysqli_stmt) {
+            $insertAccount->close();
+        }
+        if (isset($insertCustomer) && $insertCustomer instanceof mysqli_stmt) {
+            $insertCustomer->close();
+        }
+        throw $th;
+    }
+
+    return [
+        'ID_TK' => $username,
+        'ID_QUYEN' => $roleId,
+        'EMAIL' => $email,
+    ];
+}
+
 // 3. Kiểm tra code từ Google
 if (!isset($_GET['code'])) {
     header("Location: /StygianBlue/login.php?err=google_denied");
@@ -121,24 +253,20 @@ if (!$email) {
     exit;
 }
 
-// 9. Tìm user tương ứng trong DB
-$stmt = $conn->prepare("
-    SELECT ID_TK, ID_QUYEN, EMAIL
-    FROM tai_khoan
-    WHERE EMAIL = ?
-    LIMIT 1
-");
-$stmt->bind_param("s", $email);
-$stmt->execute();
-$res = $stmt->get_result();
+// 9. Tìm user tương ứng trong DB (hoặc tạo mới nếu chưa tồn tại)
+$userRow = findUserByEmail($conn, $email);
 
-if (!$res || $res->num_rows === 0) {
-    // Tùy chính sách: auto-register hay chặn
-    header("Location: /StygianBlue/login.php?err=not_registered");
-    exit;
+if (!$userRow) {
+    try {
+        $userRow = registerGoogleAccount($conn, $googleUser, $email);
+        $_SESSION['message'] = 'Đã tạo tài khoản khách hàng mới từ Google.';
+        $_SESSION['message_type'] = 'success';
+    } catch (Throwable $th) {
+        error_log('Google auto-register failed: ' . $th->getMessage());
+        header("Location: /StygianBlue/login.php?err=auto_register");
+        exit;
+    }
 }
-
-$userRow = $res->fetch_assoc();
 
 // 10. Đăng nhập và điều hướng như tài khoản nội bộ
 finishLoginAndRedirect($conn, $userRow);

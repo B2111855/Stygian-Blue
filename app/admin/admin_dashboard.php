@@ -31,8 +31,9 @@ $pageTitle = 'Quản trị hệ thống';
 
           <?php
           // --- Router WHITELIST an toàn ---
-          $page = $_GET['page'] ?? 'finances';
+          $page = $_GET['page'] ?? 'overview';
           $map  = [
+            'overview'         => 'admin_overview.php',
             'finances'          => 'manage_finances.php',
             'report'            => 'trending_report.php',
             'payments'          => 'admin_confirm_payments.php',

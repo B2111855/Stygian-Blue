@@ -414,7 +414,7 @@ foreach ($albums as $al) {
               <blockquote>
                 “Các album của Stygian Blue không chỉ là ảnh đẹp, mà còn là những mảng ký ức giàu cảm xúc. Ánh sáng, bố cục và sự tĩnh lặng tinh tế khiến tôi muốn ngắm lại nhiều lần.”
               </blockquote>
-              <footer>— Lan Phương · Art Director, khách hàng dự án Portrait Muse</footer>
+              <footer>— Trọng Nghĩa · Nhà phát triển, cha đẻ của dự án Stygian Blue Studio</footer>
             </section>
 
             <section class="sb-cta mt-14" aria-label="Đặt hẹn sáng tạo">
