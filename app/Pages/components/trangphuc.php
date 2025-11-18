@@ -2,6 +2,7 @@
 // pages/trangphuc/index.php
 // Hiển thị danh sách trang phục cho thuê
 include '../../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 function h($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function selected($a,$b){ return $a===$b ? 'selected' : ''; }
@@ -431,7 +432,7 @@ $heroBackgroundUrl = $defaultImageUrl;
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Thuê trang phục</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <style>
     :root {
       color-scheme: light;

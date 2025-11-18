@@ -51,6 +51,7 @@ $pageTitle = 'Quản trị hệ thống';
             'expenses'          => 'manager_expenses.php',
             'feedback'          => 'manage_feedback.php',
             'selfInfo'          => 'manage_selfInfo.php',
+            'system_logs'       => 'manage_system_logs.php',
           ];
 
           if (isset($map[$page])) {

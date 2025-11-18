@@ -1,6 +1,7 @@
 <?php
 // Kết nối cơ sở dữ liệu
 include '../../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Lấy thông tin phân công theo ID Lịch Hẹn và ID Nhân Viên
 if (isset($_GET['id']) && isset($_GET['employee_id'])) {
@@ -62,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cập Nhật Phân Công</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <link rel="stylesheet"
     href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" />
 </head>

@@ -4,6 +4,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../../helpers/assets.php';
+
 $BASE_DIR        = __DIR__ . '/../../../public/images/albums';  // Đường dẫn vật lý tới album
 $BASE_URL_PREFIX = '../../../public/images/albums';             // URL tương đối cho <img>
 $ALBUMS_PER_PAGE = 3;                                           // Số album hiển thị mỗi lần tải thêm
@@ -140,7 +142,7 @@ foreach ($albums as $al) {
   <title>Bộ sưu tập · Stygian Blue</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <!-- Tailwind + FontAwesome -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
 
   <style>

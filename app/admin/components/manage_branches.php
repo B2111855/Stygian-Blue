@@ -1,6 +1,7 @@
 <?php
 // Kết nối đến cơ sở dữ liệu
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Thiết lập phân trang
 $limit = 5; // Số bản ghi mỗi trang
@@ -146,8 +147,8 @@ $branches = getBranches($conn, $search, $limit, $offset);
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Quản lý chi nhánh</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Quản lý Chi nhánh</title>
+    <?= sb_tailwind_link_tag(); ?>
     <script>
         function confirmDelete() {
             return confirm('Bạn chắc chắn muốn xóa chi nhánh này?');

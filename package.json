@@ -1,0 +1,10 @@
+{
+  "name": "stygian-blue",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./resources/css/tailwind.css -o ./public/css/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.10"
+  }
+}

@@ -49,6 +49,7 @@ function singleValue($conn, $sql, $types = '', $params = [])
         bindParams($stmt, $types, $params);
     }
     $stmt->execute();
+    $value = null;
     $stmt->bind_result($value);
     $stmt->fetch();
     $stmt->close();

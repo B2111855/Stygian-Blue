@@ -3,6 +3,7 @@
 
 // Kết nối cơ sở dữ liệu
 include '../../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Lấy danh sách lịch hẹn chưa được phân công và đã xác nhận kèm ID_CHINHANH
 $query_schedules = "
@@ -58,7 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <title>Thêm Phân Công</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <?= sb_tailwind_link_tag(); ?>
 </head>
 <body class="bg-gray-100 min-h-screen p-6">
 <div class="max-w-2xl mx-auto">

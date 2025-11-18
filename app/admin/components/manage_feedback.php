@@ -9,13 +9,20 @@ $query = "
         dv.TEN_DV AS 'Dịch Vụ',
         ph.NOI_DUNG AS 'Nội Dung Phản Hồi',
         ph.XEP_HANG_DV AS 'Đánh Giá',
-        ph.NGAY_GUI AS 'Ngày Gửi'
+        ph.NGAY_GUI AS 'Ngày Gửi',
+        COALESCE(CONCAT('LH-', LPAD(lh_latest.ID_LICHHEN, 5, '0')), 'Chưa xác định') AS 'Mã Lịch Hẹn'
     FROM 
         phan_hoi_cua_khach_hang ph
     JOIN 
         khach_hang kh ON ph.ID_TK = kh.ID_TK
     JOIN 
         dich_vu dv ON ph.ID_DV = dv.ID_DV
+    LEFT JOIN (
+        SELECT ID_TK, ID_DV, MAX(ID_LICHHEN) AS ID_LICHHEN
+        FROM lich_hen
+        GROUP BY ID_TK, ID_DV
+    ) lh_latest ON lh_latest.ID_TK = ph.ID_TK AND lh_latest.ID_DV = ph.ID_DV
+    ORDER BY ph.NGAY_GUI DESC
 ";
 
 $result = mysqli_query($conn, $query);
@@ -39,6 +46,7 @@ if (!$result) {
                 <thead class="bg-indigo-600 text-white">
                     <tr>
                         <th class="px-6 py-3">Tên Khách Hàng</th>
+                        <th class="px-6 py-3">Mã Lịch Hẹn</th>
                         <th class="px-6 py-3">Dịch Vụ</th>
                         <th class="px-6 py-3">Nội Dung Phản Hồi</th>
                         <th class="px-6 py-3">Đánh Giá</th>
@@ -49,6 +57,11 @@ if (!$result) {
                     <?php while ($row = mysqli_fetch_assoc($result)) : ?>
                         <tr class="hover:bg-indigo-50 transition">
                             <td class="px-6 py-4 font-medium"><?= $row['Tên Khách Hàng']; ?></td>
+                            <td class="px-6 py-4">
+                                <span class="inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                    <?= $row['Mã Lịch Hẹn']; ?>
+                                </span>
+                            </td>
                             <td class="px-6 py-4"><?= $row['Dịch Vụ']; ?></td>
                             <td class="px-6 py-4 text-left"><?= $row['Nội Dung Phản Hồi']; ?></td>
                             <td class="px-6 py-4 text-yellow-500 text-lg font-semibold">

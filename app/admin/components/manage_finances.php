@@ -1,5 +1,6 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Lấy danh sách chi nhánh
 $branchQuery = mysqli_query($conn, "SELECT ID_CN, TEN_CN FROM chi_nhanh");
@@ -16,7 +17,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
   <meta charset="UTF-8">
   <title>Dashboard Tài Chính</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
 </head>
 
 <body class="bg-gradient-to-br from-blue-100 to-indigo-200 min-h-screen py-10 px-6">

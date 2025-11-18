@@ -4,6 +4,7 @@
 // Phiên bản: lấy thiết bị trực tiếp từ DB thật
 
 include '../../../database/config.php'; // chỉnh path nếu khác dự án của bạn
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // ===== Helpers =====
 function formatVND($n) {
@@ -192,35 +193,7 @@ if ($goi) {
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        body: ['Inter', 'system-ui', 'sans-serif'],
-                        display: ['"Playfair Display"', 'serif'],
-                    },
-                    colors: {
-                        night: {
-                            900: '#0b1120',
-                            800: '#111c33',
-                            700: '#15213f',
-                        },
-                        accent: {
-                            400: '#38bdf8',
-                            500: '#0ea5e9',
-                            600: '#0284c7',
-                        },
-                    },
-                    boxShadow: {
-                        glow: '0 25px 60px -25px rgba(14,165,233,0.55)',
-                        frame: '0 0 0 1px rgba(148, 163, 184, 0.15) inset',
-                    },
-                },
-            },
-        };
-    </script>
+    <?= sb_tailwind_link_tag(); ?>
 
     <style>
         :root {

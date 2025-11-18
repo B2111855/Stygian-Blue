@@ -37,6 +37,12 @@ $adminNavGroups = [
       ['slug' => 'costumes',    'icon' => 'fas fa-tshirt',          'label' => 'Quản lý trang phục'],
     ],
   ],
+  [
+    'title' => 'Giám sát & bảo mật',
+    'items' => [
+      ['slug' => 'system_logs', 'icon' => 'fas fa-clipboard-list',  'label' => 'Nhật ký hệ thống'],
+    ],
+  ],
 ];
 
 if (!function_exists('renderAdminNavItem')) {

@@ -1,23 +1,39 @@
 <?php
-session_start(); // Start the session
+session_start();
 
-// Clear all session variables
-$_SESSION = array();
+require_once __DIR__ . '/database/config.php';
+require_once __DIR__ . '/app/helpers/system_log.php';
 
-// If the session was started with cookies, delete the session cookie
-if (ini_get("session.use_cookies")) {
-    $params = session_get_cookie_params();
-    // Set the cookie expiration to a time in the past
-    setcookie(session_name(), '', time() - 42000,
-        $params["path"], $params["domain"],
-        $params["secure"], $params["httponly"]
+if (isset($conn)) {
+    record_system_log(
+        $conn,
+        'LOGOUT',
+        'auth',
+        null,
+        [
+            'ID_TK' => $_SESSION['ID_TK'] ?? null,
+            'role'  => $_SESSION['role'] ?? ($_SESSION['ID_QUYEN'] ?? null)
+        ]
     );
 }
 
-// Destroy the session
+$_SESSION = array();
+
+if (ini_get('session.use_cookies')) {
+    $params = session_get_cookie_params();
+    setcookie(
+        session_name(),
+        '',
+        time() - 42000,
+        $params['path'],
+        $params['domain'],
+        $params['secure'],
+        $params['httponly']
+    );
+}
+
 session_destroy();
 
-// Redirect to login page
-header("Location: login.php");
+header('Location: login.php');
 exit();
 ?>

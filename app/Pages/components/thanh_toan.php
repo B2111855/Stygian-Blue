@@ -17,6 +17,24 @@ $limit = 5;
 $page = isset($_GET['p']) ? max(1, intval($_GET['p'])) : 1;
 $offset = ($page - 1) * $limit;
 
+$latestVnpayJoin = "
+    LEFT JOIN (
+        SELECT t1.ID_HD,
+               t1.TRANG_THAI AS VNPAY_TRANG_THAI,
+               t1.MA_THAM_CHIEU AS VNPAY_MA_THAM_CHIEU,
+               t1.SO_TIEN AS VNPAY_SO_TIEN,
+               t1.CREATED_AT AS VNPAY_CREATED_AT
+        FROM thanh_toan_truc_tuyen t1
+        JOIN (
+            SELECT ID_HD, MAX(CREATED_AT) AS latest_created
+            FROM thanh_toan_truc_tuyen
+            WHERE GATEWAY = 'vnpay'
+            GROUP BY ID_HD
+        ) latest ON latest.ID_HD = t1.ID_HD AND latest.latest_created = t1.CREATED_AT
+        WHERE t1.GATEWAY = 'vnpay'
+    ) tt ON tt.ID_HD = h.ID_HD
+";
+
 // Thông báo trạng thái thanh toán (nếu có)
 $flashNotice = $_SESSION['payment_notice'] ?? '';
 $flashType = $_SESSION['payment_notice_type'] ?? '';
@@ -31,18 +49,19 @@ $statsQuery = "
         SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN 1 ELSE 0 END) AS paid,
         SUM(
             CASE
-                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND h.YEU_CAU_XAC_NHAN = 1 THEN 1
+                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending' THEN 1
                 ELSE 0
             END
         ) AS verifying,
         SUM(
             CASE
-                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (h.YEU_CAU_XAC_NHAN IS NULL OR h.YEU_CAU_XAC_NHAN = 0) THEN 1
+                WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (tt.VNPAY_TRANG_THAI IS NULL OR tt.VNPAY_TRANG_THAI <> 'pending') THEN 1
                 ELSE 0
             END
         ) AS unpaid
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
+" . $latestVnpayJoin . "
     WHERE l.ID_TK = '$userId'
 ";
 $statsResult = mysqli_query($conn, $statsQuery);
@@ -62,10 +81,10 @@ switch ($activeState) {
         $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN = 'Đã thanh toán'";
         break;
     case 'verifying':
-        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND h.YEU_CAU_XAC_NHAN = 1";
+        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending'";
         break;
     case 'unpaid':
-        $stateFilterClause = " AND (h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (h.YEU_CAU_XAC_NHAN IS NULL OR h.YEU_CAU_XAC_NHAN = 0))";
+        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (tt.VNPAY_TRANG_THAI IS NULL OR tt.VNPAY_TRANG_THAI <> 'pending')";
         break;
     default:
         $activeState = 'all';
@@ -77,6 +96,7 @@ $countQuery = "
     SELECT COUNT(*) AS total
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
+" . $latestVnpayJoin . "
     WHERE l.ID_TK = '$userId' $stateFilterClause
 ";
 $countResult = mysqli_query($conn, $countQuery);
@@ -85,7 +105,7 @@ $totalPages = $totalRows > 0 ? (int) ceil($totalRows / $limit) : 1;
 
 // Truy vấn phân trang kèm thông tin lịch hẹn và chi nhánh
 $sql = "
-    SELECT h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN, h.YEU_CAU_XAC_NHAN,
+    SELECT h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN,
            h.PHUONGTHUC_THANHTOAN, k.HO_TEN, k.EMAIL, k.SDT, d.TEN_DV,
            l.THOI_GIAN_BAT_DAU, l.DIA_CHI_HEN, l.TRANGTHAI AS LICH_TRANGTHAI,
            cn.TEN_CN,
@@ -96,17 +116,7 @@ $sql = "
     JOIN khach_hang k ON l.ID_TK = k.ID_TK
     JOIN dich_vu d ON l.ID_DV = d.ID_DV
     LEFT JOIN chi_nhanh cn ON l.ID_CHINHANH = cn.ID_CN
-    LEFT JOIN (
-        SELECT t1.ID_HD, t1.TRANG_THAI, t1.MA_THAM_CHIEU, t1.SO_TIEN, t1.CREATED_AT
-        FROM thanh_toan_truc_tuyen t1
-        JOIN (
-            SELECT ID_HD, MAX(CREATED_AT) AS max_created
-            FROM thanh_toan_truc_tuyen
-            WHERE GATEWAY = 'vnpay'
-            GROUP BY ID_HD
-        ) latest ON latest.ID_HD = t1.ID_HD AND latest.max_created = t1.CREATED_AT
-        WHERE t1.GATEWAY = 'vnpay'
-    ) tt ON tt.ID_HD = h.ID_HD
+" . $latestVnpayJoin . "
     WHERE l.ID_TK = '$userId' $stateFilterClause
     ORDER BY h.NGAY_GIO DESC
     LIMIT $limit OFFSET $offset
@@ -202,25 +212,29 @@ function formatDateTime($datetime)
     return date('d/m/Y H:i', strtotime($datetime));
 }
 
-function resolveInvoiceState($statusText, $requestConfirm)
+function resolveInvoiceState($statusText, $gatewayStatus = null)
 {
     $normalized = trim((string) $statusText);
     if ($normalized === 'Đã thanh toán') {
         return 'paid';
     }
-    if ((int) $requestConfirm === 1) {
+    if ($gatewayStatus === 'pending') {
         return 'verifying';
     }
     return 'unpaid';
 }
 
-function getPaymentBadgeClasses($status, $requestConfirm)
+function getPaymentBadgeClasses($status, $gatewayStatus = null)
 {
-    if (trim($status) === 'Đã thanh toán') {
+    $normalized = trim((string) $status);
+    if ($normalized === 'Đã thanh toán') {
         return ['label' => 'Đã thanh toán', 'class' => 'bg-green-500 text-white'];
     }
-    if ((int) $requestConfirm === 1) {
-        return ['label' => 'Chờ xác minh', 'class' => 'bg-yellow-400 text-black'];
+    if ($gatewayStatus === 'pending') {
+        return ['label' => 'Đang xử lý cổng', 'class' => 'bg-amber-400 text-black'];
+    }
+    if ($gatewayStatus === 'failed') {
+        return ['label' => 'Giao dịch lỗi', 'class' => 'bg-red-500 text-white'];
     }
     return ['label' => 'Chưa thanh toán', 'class' => 'bg-slate-200 text-slate-700'];
 }
@@ -237,8 +251,8 @@ $filterOptions = [
         'count' => $statusStats['unpaid']
     ],
     'verifying' => [
-        'label' => 'Chờ xác minh',
-        'hint' => 'Đang duyệt chứng từ',
+        'label' => 'Đang xử lý cổng',
+        'hint' => 'VNPay đang xác nhận',
         'count' => $statusStats['verifying']
     ],
     'paid' => [
@@ -280,7 +294,7 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
             $heroTiles = [
                 ['label' => 'Tổng hóa đơn', 'value' => number_format($statusStats['total']), 'sub' => 'Toàn bộ lịch sử'],
                 ['label' => 'Chưa thanh toán', 'value' => number_format($statusStats['unpaid']), 'sub' => 'Đang chờ xử lý'],
-                ['label' => 'Chờ xác minh', 'value' => number_format($statusStats['verifying']), 'sub' => 'Đang kiểm tra'],
+                ['label' => 'Đang xử lý', 'value' => number_format($statusStats['verifying']), 'sub' => 'VNPay đang xác nhận'],
                 ['label' => 'Đã thanh toán', 'value' => number_format($statusStats['paid']), 'sub' => 'Hoàn tất'],
             ];
             ?>
@@ -333,10 +347,24 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                 $invoiceId = (int) $row['ID_HD'];
                 $qrData = "STK:1234567890|TONGTIEN:" . $row['TONG_TIEN'] . "|ND:THANHTOAN_HD_" . $invoiceId;
                 $qrImg = "https://api.qrserver.com/v1/create-qr-code/?data=" . urlencode($qrData) . "&size=180x180";
-                $badge = getPaymentBadgeClasses($row['TRANGTHAI_THANHTOAN'], $row['YEU_CAU_XAC_NHAN']);
-                $stateKey = resolveInvoiceState($row['TRANGTHAI_THANHTOAN'], $row['YEU_CAU_XAC_NHAN']);
+                $gatewayStatus = $row['VNPAY_TRANG_THAI'] ?? null;
+                $badge = getPaymentBadgeClasses($row['TRANGTHAI_THANHTOAN'], $gatewayStatus);
                 $history = $paymentHistory[$invoiceId] ?? [];
                 $latestHistory = $history[0] ?? null;
+                $isPaidInvoice = trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán';
+                $paymentDescription = 'Vui lòng hoàn tất thanh toán để giữ lịch.';
+                $paymentState = 'pending';
+
+                if ($isPaidInvoice) {
+                    $paymentDescription = 'Khoản phí đã được tất toán đầy đủ.';
+                    $paymentState = 'done';
+                } elseif ($gatewayStatus === 'pending') {
+                    $paymentDescription = 'VNPay đã ghi nhận giao dịch, hệ thống sẽ tự động cập nhật sau ít phút.';
+                    $paymentState = 'processing';
+                } elseif ($gatewayStatus === 'failed') {
+                    $paymentDescription = 'Lần thanh toán gần nhất không thành công. Vui lòng thử lại trên VNPay hoặc chọn phương thức khác.';
+                }
+
                 $timeline = [
                     [
                         'label' => 'Đặt lịch',
@@ -352,15 +380,9 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                     ],
                     [
                         'label' => 'Thanh toán',
-                        'description' => trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán'
-                            ? 'Khoản phí đã được tất toán đầy đủ.'
-                            : ((int) $row['YEU_CAU_XAC_NHAN'] === 1
-                                ? 'Studio đang kiểm tra chứng từ thanh toán.'
-                                : 'Vui lòng hoàn tất thanh toán để giữ lịch.'),
+                        'description' => $paymentDescription,
                         'time' => $latestHistory['time'] ?? null,
-                        'state' => trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán'
-                            ? 'done'
-                            : (((int) $row['YEU_CAU_XAC_NHAN'] === 1) ? 'processing' : 'pending')
+                        'state' => $paymentState
                     ],
                     [
                         'label' => 'Lịch sử thanh toán',
@@ -372,7 +394,7 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                     ],
                 ];
             ?>
-                <div class="rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
+                <div id="invoice-<?= $invoiceId ?>" class="rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/70">
                     <div class="flex flex-col lg:flex-row">
                         <div class="flex-1 space-y-6 p-6">
                             <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -491,8 +513,10 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                                                 <p class="mt-2 text-xs text-slate-500">Bạn sẽ được chuyển sang cổng VNPAY để hoàn tất giao dịch.</p>
                                             </div>
                                         </div>
-                                        <?php if ((int) $row['YEU_CAU_XAC_NHAN'] === 1): ?>
-                                            <p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">Đã gửi yêu cầu xác minh chứng từ, vui lòng chờ phản hồi.</p>
+                                        <?php if ($gatewayStatus === 'pending'): ?>
+                                            <p class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">Đang đợi VNPay xác nhận giao dịch. Hóa đơn sẽ tự động chuyển sang trạng thái đã thanh toán ngay khi nhận được IPN.</p>
+                                        <?php elseif ($gatewayStatus === 'failed'): ?>
+                                            <p class="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">Giao dịch VNPay gần nhất không thành công. Bạn có thể thử lại hoặc chọn chuyển khoản ngân hàng.</p>
                                         <?php endif; ?>
                                     <?php endif; ?>
                                 </div>

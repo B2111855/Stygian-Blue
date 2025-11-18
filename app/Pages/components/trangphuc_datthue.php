@@ -5,8 +5,10 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 if (!isset($conn)) {
-    require_once '../../../database/config.php';
+  require_once '../../../database/config.php';
 }
+
+require_once __DIR__ . '/../../helpers/assets.php';
 
 if (!function_exists('tp_escape')) {
     function tp_escape($value): string
@@ -104,7 +106,7 @@ $pricePerDay = isset($costume['DON_GIA']) ? (int)$costume['DON_GIA'] : 0;
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Đặt thuê trang phục<?= $costume ? ' – ' . tp_escape($costume['TEN_TP']) : '' ?></title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

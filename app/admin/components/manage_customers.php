@@ -1,5 +1,6 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Fetch all customers
 function getCustomers()
@@ -228,19 +229,17 @@ $search = $_GET['search'] ?? '';
 $pageNumber = isset($_GET['p']) ? max(1, intval($_GET['p'])) : 1;
 list($customers, $totalPages) = getPaginatedCustomers($search, $pageNumber);
 ?>
-<html lang="en">
-
+<!DOCTYPE html>
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
-    </link>
     <title>Quản lý khách hàng</title>
+    <?= sb_tailwind_link_tag(); ?>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
 </head>
-
-<body class="bg-gray-100 p-6">
-    <div class="max-w-7xl mx-auto">
+<body class="bg-gray-100 min-h-screen p-6">
+    <div class="max-w-5xl mx-auto">
         <h1 class="text-3xl font-bold text-indigo-700 mb-6 text-center">👥 Quản lý khách hàng</h1>
 
         <?php if (isset($successMessage)) : ?>
@@ -353,3 +352,4 @@ list($customers, $totalPages) = getPaginatedCustomers($search, $pageNumber);
         <?php endif; ?>
     </div>
 </body>
+</html>

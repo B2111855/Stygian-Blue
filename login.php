@@ -6,6 +6,7 @@ session_start();
 
 require_once './vendor/autoload.php'; 
 require_once './app/helpers/auth_background.php';
+require_once './app/helpers/system_log.php';
 
 use Dotenv\Dotenv;
 
@@ -114,6 +115,19 @@ function finishLoginAndRedirect($conn, $userRow) {
         $_SESSION['role'] = 'customer';
     }
 
+    record_system_log(
+        $conn,
+        'LOGIN_SUCCESS',
+        'auth',
+        null,
+        [
+            'ID_TK'    => $userRow['ID_TK'],
+            'ID_QUYEN' => $userRow['ID_QUYEN'],
+            'role'     => $_SESSION['role'] ?? null,
+            'method'   => 'local_form'
+        ]
+    );
+
     // Điều hướng dựa trên role
     if ($_SESSION['role'] === 'admin') {
         header("Location: /StygianBlue/app/admin/admin_dashboard.php");
@@ -171,12 +185,42 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 finishLoginAndRedirect($conn, $user);
             } else {
                 $error = "Mật khẩu không chính xác.";
+                record_system_log(
+                    $conn,
+                    'LOGIN_FAILED',
+                    'auth',
+                    null,
+                    [
+                        'ID_TK'  => $inputUsername,
+                        'reason' => 'wrong_password'
+                    ]
+                );
             }
         } else {
             $error = "Tài khoản không tồn tại.";
+            record_system_log(
+                $conn,
+                'LOGIN_FAILED',
+                'auth',
+                null,
+                [
+                    'ID_TK'  => $inputUsername,
+                    'reason' => 'user_not_found'
+                ]
+            );
         }
     } else {
         $error = "Vui lòng nhập đầy đủ thông tin.";
+        record_system_log(
+            $conn,
+            'LOGIN_FAILED',
+            'auth',
+            null,
+            [
+                'ID_TK'  => $inputUsername,
+                'reason' => 'missing_credentials'
+            ]
+        );
     }
 }
 ?>

@@ -7,6 +7,7 @@ error_reporting(E_ALL);
 
 // 0. Autoload + Dotenv (giống login.php, không dùng __DIR__)
 require_once 'vendor/autoload.php';
+require_once __DIR__ . '/app/helpers/system_log.php';
 
 use Dotenv\Dotenv;
 
@@ -49,6 +50,19 @@ function finishLoginAndRedirect($conn, $userRow) {
     } else {
         $_SESSION['role'] = 'customer';
     }
+
+    record_system_log(
+        $conn,
+        'LOGIN_SUCCESS',
+        'auth',
+        null,
+        [
+            'ID_TK'    => $userRow['ID_TK'],
+            'ID_QUYEN' => $userRow['ID_QUYEN'],
+            'role'     => $_SESSION['role'] ?? null,
+            'method'   => 'google_oauth'
+        ]
+    );
 
     // Điều hướng dựa trên role
     if ($_SESSION['role'] === 'admin') {
@@ -261,6 +275,18 @@ if (!$userRow) {
         $userRow = registerGoogleAccount($conn, $googleUser, $email);
         $_SESSION['message'] = 'Đã tạo tài khoản khách hàng mới từ Google.';
         $_SESSION['message_type'] = 'success';
+        record_system_log(
+            $conn,
+            'CUSTOMER_AUTO_REGISTER',
+            'tai_khoan',
+            null,
+            [
+                'ID_TK' => $userRow['ID_TK'],
+                'EMAIL' => $userRow['EMAIL']
+            ],
+            $userRow['ID_TK'],
+            'customer'
+        );
     } catch (Throwable $th) {
         error_log('Google auto-register failed: ' . $th->getMessage());
         header("Location: /StygianBlue/login.php?err=auto_register");

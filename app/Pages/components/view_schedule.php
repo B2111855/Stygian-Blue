@@ -1,6 +1,7 @@
 <?php
 // view_schedule.php
 require_once '../../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Tạo CSRF token nếu chưa có (dùng cho tất cả form trong trang)
 if (empty($_SESSION['csrf_token'])) {
@@ -77,7 +78,9 @@ SELECT
     hd.ID_HD,
     hd.TRANGTHAI_THANHTOAN,
     hd.TONG_TIEN,
-    hd.YEU_CAU_XAC_NHAN,
+    tt.TRANG_THAI AS VNPAY_TRANG_THAI,
+    tt.MA_THAM_CHIEU AS VNPAY_MA_THAM_CHIEU,
+    tt.CREATED_AT AS VNPAY_UPDATED_AT,
     ph.NOI_DUNG AS NOI_DUNG_PH,
     ph.XEP_HANG_DV,
     CASE WHEN ph.ID_TK IS NULL THEN 0 ELSE 1 END AS DA_GUI_PHAN_HOI
@@ -85,6 +88,20 @@ FROM lich_hen lh
 JOIN dich_vu dv         ON lh.ID_DV = dv.ID_DV
 LEFT JOIN chi_nhanh cn  ON lh.ID_CHINHANH = cn.ID_CN
 LEFT JOIN hoa_don hd    ON hd.ID_LICHHEN = lh.ID_LICHHEN
+LEFT JOIN (
+    SELECT t1.ID_HD,
+           t1.TRANG_THAI,
+           t1.MA_THAM_CHIEU,
+           t1.CREATED_AT
+    FROM thanh_toan_truc_tuyen t1
+    JOIN (
+        SELECT ID_HD, MAX(CREATED_AT) AS latest_created
+        FROM thanh_toan_truc_tuyen
+        WHERE GATEWAY = 'vnpay'
+        GROUP BY ID_HD
+    ) latest ON latest.ID_HD = t1.ID_HD AND latest.latest_created = t1.CREATED_AT
+    WHERE t1.GATEWAY = 'vnpay'
+) tt ON tt.ID_HD = hd.ID_HD
 LEFT JOIN phan_hoi_cua_khach_hang ph 
        ON ph.ID_TK = lh.ID_TK 
       AND ph.ID_DV = lh.ID_DV
@@ -211,12 +228,18 @@ function renderStatusBadge($status) {
     return "<span class=\"{$cfg['bg']} px-3 py-1 rounded-full text-xs font-medium\">{$cfg['label']}</span>";
 }
 
-function renderPaymentBadge($paymentStatus) {
+function renderPaymentBadge($paymentStatus, $gatewayStatus = null) {
     if (!$paymentStatus) {
-        return '<span class="text-xs text-gray-400 italic">Chưa tạo hóa đơn</span>';
+        return '<span class="text-xs text-gray-400 italic">Chờ xác nhận lịch hẹn</span>';
     }
     if ($paymentStatus === 'Đã thanh toán') {
         return '<span class="bg-emerald-100 text-emerald-700 px-2 py-1 text-xs rounded-md font-medium">Đã thanh toán</span>';
+    }
+    if ($gatewayStatus === 'pending') {
+        return '<span class="bg-amber-100 text-amber-700 px-2 py-1 text-xs rounded-md font-medium">Đang xử lý cổng</span>';
+    }
+    if ($gatewayStatus === 'failed') {
+        return '<span class="bg-rose-100 text-rose-700 px-2 py-1 text-xs rounded-md font-medium">Giao dịch lỗi</span>';
     }
     return '<span class="bg-rose-100 text-rose-700 px-2 py-1 text-xs rounded-md font-medium">Chưa thanh toán</span>';
 }
@@ -233,7 +256,7 @@ function jsSafe($val) {
     <meta charset="UTF-8">
     <title>Lịch hẹn của bạn</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <?= sb_tailwind_link_tag(); ?>
 </head>
 <body class="bg-gradient-to-br from-blue-50 via-blue-100 to-blue-200 min-h-screen text-gray-800">
 
@@ -313,7 +336,9 @@ function jsSafe($val) {
                                     'id_hd'              => $sc['ID_HD'],
                                     'tong_tien'          => $sc['TONG_TIEN'],
                                     'trang_thai_tt'      => $sc['TRANGTHAI_THANHTOAN'],
-                                    'yeu_cau_xac_nhan'   => $sc['YEU_CAU_XAC_NHAN'],
+                                    'gateway_status'     => $sc['VNPAY_TRANG_THAI'] ?? null,
+                                    'gateway_reference'  => $sc['VNPAY_MA_THAM_CHIEU'] ?? null,
+                                    'gateway_updated_at' => $sc['VNPAY_UPDATED_AT'] ?? null,
                                 ],
                             ];
 
@@ -322,7 +347,7 @@ function jsSafe($val) {
                                 'id_lichhen'   => $lichId,
                                 'id_hd'        => $sc['ID_HD'],
                                 'tong_tien'    => $sc['TONG_TIEN'],
-                                'da_gui_bang_chung' => $sc['YEU_CAU_XAC_NHAN'] ? true : false,
+                                'dang_xu_ly_gateway' => ($sc['VNPAY_TRANG_THAI'] ?? null) === 'pending',
                             ];
                         ?>
                         <tr class="hover:bg-blue-50 transition duration-150 align-top">
@@ -349,7 +374,7 @@ function jsSafe($val) {
                             </td>
 
                             <td class="py-3 px-4 border-b">
-                                <?= renderPaymentBadge($sc['TRANGTHAI_THANHTOAN'] ?? null) ?>
+                                <?= renderPaymentBadge($sc['TRANGTHAI_THANHTOAN'] ?? null, $sc['VNPAY_TRANG_THAI'] ?? null) ?>
                             </td>
 
                             <td class="py-3 px-4 border-b text-xs text-center space-y-2">
@@ -386,11 +411,10 @@ function jsSafe($val) {
 
                                 <?php if ($canPayNow && $sc['ID_HD']): ?>
                                 <!-- THANH TOÁN NGAY -->
-                                <button type="button"
-                                        class="w-full inline-block bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1 rounded-md shadow"
-                                        onclick='openPayModal(<?= jsSafe($payPayload) ?>)'>
+                                <a href="../Views/hoa_don.php#invoice-<?= $sc['ID_HD'] ?>"
+                                   class="w-full inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1 rounded-md shadow">
                                     Thanh toán ngay
-                                </button>
+                                </a>
                                 <?php endif; ?>
 
                             </td>
@@ -521,7 +545,7 @@ function jsSafe($val) {
                         <div><span class="text-gray-500">Mã hóa đơn:</span> <span id="dm-hd-id" class="font-medium"></span></div>
                         <div><span class="text-gray-500">Tổng tiền:</span> <span id="dm-hd-total" class="font-semibold text-emerald-700"></span></div>
                         <div><span class="text-gray-500">Thanh toán:</span> <span id="dm-hd-status" class="font-medium"></span></div>
-                        <div><span class="text-gray-500">Yêu cầu xác nhận:</span> <span id="dm-hd-verify" class="font-medium"></span></div>
+                        <div><span class="text-gray-500">Cổng VNPay:</span> <span id="dm-hd-verify" class="font-medium"></span></div>
                     </div>
                 </div>
 
@@ -566,7 +590,7 @@ function jsSafe($val) {
 
                 <p class="text-[13px] text-gray-500 leading-snug">
                     Bước 2. Sau khi chuyển khoản xong, chụp màn hình biên lai (screenshot app ngân hàng).<br>
-                    Bước 3. Tải ảnh minh chứng lên đây để yêu cầu xác nhận.
+                    Bước 3. Tải ảnh minh chứng lên đây nếu bạn chuyển khoản ngoài VNPay.
                 </p>
             </div>
 
@@ -600,9 +624,9 @@ function jsSafe($val) {
 
             <div class="mt-4 text-[11px] text-gray-500 leading-relaxed">
                 Sau khi gửi, trạng thái hóa đơn sẽ chuyển sang
-                <span class="font-medium text-gray-800">"Yêu cầu xác nhận"</span>. Bộ phận kế toán sẽ kiểm tra giao dịch và cập nhật sang
+                <span class="font-medium text-gray-800">"Đang đối chiếu"</span>. Bộ phận kế toán sẽ kiểm tra giao dịch và cập nhật sang
                 <span class="text-emerald-600 font-semibold">"Đã thanh toán"</span>
-                nếu hợp lệ.
+                nếu hợp lệ. Đối với VNPay, hệ thống sẽ tự động cập nhật nên không cần bước này.
             </div>
 
             <div class="mt-6 text-right">
@@ -697,9 +721,18 @@ function jsSafe($val) {
             ? (payload.hoa_don.tong_tien + " VND")
             : "—";
         dmHdStatus.textContent = payload.hoa_don.trang_thai_tt ?? '—';
-        dmHdVerify.textContent = payload.hoa_don.yeu_cau_xac_nhan
-            ? "Đã gửi minh chứng / chờ xác nhận"
-            : "Chưa xác nhận";
+        const gatewayStatus = payload.hoa_don.gateway_status;
+        if (!gatewayStatus) {
+            dmHdVerify.textContent = 'Chưa có giao dịch';
+        } else if (gatewayStatus === 'pending') {
+            dmHdVerify.textContent = 'Đang xử lý';
+        } else if (gatewayStatus === 'success') {
+            dmHdVerify.textContent = 'Đã xác nhận';
+        } else if (gatewayStatus === 'failed') {
+            dmHdVerify.textContent = 'Giao dịch lỗi';
+        } else {
+            dmHdVerify.textContent = gatewayStatus;
+        }
 
         detailModal.classList.remove('hidden');
         detailModal.classList.add('flex');
@@ -719,8 +752,13 @@ function jsSafe($val) {
 
     function openPayModal(payload) {
         // payload = {
-        //   id_lichhen, id_hd, tong_tien, da_gui_bang_chung
+        //   id_lichhen, id_hd, tong_tien, dang_xu_ly_gateway
         // }
+
+        if (payload.dang_xu_ly_gateway) {
+            alert('VNPay đang xử lý giao dịch hiện tại. Vui lòng chờ hoàn tất trước khi gửi thêm chứng từ.');
+            return;
+        }
 
         pmIdHdInput.value     = payload.id_hd || '';
         pmIdLichInput.value   = payload.id_lichhen || '';
@@ -729,8 +767,6 @@ function jsSafe($val) {
             ? (payload.tong_tien + " VND")
             : "—";
 
-        // nếu da_gui_bang_chung = true => có thể show cảnh báo "đã gửi rồi"
-        // (optional)
         payModal.classList.remove('hidden');
         payModal.classList.add('flex');
     }

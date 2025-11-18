@@ -1,5 +1,6 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $staff_id = $_SESSION['ID_TK'] ?? null;
@@ -101,7 +102,7 @@ unset($assignment);
 <head>
     <meta charset="UTF-8">
     <title>Lịch làm việc cá nhân</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <?= sb_tailwind_link_tag(); ?>
     <style>
         @keyframes slideUpFade {
             0% { opacity: 0; transform: translateY(8px); }

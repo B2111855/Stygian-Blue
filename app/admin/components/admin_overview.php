@@ -78,7 +78,7 @@ $activeCustomers = (int) fetchScalar('SELECT COUNT(*) FROM khach_hang');
 $activeEmployees = (int) fetchScalar('SELECT COUNT(*) FROM nhan_vien');
 $totalServices = (int) fetchScalar('SELECT COUNT(*) FROM dich_vu');
 $totalBranches = (int) fetchScalar('SELECT COUNT(*) FROM chi_nhanh');
-$pendingInvoices = (int) fetchScalar("SELECT COUNT(*) FROM hoa_don WHERE TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND YEU_CAU_XAC_NHAN = 1");
+$pendingInvoices = (int) fetchScalar("SELECT COUNT(DISTINCT hd.ID_HD) FROM hoa_don hd JOIN thanh_toan_truc_tuyen tt ON tt.ID_HD = hd.ID_HD WHERE hd.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.TRANG_THAI = 'pending'");
 $overdueInvoices = (int) fetchScalar("SELECT COUNT(*) FROM hoa_don hd JOIN lich_hen lh ON lh.ID_LICHHEN = hd.ID_LICHHEN WHERE hd.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND lh.THOI_GIAN_BAT_DAU < NOW()");
 $appointmentsToday = (int) fetchScalar('SELECT COUNT(*) FROM lich_hen WHERE DATE(THOI_GIAN_BAT_DAU) = CURDATE()');
 $appointmentsNeedConfirm = (int) fetchScalar("SELECT COUNT(*) FROM lich_hen WHERE TRANGTHAI = 'Đang chờ' AND THOI_GIAN_BAT_DAU BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 3 DAY)");
@@ -128,7 +128,7 @@ $feedbackList = fetchRows("SELECT kh.HO_TEN, dv.TEN_DV, ph.NOI_DUNG, ph.XEP_HANG
 
 $systemAlerts = [];
 if ($pendingInvoices > 0) {
-    $systemAlerts[] = "Có {$pendingInvoices} yêu cầu thanh toán cần duyệt";
+  $systemAlerts[] = "Có {$pendingInvoices} giao dịch VNPay đang chờ IPN";
 }
 if ($overdueInvoices > 0) {
     $systemAlerts[] = "{$overdueInvoices} hóa đơn đã quá hạn";
@@ -145,10 +145,10 @@ if (empty($systemAlerts)) {
 
 $tasks = [
     [
-        'title' => 'Phê duyệt thanh toán',
-        'description' => 'Xử lý các yêu cầu chuyển khoản khách đã gửi minh chứng.',
-        'count' => $pendingInvoices,
-        'link' => '?page=payments',
+      'title' => 'Theo dõi VNPay',
+      'description' => 'Kiểm tra các giao dịch đang pending và xử lý nếu quá hạn.',
+      'count' => $pendingInvoices,
+      'link' => '?page=payments&trangthai=pending_confirm',
     ],
     [
         'title' => 'Nhắc khách thanh toán',

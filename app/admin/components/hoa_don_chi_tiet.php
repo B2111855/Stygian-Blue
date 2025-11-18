@@ -30,15 +30,24 @@ function calculateTotalPrice($idLichHen)
                 ) dg ON dv.ID_DV = dg.ID_DV 
                 WHERE lh.ID_LICHHEN = ?";
     $stmtDV = mysqli_prepare($conn, $queryDV);
+            if (!$stmtDV) {
+                error_log('calculateTotalPrice service query failed: ' . mysqli_error($conn));
+                return ['totalDV' => 0, 'totalTB' => 0, 'total' => 0];
+            }
     mysqli_stmt_bind_param($stmtDV, 'i', $idLichHen);
-    mysqli_stmt_execute($stmtDV);
-    $resultDV = mysqli_stmt_get_result($stmtDV);
+            if (!mysqli_stmt_execute($stmtDV)) {
+                error_log('calculateTotalPrice service execute failed: ' . mysqli_error($conn));
+                mysqli_stmt_close($stmtDV);
+                return ['totalDV' => 0, 'totalTB' => 0, 'total' => 0];
+            }
+            $resultDV = mysqli_stmt_get_result($stmtDV);
 
     if ($resultDV && $rowDV = mysqli_fetch_assoc($resultDV)) {
         $soPhut = (int)$rowDV['thoi_gian'];
         $soGio = $soPhut / 60;
         $totalDV = $soGio * $rowDV['DON_GIA'];
     }
+            mysqli_stmt_close($stmtDV);
 
     // Giá thiết bị mới nhất
     $queryTB = "SELECT dgtb.DON_GIA, lhtb.SO_LUONG 
@@ -55,12 +64,20 @@ function calculateTotalPrice($idLichHen)
                 ) dgtb ON tb.ID_TB = dgtb.ID_TB 
                 WHERE lhtb.ID_LICHHEN = ?";
     $stmtTB = mysqli_prepare($conn, $queryTB);
-    mysqli_stmt_bind_param($stmtTB, 'i', $idLichHen);
-    mysqli_stmt_execute($stmtTB);
-    $resultTB = mysqli_stmt_get_result($stmtTB);
+    if ($stmtTB) {
+        mysqli_stmt_bind_param($stmtTB, 'i', $idLichHen);
+        if (mysqli_stmt_execute($stmtTB)) {
+            $resultTB = mysqli_stmt_get_result($stmtTB);
 
-    while ($rowTB = mysqli_fetch_assoc($resultTB)) {
-        $totalTB += $rowTB['DON_GIA'] * $rowTB['SO_LUONG'];
+            while ($resultTB && $rowTB = mysqli_fetch_assoc($resultTB)) {
+                $totalTB += $rowTB['DON_GIA'] * $rowTB['SO_LUONG'];
+            }
+        } else {
+            error_log('calculateTotalPrice device execute failed: ' . mysqli_error($conn));
+        }
+        mysqli_stmt_close($stmtTB);
+    } else {
+        error_log('calculateTotalPrice device query failed: ' . mysqli_error($conn));
     }
 
     return [
@@ -73,7 +90,8 @@ function calculateTotalPrice($idLichHen)
 
 $stmt = mysqli_prepare($conn, "
     SELECT hd.ID_HD, hd.NGAY_GIO, hd.TRANGTHAI_THANHTOAN,
-            hd.YEU_CAU_XAC_NHAN,
+           hd.PHUONGTHUC_THANHTOAN,
+           tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
            kh.HO_TEN, kh.EMAIL, kh.SDT,
            dv.TEN_DV, dv.thoi_gian, dgdv.DON_GIA AS GIA_DV, lh.ID_LICHHEN
     FROM hoa_don hd
@@ -81,7 +99,27 @@ $stmt = mysqli_prepare($conn, "
     JOIN tai_khoan kh ON lh.ID_TK = kh.ID_TK
     JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
     JOIN don_gia_dich_vu dgdv ON dv.ID_DV = dgdv.ID_DV
+    LEFT JOIN (
+        SELECT t1.ID_HD,
+               t1.TRANG_THAI AS VNPAY_TRANG_THAI,
+               t1.MA_THAM_CHIEU AS VNPAY_MA_THAM_CHIEU,
+               t1.CREATED_AT AS VNPAY_UPDATED_AT
+        FROM thanh_toan_truc_tuyen t1
+        JOIN (
+            SELECT ID_HD, MAX(CREATED_AT) AS latest_created
+            FROM thanh_toan_truc_tuyen
+            WHERE GATEWAY = 'vnpay'
+            GROUP BY ID_HD
+        ) latest ON latest.ID_HD = t1.ID_HD AND latest.latest_created = t1.CREATED_AT
+        WHERE t1.GATEWAY = 'vnpay'
+    ) tt ON tt.ID_HD = hd.ID_HD
     WHERE hd.ID_HD = ?");
+
+if (!$stmt) {
+    error_log('Invoice detail query prepare failed: ' . mysqli_error($conn));
+    echo "<script>alert('Không thể tải dữ liệu hóa đơn lúc này.'); window.location.href='admin_dashboard.php?page=payments';</script>";
+    exit;
+}
 
 mysqli_stmt_bind_param($stmt, "i", $id_hd);
 mysqli_stmt_execute($stmt);
@@ -90,6 +128,39 @@ $invoice = mysqli_fetch_assoc(mysqli_stmt_get_result($stmt));
 if (!$invoice) {
     echo "<script>alert('Không tìm thấy hóa đơn.'); history.back();</script>";
     exit;
+}
+
+$isPaid = $invoice['TRANGTHAI_THANHTOAN'] === 'Đã thanh toán';
+$gatewayStatus = $invoice['VNPAY_TRANG_THAI'] ?? null;
+$gatewayRef = $invoice['VNPAY_MA_THAM_CHIEU'] ?? null;
+$gatewayUpdatedAt = $invoice['VNPAY_UPDATED_AT'] ?? null;
+$isGatewayPending = !$isPaid && $gatewayStatus === 'pending';
+$methodLabel = $invoice['PHUONGTHUC_THANHTOAN'] ? strtoupper($invoice['PHUONGTHUC_THANHTOAN']) : 'Chưa ghi nhận';
+
+$gatewayBadge = [
+    'class' => 'bg-slate-100 text-slate-600',
+    'label' => 'Chưa có giao dịch',
+    'description' => 'Sẵn sàng khởi tạo VNPay hoặc ghi nhận chuyển khoản.',
+];
+
+if ($gatewayStatus === 'pending') {
+    $gatewayBadge = [
+        'class' => 'bg-amber-100 text-amber-700',
+        'label' => 'VNPay đang xử lý',
+        'description' => 'Chờ IPN xác nhận. Không cần thao tác thủ công.',
+    ];
+} elseif ($gatewayStatus === 'success') {
+    $gatewayBadge = [
+        'class' => 'bg-emerald-100 text-emerald-700',
+        'label' => 'VNPay đã xác nhận',
+        'description' => 'Invoice sẽ tự động chuyển sang đã thanh toán.',
+    ];
+} elseif ($gatewayStatus === 'failed') {
+    $gatewayBadge = [
+        'class' => 'bg-rose-100 text-rose-700',
+        'label' => 'VNPay lỗi',
+        'description' => 'Cần yêu cầu khách thanh toán lại hoặc xác minh thủ công.',
+    ];
 }
 
 $invoiceTotals = calculateTotalPrice($invoice['ID_LICHHEN']);
@@ -109,31 +180,81 @@ $stmtTB = mysqli_prepare($conn, "
 ) dgtb ON tb.ID_TB = dgtb.ID_TB
 
     WHERE lhtb.ID_LICHHEN = ?");
-
-mysqli_stmt_bind_param($stmtTB, "i", $invoice['ID_LICHHEN']);
-mysqli_stmt_execute($stmtTB);
-$equipments = mysqli_stmt_get_result($stmtTB);
+if ($stmtTB) {
+    mysqli_stmt_bind_param($stmtTB, "i", $invoice['ID_LICHHEN']);
+    if (!mysqli_stmt_execute($stmtTB)) {
+        error_log('equipment query execute failed: ' . mysqli_error($conn));
+        $equipments = false;
+    } else {
+        $equipments = mysqli_stmt_get_result($stmtTB);
+    }
+    mysqli_stmt_close($stmtTB);
+} else {
+    error_log('equipment query prepare failed: ' . mysqli_error($conn));
+    $equipments = false;
+}
 ?>
 
-<div class="p-8 bg-white rounded-xl shadow-xl max-w-4xl mx-auto">
-    <h1 class="text-3xl font-extrabold text-indigo-700 mb-6">🧾 Hóa đơn #<?= $invoice['ID_HD'] ?></h1>
+<div class="p-8 bg-white rounded-xl shadow-xl max-w-5xl mx-auto">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Chi tiết hóa đơn</p>
+            <h1 class="mt-1 text-3xl font-extrabold text-slate-900">#<?= $invoice['ID_HD'] ?></h1>
+        </div>
+        <a href="admin_dashboard.php?page=payments"
+           class="inline-flex rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:text-slate-800">
+            Quay lại danh sách
+        </a>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-3 mb-8">
+        <div class="p-5 rounded-xl border border-slate-100 bg-slate-50">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Trạng thái hiện tại</p>
+            <span class="mt-3 inline-flex rounded-full px-3 py-1 text-sm font-semibold <?= $isPaid ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700' ?>">
+                <?= $isPaid ? 'Đã thanh toán' : 'Chưa thanh toán' ?>
+            </span>
+            <p class="text-xs text-slate-500 mt-3">Cập nhật <?= date('d/m/Y H:i', strtotime($invoice['NGAY_GIO'])) ?></p>
+        </div>
+        <div class="p-5 rounded-xl border border-slate-100 bg-slate-50">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Phương thức</p>
+            <p class="mt-3 text-lg font-semibold text-slate-900"><?= htmlspecialchars($methodLabel) ?></p>
+            <p class="text-xs text-slate-500 mt-3">Thông tin được đồng bộ khi ghi nhận thanh toán.</p>
+        </div>
+        <div class="p-5 rounded-xl border border-slate-100 bg-slate-50">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Trạng thái VNPay</p>
+            <span class="mt-3 inline-flex rounded-full px-3 py-1 text-sm font-semibold <?= $gatewayBadge['class'] ?>">
+                <?= htmlspecialchars($gatewayBadge['label']) ?>
+            </span>
+            <p class="text-xs text-slate-500 mt-3">
+                <?= htmlspecialchars($gatewayBadge['description']) ?>
+                <?php if ($gatewayRef): ?><br><span class="text-slate-600">Mã: <?= htmlspecialchars($gatewayRef) ?></span><?php endif; ?>
+                <?php if ($gatewayUpdatedAt): ?><br><span class="text-slate-400">Cập nhật <?= htmlspecialchars(date('d/m/Y H:i', strtotime($gatewayUpdatedAt))) ?></span><?php endif; ?>
+            </p>
+        </div>
+    </div>
+
+    <?php if ($isGatewayPending): ?>
+        <div class="mb-8 border-l-4 border-amber-500 bg-amber-50 px-5 py-4 rounded">
+            <p class="text-sm text-amber-800 font-semibold">VNPay đã ghi nhận giao dịch.</p>
+            <p class="text-xs text-amber-700 mt-1">Không cần thao tác thủ công. Invoice sẽ tự cập nhật khi IPN trả về.</p>
+        </div>
+    <?php elseif (!$isPaid): ?>
+        <div class="mb-8 border-l-4 border-indigo-500 bg-indigo-50 px-5 py-4 rounded">
+            <p class="text-sm text-indigo-800 font-semibold">Hóa đơn chưa được đánh dấu thanh toán.</p>
+            <p class="text-xs text-indigo-700 mt-1">Chỉ xác nhận thủ công khi đã kiểm tra chứng từ chuyển khoản.</p>
+        </div>
+    <?php endif; ?>
 
     <!-- Thông tin chính -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-gray-700">
         <p><strong>Mã lịch hẹn:</strong> <?= $invoice['ID_LICHHEN'] ?></p>
-        <p><strong>Ngày lập:</strong> <?= $invoice['NGAY_GIO'] ?></p>
-        <p>
-            <strong>Trạng thái:</strong>
-            <?php if ($invoice['TRANGTHAI_THANHTOAN'] === 'Đã thanh toán'): ?>
-                <span class="text-green-600 font-semibold">Đã thanh toán</span>
-            <?php else: ?>
-                <span class="text-red-500 font-semibold">Chưa thanh toán</span>
-            <?php endif; ?>
-        </p>
+        <p><strong>Ngày lập hóa đơn:</strong> <?= date('d/m/Y H:i', strtotime($invoice['NGAY_GIO'])) ?></p>
+        <p><strong>Dịch vụ:</strong> <?= htmlspecialchars($invoice['TEN_DV']) ?></p>
+        <p><strong>Thời lượng dịch vụ:</strong> <?= $invoice['thoi_gian'] ?> phút</p>
     </div>
 
     <!-- Khách hàng -->
-    <h2 class="text-xl font-bold text-gray-800 mb-2 mt-4">👤 Thông tin khách hàng</h2>
+    <h2 class="text-xl font-bold text-slate-900 mb-2 mt-4">Thông tin khách hàng</h2>
     <div class="bg-gray-50 rounded p-4 text-gray-700 mb-4">
         <p><strong>Họ tên:</strong> <?= htmlspecialchars($invoice['HO_TEN']) ?></p>
         <p><strong>Email:</strong> <?= htmlspecialchars($invoice['EMAIL']) ?></p>
@@ -141,7 +262,7 @@ $equipments = mysqli_stmt_get_result($stmtTB);
     </div>
 
     <!-- Dịch vụ -->
-    <h2 class="text-xl font-bold text-gray-800 mb-2">📸 Dịch vụ sử dụng</h2>
+    <h2 class="text-xl font-bold text-slate-900 mb-2">Dịch vụ sử dụng</h2>
     <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
         <thead class="bg-indigo-100">
             <tr>
@@ -162,8 +283,8 @@ $equipments = mysqli_stmt_get_result($stmtTB);
     </table>
 
     <!-- Thiết bị -->
-    <?php if (mysqli_num_rows($equipments) > 0): ?>
-        <h2 class="text-xl font-bold text-gray-800 mt-6 mb-2">📦 Thiết bị kèm theo</h2>
+    <?php if ($equipments && mysqli_num_rows($equipments) > 0): ?>
+        <h2 class="text-xl font-bold text-slate-900 mt-6 mb-2">Thiết bị kèm theo</h2>
         <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
             <thead class="bg-indigo-100">
                 <tr>
@@ -174,7 +295,7 @@ $equipments = mysqli_stmt_get_result($stmtTB);
                 </tr>
             </thead>
             <tbody>
-                <?php while ($eq = mysqli_fetch_assoc($equipments)): ?>
+                <?php while ($equipments && $eq = mysqli_fetch_assoc($equipments)): ?>
                     <tr class="bg-white hover:bg-gray-50">
                         <td class="p-3 border"><?= htmlspecialchars($eq['TEN_TB']) ?></td>
                         <td class="p-3 border"><?= $eq['SO_LUONG'] ?></td>
@@ -196,43 +317,43 @@ $equipments = mysqli_stmt_get_result($stmtTB);
     </div>
 
     <!-- Xác nhận thanh toán hoặc trạng thái -->
-<?php if ($invoice['TRANGTHAI_THANHTOAN'] === 'Chưa thanh toán' && $invoice['YEU_CAU_XAC_NHAN'] == 1): ?>
-    <form method="POST" action="components/xac_nhan_thanh_toan.php" onsubmit="return confirm('Xác nhận khách hàng đã thanh toán hóa đơn này?');">
-        <input type="hidden" name="id_hd" value="<?= $invoice['ID_HD'] ?>">
+    <?php if (!$isPaid): ?>
+        <form method="POST" action="components/xac_nhan_thanh_toan.php" onsubmit="return confirm('Xác nhận khách hàng đã thanh toán hóa đơn này?');">
+            <input type="hidden" name="id_hd" value="<?= $invoice['ID_HD'] ?>">
+            <div class="mt-6 p-4 rounded-lg border <?= $isGatewayPending ? 'border-amber-300 bg-amber-50' : 'border-gray-200 bg-gray-50' ?>">
+                <p class="text-sm <?= $isGatewayPending ? 'text-amber-800' : 'text-gray-700' ?>">
+                    <?= $isGatewayPending
+                        ? 'VNPay đã ghi nhận giao dịch và đang chờ IPN. Không cần xác nhận thủ công.'
+                        : 'Chỉ xác nhận thủ công khi đã đối chiếu được chứng từ chuyển khoản.' ?>
+                </p>
+            </div>
+            <div class="text-right mt-6 flex flex-col sm:flex-row justify-end gap-4">
+                <?php $confirmBtnClasses = 'bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold';
+                if ($isGatewayPending) {
+                    $confirmBtnClasses .= ' opacity-60 cursor-not-allowed';
+                }
+                ?>
+                <button type="submit" <?= $isGatewayPending ? 'disabled' : '' ?>
+                    class="<?= $confirmBtnClasses ?>">
+                    <?= $isGatewayPending ? 'Chờ VNPay' : 'Xác nhận đã thanh toán' ?>
+                </button>
+                <a href="admin_dashboard.php?page=payments"
+                    class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
+                    Quay lại danh sách
+                </a>
+            </div>
+        </form>
+    <?php else: ?>
         <div class="text-right mt-6 flex flex-col sm:flex-row justify-end gap-4">
-            <button type="submit"
-                class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
-                ✅ Xác nhận đã thanh toán
-            </button>
+            <p class="text-green-600 font-semibold text-base">
+                Hóa đơn đã được thanh toán
+            </p>
             <a href="admin_dashboard.php?page=payments"
                 class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
-                🔙 Quay lại danh sách
+                Quay lại danh sách
             </a>
         </div>
-    </form>
-
-<?php elseif ($invoice['TRANGTHAI_THANHTOAN'] === 'Chưa thanh toán' && $invoice['YEU_CAU_XAC_NHAN'] != 1): ?>
-    <div class="text-right mt-6 flex flex-col sm:flex-row justify-end gap-4">
-        <p class="text-yellow-600 font-semibold text-lg flex items-center gap-2">
-            ⚠️ Khách hàng chưa gửi yêu cầu xác nhận.
-        </p>
-        <a href="admin_dashboard.php?page=payments"
-            class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
-            🔙 Quay lại danh sách
-        </a>
-    </div>
-
-<?php else: ?>
-    <div class="text-right mt-6 flex flex-col sm:flex-row justify-end gap-4">
-        <p class="text-green-600 font-bold text-lg flex items-center gap-2">
-            ✅ Hóa đơn đã được thanh toán
-        </p>
-        <a href="admin_dashboard.php?page=payments"
-            class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
-            🔙 Quay lại danh sách
-        </a>
-    </div>
-<?php endif; ?>
+    <?php endif; ?>
 
 
 </div>

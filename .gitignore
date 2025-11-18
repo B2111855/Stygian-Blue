@@ -62,6 +62,7 @@ dist/
 build/
 .next/
 .cache/
+public/css/tailwind.css
 
 # ==========================
 # Backup hoặc output tạm của XAMPP

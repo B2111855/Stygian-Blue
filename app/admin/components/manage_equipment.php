@@ -1,5 +1,6 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 /**
  * ADMIN — QUẢN LÝ THIẾT BỊ (NỘI BỘ)
@@ -342,9 +343,9 @@ if ($stmt) {
 <html lang="vi">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Quản Lý Thiết Bị</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Quản lý thiết bị</title>
+    <?= sb_tailwind_link_tag(); ?>
 </head>
 <body class="bg-gray-100 p-6">
 <?php if (!empty($_SESSION['success'])): ?>

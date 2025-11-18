@@ -7,6 +7,8 @@ if (!isset($conn)) {
     require_once '../../../database/config.php';
 }
 
+require_once __DIR__ . '/../../helpers/assets.php';
+
 if (!function_exists('tp_escape')) {
     function tp_escape($value): string
     {
@@ -141,7 +143,7 @@ $prefillQuery = http_build_query([
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Chi tiết trang phục<?= $costume ? ' – ' . tp_escape($costume['TEN_TP']) : '' ?></title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">

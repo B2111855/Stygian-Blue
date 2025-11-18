@@ -1,5 +1,6 @@
 <?php
 // navbar.php (v6) — Header for photography studio experience: PHP + TailwindCSS
+require_once __DIR__ . '/../../helpers/assets.php';
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -7,7 +8,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Stygian Blue Studio</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+  <?= sb_tailwind_link_tag(); ?>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="../../../public/css/loader.css" />

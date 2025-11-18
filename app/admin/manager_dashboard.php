@@ -30,6 +30,7 @@ require_once '..\..\middlewares\require_staff_manager.php';
           $page = $_GET['page'] ?? 'overview';
           $map  = [
             'overview'          => 'manager_overview.php',
+            'reports'           => 'manager_reports.php',
             'assignments'       => 'manager_assignments.php',
             'appointments'      => 'manager_appointments.php',
             'expenses'          => 'manager_expenses.php',

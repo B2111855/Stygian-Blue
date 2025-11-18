@@ -1,6 +1,7 @@
 <?php
 include '../../../database/config.php'; // Kết nối CSDL
 include '../Controller/taikhoan.php'; // Hàm getUserInfo
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // Lấy ID_TK từ session
 $userId = $_SESSION['ID_TK'];
@@ -138,7 +139,7 @@ $maskedPhone = !empty($sdt) ? htmlspecialchars($sdt) : 'Chưa cập nhật';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Thông tin người dùng</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <?= sb_tailwind_link_tag(); ?>
     <script>
         function togglePasswordModal() {
             const modal = document.getElementById('password-modal');
