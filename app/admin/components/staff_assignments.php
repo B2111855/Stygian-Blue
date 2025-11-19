@@ -1,6 +1,5 @@
 <?php
 include '../../database/config.php';
-require_once __DIR__ . '/../../helpers/assets.php';
 if (session_status() === PHP_SESSION_NONE) session_start();
 
 $staff_id = $_SESSION['ID_TK'] ?? null;
@@ -97,25 +96,7 @@ foreach ($assignments as &$assignment) {
 unset($assignment);
 ?>
 
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <title>Lịch làm việc cá nhân</title>
-    <?= sb_tailwind_link_tag(); ?>
-    <style>
-        @keyframes slideUpFade {
-            0% { opacity: 0; transform: translateY(8px); }
-            100% { opacity: 1; transform: translateY(0); }
-        }
-
-        .fade-in {
-            animation: slideUpFade 0.4s ease-out both;
-        }
-    </style>
-</head>
-<body class="bg-slate-100 min-h-screen p-8 font-sans text-gray-800">
-<div class="max-w-7xl mx-auto fade-in space-y-10">
+<div class="space-y-10 fade-in">
     <header class="mb-4">
         <h1 class="text-3xl font-bold text-indigo-700 md:text-4xl">Lịch làm việc cá nhân</h1>
         <p class="mt-2 text-base text-gray-600 md:text-lg">Theo dõi lịch hẹn được phân công và cập nhật trạng thái kịp thời.</p>
@@ -308,5 +289,14 @@ document.addEventListener('DOMContentLoaded', function () {
     applyFilters();
 });
 </script>
-</body>
-</html>
+
+<style>
+    @keyframes slideUpFade {
+        0% { opacity: 0; transform: translateY(8px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .fade-in {
+        animation: slideUpFade 0.4s ease-out both;
+    }
+</style>

@@ -1,22 +1,22 @@
-<?php 
-session_start(); 
-require_once '..\..\middlewares\require_staff_manager.php';
+<?php
+session_start();
+require_once __DIR__ . '/../../middlewares/require_staff_manager.php';
 ?>
 <!DOCTYPE html>
 <html lang="vi">
-<?php 
+<?php
   $pageTitle = 'Quản lý chi nhánh';
-  include './components/head.php'; 
+  include __DIR__ . '/components/head.php';
 ?>
 <body class="bg-gray-100 font-sans text-gray-800">
   <div class="flex min-h-screen">
 
     <!-- Sidebar -->
-    <?php include './components/sidebar_manager.php'; ?>
+    <?php include __DIR__ . '/components/sidebar_manager.php'; ?>
 
     <!-- Main content -->
     <div class="flex-1 relative overflow-hidden">
-      <?php include '../Pages/components/thongbao.php'; ?>
+      <?php include __DIR__ . '/../Pages/components/thongbao.php'; ?>
       <img src="https://storage.googleapis.com/a1aa/image/Fuczd4lY6jrjNZZrBoHIu8nkMLFP5TpPG7lwv9u4f24Wjd7JA.jpg" alt="Background" class="absolute inset-0 w-full h-full object-cover opacity-10" />
       <div class="relative z-10 p-8">
         <div class="bg-white bg-opacity-90 backdrop-blur-md rounded-xl p-6 shadow-xl min-h-[80vh]">

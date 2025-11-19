@@ -140,8 +140,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['current_password'])) 
 ?>
 
 <!-- ====================== UI START ====================== -->
-<body class="bg-slate-100 text-slate-800 min-h-screen">
-  <div class="mx-auto max-w-6xl px-4 py-12">
+<div class="text-slate-800">
+  <div class="mx-auto max-w-6xl px-4 py-6">
     <div class="space-y-8">
       <section class="rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div class="flex flex-col gap-6 border-b border-slate-200 px-6 py-8 md:flex-row md:items-center md:justify-between">
@@ -290,5 +290,5 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['current_password'])) 
       </script>
     </div>
   </div>
-</body>
+</div>
 <!-- ====================== UI END ====================== -->

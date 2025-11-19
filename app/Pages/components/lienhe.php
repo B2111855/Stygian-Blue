@@ -222,6 +222,7 @@ if (empty($_SESSION['csrf_token'])) {
   const packageSelect = root.querySelector('#package');
   const deviceWrapper = root.querySelector('#chon_thiet_bi_div');
   const deviceList = root.querySelector('#thiet_bi_checkbox_list');
+  const addressField = root.querySelector('#address');
   const quoteBox = root.querySelector('#quoteBox');
   const quoteTotal = root.querySelector('#quoteTotal');
   const quoteNote = root.querySelector('#quoteNote');
@@ -264,6 +265,19 @@ if (empty($_SESSION['csrf_token'])) {
       if (packageSelect) packageSelect.value = '';
     }
     updateQuotePreview();
+  }
+
+  function updateAddressDefault() {
+    if (!addressField || !branchField) return;
+    const selected = branchField.options[branchField.selectedIndex];
+    const branchName = selected && selected.value ? selected.textContent.trim() : '';
+    if (!branchName) return;
+    const defaultValue = `Chi nhánh ${branchName}`;
+    const isAuto = addressField.dataset.autofill === 'true';
+    if (addressField.value.trim() === '' || isAuto) {
+      addressField.value = defaultValue;
+      addressField.dataset.autofill = 'true';
+    }
   }
 
   async function loadBookedSlots() {
@@ -354,7 +368,15 @@ if (empty($_SESSION['csrf_token'])) {
   }
 
   dateField.addEventListener('change', loadBookedSlots);
-  branchField.addEventListener('change', loadBookedSlots);
+  branchField.addEventListener('change', () => {
+    updateAddressDefault();
+    loadBookedSlots();
+  });
+  if (addressField) {
+    addressField.addEventListener('input', () => {
+      addressField.dataset.autofill = 'false';
+    });
+  }
   bookingTypeRadios.forEach((radio) => {
     radio.addEventListener('change', toggleBookingFields);
   });
@@ -389,6 +411,7 @@ if (empty($_SESSION['csrf_token'])) {
               checkbox.name = 'thiet_bi_id[]';
               checkbox.value = item.ID_TB;
               checkbox.className = 'h-4 w-4 rounded border-slate-300 text-sky-500 focus:ring-sky-400';
+              checkbox.addEventListener('change', updateQuotePreview);
               span.textContent = item.TEN_TB;
 
               label.appendChild(checkbox);
@@ -412,6 +435,14 @@ if (empty($_SESSION['csrf_token'])) {
 
   if (packageSelect) {
     packageSelect.addEventListener('change', updateQuotePreview);
+  }
+
+  if (deviceList) {
+    deviceList.addEventListener('change', (e) => {
+      if (e.target && e.target.matches("input[name='thiet_bi_id[]']")) {
+        updateQuotePreview();
+      }
+    });
   }
 
   function selectedDeviceIds() {
@@ -481,6 +512,7 @@ if (empty($_SESSION['csrf_token'])) {
   }
 
   toggleBookingFields();
+  updateAddressDefault();
 
   const form = root.querySelector('#scheduleForm');
   form.addEventListener('submit', (event) => {

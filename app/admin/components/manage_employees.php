@@ -1,14 +1,20 @@
 <?php
 include '../../database/config.php';
 
-$limit = 6;
+$defaultLimit = 6;
+$allowedPageSizes = [6, 10, 15, 25];
+$perPage = isset($_GET['per_page']) ? intval($_GET['per_page']) : $defaultLimit;
+$perPage = in_array($perPage, $allowedPageSizes, true) ? $perPage : $defaultLimit;
+$limit = $perPage;
 $page = isset($_GET['page_num']) ? max(1, intval($_GET['page_num'])) : 1;
 $offset = ($page - 1) * $limit;
 
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$branchFilter = isset($_GET['branch']) ? trim($_GET['branch']) : '';
+$roleFilter = isset($_GET['role']) ? trim($_GET['role']) : '';
 
 
-function getEmployeesSearch($search = "", $limit = 6, $offset = 0)
+function getEmployeesSearch($search = "", $branch = "", $role = "", $limit = 6, $offset = 0)
 {
     global $conn;
     $query = "
@@ -27,29 +33,62 @@ function getEmployeesSearch($search = "", $limit = 6, $offset = 0)
     INNER JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN
 ";
 
+    $conditions = [];
+
     if (!empty($search)) {
         $search = mysqli_real_escape_string($conn, $search);
-        $query .= " WHERE tk.ID_TK LIKE '%$search%'
+        $conditions[] = "(tk.ID_TK LIKE '%$search%' 
                     OR tk.HO_TEN LIKE '%$search%' 
                     OR tk.EMAIL LIKE '%$search%'
-                    OR cn.TEN_CN LIKE '%$search%'";
+                    OR cn.TEN_CN LIKE '%$search%')";
     }
+
+    if (!empty($branch)) {
+        $branch = mysqli_real_escape_string($conn, $branch);
+        $conditions[] = "nv.ID_CN = '$branch'";
+    }
+
+    if (!empty($role)) {
+        $role = mysqli_real_escape_string($conn, $role);
+        $conditions[] = "nv.LOAI_NV = '$role'";
+    }
+
+    if (!empty($conditions)) {
+        $query .= ' WHERE ' . implode(' AND ', $conditions);
+    }
+
     $query .= " LIMIT $limit OFFSET $offset";
     return mysqli_query($conn, $query);
 }
 
-function countEmployees($search = "")
+function countEmployees($search = "", $branch = "", $role = "")
 {
     global $conn;
     $query = "SELECT COUNT(*) as total FROM nhan_vien nv 
               INNER JOIN tai_khoan tk ON nv.ID_TK = tk.ID_TK 
               INNER JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN";
+    $conditions = [];
+
     if (!empty($search)) {
         $search = mysqli_real_escape_string($conn, $search);
-        $query .= " WHERE tk.ID_TK LIKE '%$search%'
+        $conditions[] = "(tk.ID_TK LIKE '%$search%'
                     OR tk.HO_TEN LIKE '%$search%' 
                     OR tk.EMAIL LIKE '%$search%' 
-                    OR cn.TEN_CN LIKE '%$search%'";
+                    OR cn.TEN_CN LIKE '%$search%')";
+    }
+
+    if (!empty($branch)) {
+        $branch = mysqli_real_escape_string($conn, $branch);
+        $conditions[] = "nv.ID_CN = '$branch'";
+    }
+
+    if (!empty($role)) {
+        $role = mysqli_real_escape_string($conn, $role);
+        $conditions[] = "nv.LOAI_NV = '$role'";
+    }
+
+    if (!empty($conditions)) {
+        $query .= ' WHERE ' . implode(' AND ', $conditions);
     }
 
     $result = mysqli_query($conn, $query);
@@ -61,8 +100,43 @@ function countEmployees($search = "")
 function getBranches()
 {
     global $conn;
-    $query = "SELECT ID_CN, TEN_CN FROM chi_nhanh";
-    return mysqli_query($conn, $query);
+    $query = "SELECT ID_CN, TEN_CN FROM chi_nhanh ORDER BY TEN_CN";
+    $result = mysqli_query($conn, $query);
+    $branches = [];
+
+    if ($result) {
+        while ($row = mysqli_fetch_assoc($result)) {
+            $branches[] = $row;
+        }
+    }
+
+    return $branches;
+}
+
+function getEmployeeSummary()
+{
+    global $conn;
+    $summary = [
+        'total' => 0,
+        'manager' => 0,
+        'staff' => 0,
+    ];
+
+    $query = "SELECT LOAI_NV, COUNT(*) AS total FROM nhan_vien GROUP BY LOAI_NV";
+    $result = mysqli_query($conn, $query);
+
+    if ($result) {
+        while ($row = mysqli_fetch_assoc($result)) {
+            $summary['total'] += (int)$row['total'];
+            if ($row['LOAI_NV'] === 'quan_ly') {
+                $summary['manager'] = (int)$row['total'];
+            } else {
+                $summary['staff'] += (int)$row['total'];
+            }
+        }
+    }
+
+    return $summary;
 }
 
 // Handle edit employee form submission
@@ -314,7 +388,26 @@ function checkIfEmployeeHasAssignments($idTk)
 
 $branches = getBranches();
 
-$employees = getEmployeesSearch($search, $limit, $offset);
+$employees = getEmployeesSearch($search, $branchFilter, $roleFilter, $limit, $offset);
+$totalRecords = countEmployees($search, $branchFilter, $roleFilter);
+$totalPages = max(1, ceil($totalRecords / $limit));
+$showingStart = $totalRecords ? $offset + 1 : 0;
+$showingEnd = min($offset + $limit, $totalRecords);
+
+$selectedBranch = (string)$branchFilter;
+$selectedRole = (string)$roleFilter;
+$employeeSummary = getEmployeeSummary();
+$branchTotal = count($branches);
+$activeBranchLabel = '';
+
+if ($selectedBranch !== '') {
+    foreach ($branches as $branch) {
+        if ((string)$branch['ID_CN'] === $selectedBranch) {
+            $activeBranchLabel = $branch['TEN_CN'];
+            break;
+        }
+    }
+}
 
 ?>
 
@@ -323,7 +416,7 @@ $employees = getEmployeesSearch($search, $limit, $offset);
 
 <body class="bg-gray-100 p-6">
     <div class="max-w-7xl mx-auto">
-        <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">👔 Quản lý nhân viên</h1>
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">Quản lý nhân viên</h1>
 
         <!-- Thông báo -->
         <?php if (isset($successMessage)): ?>
@@ -333,19 +426,109 @@ $employees = getEmployeesSearch($search, $limit, $offset);
             <div class="bg-red-100 text-red-700 px-4 py-3 rounded mb-6 shadow"><?= $errorMessage ?></div>
         <?php endif; ?>
 
-        <!-- Tìm kiếm + Thêm -->
-        <div class="flex flex-wrap items-center justify-between mb-6 gap-4">
-            <form action="admin_dashboard.php" method="GET" class="flex gap-2 items-center">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white rounded-xl shadow p-4">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tổng nhân viên</p>
+                <p class="text-3xl font-bold text-indigo-700 mt-2"><?= number_format($employeeSummary['total']) ?></p>
+                <p class="text-sm text-gray-500 mt-1">Bao gồm cả nhân sự thường và quản lý.</p>
+            </div>
+            <div class="bg-white rounded-xl shadow p-4">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Chi nhánh</p>
+                <p class="text-3xl font-bold text-emerald-600 mt-2"><?= number_format($branchTotal) ?></p>
+                <p class="text-sm text-gray-500 mt-1">
+                    <?= $activeBranchLabel ? 'Đang lọc: ' . htmlspecialchars($activeBranchLabel) : 'Tất cả chi nhánh đang được hiển thị.' ?>
+                </p>
+            </div>
+            <div class="bg-white rounded-xl shadow p-4">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cơ cấu vai trò</p>
+                <div class="flex items-end gap-6 mt-2">
+                    <div>
+                        <p class="text-2xl font-bold text-gray-800"><?= number_format($employeeSummary['manager']) ?></p>
+                        <p class="text-sm text-gray-500">Quản lý</p>
+                    </div>
+                    <div>
+                        <p class="text-2xl font-bold text-gray-800"><?= number_format($employeeSummary['staff']) ?></p>
+                        <p class="text-sm text-gray-500">Nhân sự thường</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bộ lọc + Thêm -->
+        <div class="flex flex-wrap gap-4 mb-6">
+            <form action="admin_dashboard.php" method="GET" class="w-full md:flex-1 bg-white rounded-xl shadow-lg p-4 space-y-6">
                 <input type="hidden" name="page" value="employees">
-                <input type="text" name="search" placeholder="🔍 Tìm kiếm nhân viên..."
-                    value="<?= htmlspecialchars($_GET['search'] ?? '') ?>"
-                    class="border border-gray-300 rounded-lg px-4 py-2 focus:ring-indigo-500 shadow-sm">
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">Tìm</button>
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div class="space-y-3">
+                        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tìm kiếm</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="flex flex-col">
+                                <label for="search" class="text-sm font-medium text-gray-700 mb-1">Từ khóa</label>
+                                <input type="text" id="search" name="search" placeholder="Nhập tên, email hoặc chi nhánh"
+                                    value="<?= htmlspecialchars($search) ?>"
+                                    class="border border-gray-300 rounded-lg px-4 py-2 focus:ring-indigo-500 shadow-sm">
+                            </div>
+                            <div class="flex flex-col">
+                                <label for="branch" class="text-sm font-medium text-gray-700 mb-1">Chi nhánh</label>
+                                <select id="branch" name="branch" class="border border-gray-300 rounded-lg px-4 py-2 shadow-sm">
+                                    <option value="">Tất cả chi nhánh</option>
+                                    <?php if (!empty($branches)): ?>
+                                        <?php foreach ($branches as $branch): ?>
+                                            <option value="<?= htmlspecialchars($branch['ID_CN']) ?>" <?= $selectedBranch === (string)$branch['ID_CN'] ? 'selected' : '' ?>>
+                                                <?= htmlspecialchars($branch['TEN_CN']) ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <option value="" disabled>Chưa có dữ liệu chi nhánh</option>
+                                    <?php endif; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="space-y-3">
+                        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phân loại</p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="flex flex-col">
+                                <label for="role" class="text-sm font-medium text-gray-700 mb-1">Vai trò nội bộ</label>
+                                <select id="role" name="role" class="border border-gray-300 rounded-lg px-4 py-2 shadow-sm">
+                                    <option value="">Tất cả vai trò</option>
+                                    <option value="chuyen_trach" <?= $selectedRole === 'chuyen_trach' ? 'selected' : '' ?>>Nhân sự thường</option>
+                                    <option value="quan_ly" <?= $selectedRole === 'quan_ly' ? 'selected' : '' ?>>Quản lý chi nhánh</option>
+                                </select>
+                            </div>
+                            <div class="flex flex-col">
+                                <label for="per_page" class="text-sm font-medium text-gray-700 mb-1">Số bản ghi/trang</label>
+                                <select id="per_page" name="per_page" class="border border-gray-300 rounded-lg px-4 py-2 shadow-sm">
+                                    <?php foreach ($allowedPageSizes as $size): ?>
+                                        <option value="<?= $size ?>" <?= $size === $perPage ? 'selected' : '' ?>><?= $size ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-3 justify-end pt-4 border-t border-gray-100">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">Áp dụng bộ lọc</button>
+                    <a href="?page=employees" class="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg shadow hover:bg-gray-50">Đặt lại</a>
+                </div>
             </form>
-            <a href="?page=employees&add"
-                class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg shadow transition">
-                ➕ Thêm nhân viên
-            </a>
+            <div class="w-full md:w-64">
+                <div class="bg-white rounded-xl shadow-lg p-4 h-full flex flex-col gap-4">
+                    <div>
+                        <p class="text-sm font-semibold text-gray-500 mb-1">Tùy chọn nhanh</p>
+                        <p class="text-lg font-bold text-gray-800">Thêm nhân viên mới</p>
+                    </div>
+                    <a href="?page=employees&add"
+                        class="inline-flex items-center justify-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold shadow">
+                        Thêm nhân viên
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-wrap justify-between items-center text-sm text-gray-600 bg-white px-4 py-3 rounded-xl shadow mb-6">
+            <p>Hiển thị <?= $showingStart ?> - <?= $showingEnd ?> trên tổng <?= $totalRecords ?> nhân viên</p>
+            <p>Trang <?= $page ?> / <?= $totalPages ?></p>
         </div>
 
         <!-- Danh sách nhân viên -->
@@ -354,28 +537,28 @@ $employees = getEmployeesSearch($search, $limit, $offset);
                 <thead class="bg-indigo-100 text-indigo-700">
                     <tr>
                         <th class="px-4 py-3">ID</th>
-                        <th class="px-4 py-3">Họ tên</th>
-                        <th class="px-4 py-3">Chuyên môn</th>
+                        <th class="px-4 py-3">Họ tên &amp; chuyên môn</th>
                         <th class="px-4 py-3">Chi nhánh</th>
-                        <th class="px-4 py-3">Email</th>
-                        <th class="px-4 py-3">SĐT</th>
-
-                        <th class="px-4 py-3">Vai trò</th> <!-- 👈 mới -->
-
+                        <th class="px-4 py-3">Liên hệ</th>
+                        <th class="px-4 py-3">Vai trò</th>
                         <th class="px-4 py-3">Hành động</th>
                     </tr>
                 </thead>
 
-                <tbody class="text-center divide-y">
+                <tbody class="divide-y">
                     <?php if (mysqli_num_rows($employees) > 0): ?>
                         <?php while ($row = mysqli_fetch_assoc($employees)): ?>
                             <tr class="hover:bg-gray-50">
-                                <td class="px-4 py-3"><?= $row['ID_TK'] ?></td>
-                                <td class="px-4 py-3"><?= htmlspecialchars($row['HO_TEN']) ?></td>
-                                <td class="px-4 py-3"><?= htmlspecialchars($row['CHUYEN_MON']) ?></td>
-                                <td class="px-4 py-3"><?= htmlspecialchars($row['TEN_CN']) ?></td>
-                                <td class="px-4 py-3"><?= htmlspecialchars($row['EMAIL']) ?></td>
-                                <td class="px-4 py-3"><?= htmlspecialchars($row['SDT']) ?></td>
+                                <td class="px-4 py-3 text-left md:text-center font-semibold text-gray-800"><?= htmlspecialchars($row['ID_TK']) ?></td>
+                                <td class="px-4 py-3 text-left">
+                                    <p class="font-semibold text-gray-900"><?= htmlspecialchars($row['HO_TEN']) ?></p>
+                                    <p class="text-sm text-gray-500"><?= htmlspecialchars($row['CHUYEN_MON']) ?></p>
+                                </td>
+                                <td class="px-4 py-3 text-left md:text-center"><?= htmlspecialchars($row['TEN_CN']) ?></td>
+                                <td class="px-4 py-3 text-left">
+                                    <p><?= htmlspecialchars($row['EMAIL']) ?></p>
+                                    <p class="text-sm text-gray-500"><?= htmlspecialchars($row['SDT']) ?></p>
+                                </td>
 
                                 <td class="px-4 py-3">
                                     <?php
@@ -392,15 +575,23 @@ $employees = getEmployeesSearch($search, $limit, $offset);
 
 
                                 <td class="px-4 py-3">
-                                    <a href="?page=employees&edit=<?= $row['ID_TK'] ?>" class="text-blue-600 font-semibold hover:underline mr-3">Sửa</a>
-                                    <a href="?page=employees&delete=<?= $row['ID_TK'] ?>" class="text-red-600 font-semibold hover:underline">Xóa</a>
+                                    <div class="flex flex-wrap justify-center gap-2">
+                                        <a href="?page=employees&edit=<?= urlencode($row['ID_TK']) ?>"
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50">
+                                            Sửa
+                                        </a>
+                                        <a href="?page=employees&delete=<?= urlencode($row['ID_TK']) ?>"
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
+                                            Xóa
+                                        </a>
+                                    </div>
                                 </td>
 
                             </tr>
                         <?php endwhile; ?>
                     <?php else: ?>
                         <tr>
-                            <td colspan="7" class="text-red-600 font-bold py-6">Không tìm thấy nhân viên nào.</td>
+                            <td colspan="6" class="text-red-600 font-bold py-6">Không tìm thấy nhân viên nào.</td>
                         </tr>
                     <?php endif; ?>
                 </tbody>
@@ -408,12 +599,18 @@ $employees = getEmployeesSearch($search, $limit, $offset);
         </div>
 
         <?php
-        $totalRecords = countEmployees($search);
-        $totalPages = ceil($totalRecords / $limit);
-        echo '<div class="mt-6 flex justify-center gap-2">';
+        echo '<div class="mt-6 flex flex-wrap justify-center gap-2">';
         for ($i = 1; $i <= $totalPages; $i++) {
+            $queryString = http_build_query([
+                'page' => 'employees',
+                'page_num' => $i,
+                'search' => $search,
+                'branch' => $branchFilter,
+                'role' => $roleFilter,
+                'per_page' => $perPage,
+            ]);
             $active = ($i == $page) ? 'bg-indigo-600 text-white' : 'bg-gray-200 hover:bg-gray-300';
-            echo "<a href='?page=employees&page_num=$i&search=" . urlencode($search) . "' class='px-3 py-1 rounded $active'>$i</a>";
+            echo "<a href='?$queryString' class='px-3 py-1 rounded $active'>$i</a>";
         }
         echo '</div>';
         ?>
@@ -427,7 +624,7 @@ $employees = getEmployeesSearch($search, $limit, $offset);
                         class="text-gray-400 hover:text-gray-600 text-xl font-bold">&times;</button>
                 </div>
                 <h2 class="text-2xl font-bold text-indigo-700 mb-6">
-                    <?= isset($_GET['add']) ? '🆕 Thêm nhân viên mới' : '✏️ Sửa thông tin nhân viên' ?>
+                    <?= isset($_GET['add']) ? 'Thêm nhân viên mới' : 'Sửa thông tin nhân viên' ?>
                 </h2>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -439,56 +636,58 @@ $employees = getEmployeesSearch($search, $limit, $offset);
                                 class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                         </div>
                     <?php else: ?>
-                        <input type="hidden" name="ID_TK" value="<?= $editEmployee['ID_TK'] ?>">
+                        <input type="hidden" name="ID_TK" value="<?= htmlspecialchars($editEmployee['ID_TK']) ?>">
                     <?php endif; ?>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Họ tên</label>
-                        <input type="text" name="HO_TEN" value="<?= $editEmployee['HO_TEN'] ?? '' ?>" required
+                        <input type="text" name="HO_TEN" value="<?= htmlspecialchars($editEmployee['HO_TEN'] ?? '') ?>" required
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Ngày sinh</label>
-                        <input type="date" name="NGAY_SINH" value="<?= $editEmployee['NGAY_SINH'] ?? '' ?>"
+                        <input type="date" name="NGAY_SINH" value="<?= htmlspecialchars($editEmployee['NGAY_SINH'] ?? '') ?>"
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Địa chỉ</label>
-                        <input type="text" name="DIA_CHI" value="<?= $editEmployee['DIA_CHI'] ?? '' ?>" required
+                        <input type="text" name="DIA_CHI" value="<?= htmlspecialchars($editEmployee['DIA_CHI'] ?? '') ?>" required
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Số điện thoại</label>
-                        <input type="text" name="SDT" value="<?= $editEmployee['SDT'] ?? '' ?>" required
+                        <input type="text" name="SDT" value="<?= htmlspecialchars($editEmployee['SDT'] ?? '') ?>" required
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Email</label>
-                        <input type="email" name="EMAIL" value="<?= $editEmployee['EMAIL'] ?? '' ?>" required
+                        <input type="email" name="EMAIL" value="<?= htmlspecialchars($editEmployee['EMAIL'] ?? '') ?>" required
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Chi nhánh</label>
                         <select name="ID_CN" class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" required>
-                            <?php
-                            $branchesList = isset($_GET['add']) ? getBranches() : $branches;
-                            while ($branch = mysqli_fetch_assoc($branchesList)): ?>
-                                <option value="<?= $branch['ID_CN'] ?>"
-                                    <?= isset($editEmployee) && $editEmployee['ID_CN'] == $branch['ID_CN'] ? 'selected' : '' ?>>
-                                    <?= $branch['TEN_CN'] ?>
-                                </option>
-                            <?php endwhile; ?>
+                            <?php if (!empty($branches)): ?>
+                                <?php foreach ($branches as $branch): ?>
+                                    <option value="<?= htmlspecialchars($branch['ID_CN']) ?>"
+                                        <?= isset($editEmployee) && (string)$editEmployee['ID_CN'] === (string)$branch['ID_CN'] ? 'selected' : '' ?>>
+                                        <?= htmlspecialchars($branch['TEN_CN']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <option value="" disabled>Chưa có dữ liệu chi nhánh</option>
+                            <?php endif; ?>
                         </select>
                     </div>
 
                     <div>
                         <label class="block mb-1 text-sm font-medium text-gray-700">Chuyên môn</label>
-                        <input type="text" name="CHUYEN_MON" value="<?= $editEmployee['CHUYEN_MON'] ?? '' ?>"
+                        <input type="text" name="CHUYEN_MON" value="<?= htmlspecialchars($editEmployee['CHUYEN_MON'] ?? '') ?>"
                             class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
                     </div>
 
@@ -524,13 +723,13 @@ $employees = getEmployeesSearch($search, $limit, $offset);
                     <button type="button"
                         onclick="closeForm()"
                         class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-2 rounded-lg shadow transition">
-                        ✖ Đóng form
+                        Đóng form
                     </button>
 
                     <!-- Nút lưu -->
                     <button type="submit" name="<?= isset($_GET['add']) ? 'add_employee' : 'edit_employee' ?>"
                         class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-lg shadow transition">
-                        <?= isset($_GET['add']) ? '➕ Thêm mới' : '💾 Cập nhật' ?>
+                        <?= isset($_GET['add']) ? 'Thêm mới' : 'Cập nhật' ?>
                     </button>
                 </div>
 

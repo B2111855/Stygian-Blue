@@ -196,6 +196,17 @@ if ($stmtTB) {
 ?>
 
 <div class="p-8 bg-white rounded-xl shadow-xl max-w-5xl mx-auto">
+    <?php
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    if (!empty($_SESSION['refund_notice'])): ?>
+        <div class="mb-4 border <?php echo ($_SESSION['refund_notice_type'] ?? '') === 'success' ? 'border-green-200 bg-green-50 text-green-800' : 'border-red-200 bg-red-50 text-red-800'; ?> px-4 py-3 rounded-lg text-sm font-medium">
+            <?= htmlspecialchars($_SESSION['refund_notice']) ?>
+        </div>
+    <?php
+        unset($_SESSION['refund_notice'], $_SESSION['refund_notice_type']);
+    endif; ?>
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Chi tiết hóa đơn</p>
@@ -353,6 +364,42 @@ if ($stmtTB) {
                 Quay lại danh sách
             </a>
         </div>
+
+        <?php
+        $isVNPay = strtoupper((string)$methodLabel) === 'VNPAY';
+        if ($isVNPay): ?>
+            <div class="mt-8 p-6 rounded-xl border border-indigo-200 bg-indigo-50">
+                <h3 class="text-lg font-semibold text-indigo-800 mb-3">Hoàn tiền VNPay</h3>
+                <p class="text-sm text-indigo-700 mb-4">Thực hiện hoàn tiền cho hóa đơn này qua VNPay. Có thể hoàn toàn phần hoặc một phần.</p>
+                <form method="POST" action="components/process_refund.php" class="grid gap-4 md:grid-cols-3">
+                    <input type="hidden" name="id_hd" value="<?= (int)$invoice['ID_HD'] ?>" />
+                    <div class="md:col-span-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Kiểu hoàn</label>
+                        <select name="refund_type" class="border border-gray-300 rounded-lg px-3 py-2 w-full">
+                            <option value="full">Hoàn toàn bộ</option>
+                            <option value="partial">Hoàn một phần</option>
+                        </select>
+                    </div>
+                    <div class="md:col-span-1">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Số tiền (VND)</label>
+                        <input type="number" name="amount" min="1000" step="1000"
+                               value="<?= (int)$invoice['TONG_TIEN'] ?>"
+                               class="border border-gray-300 rounded-lg px-3 py-2 w-full" required />
+                        <p class="text-xs text-gray-500 mt-1">Tối đa: <?= number_format((float)$invoice['TONG_TIEN'], 0, ',', '.') ?> VND</p>
+                    </div>
+                    <div class="md:col-span-3">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Lý do</label>
+                        <input type="text" name="reason" maxlength="200" placeholder="Ghi rõ lý do hoàn tiền"
+                               class="border border-gray-300 rounded-lg px-3 py-2 w-full" />
+                    </div>
+                    <div class="md:col-span-3 text-right">
+                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2 rounded-lg font-semibold shadow">
+                            Gửi yêu cầu hoàn tiền
+                        </button>
+                    </div>
+                </form>
+            </div>
+        <?php endif; ?>
     <?php endif; ?>
 
 

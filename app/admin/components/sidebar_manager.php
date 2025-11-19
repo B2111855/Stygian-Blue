@@ -1,52 +1,127 @@
 <?php
-$managerCurrentPage = $_GET['page'] ?? 'overview';
-$managerNavItems = [
-  ['slug' => 'overview',     'icon' => 'fas fa-tachometer-alt',     'label' => 'Tổng quan chi nhánh'],
-  ['slug' => 'reports',      'icon' => 'fas fa-chart-pie',          'label' => 'Thống kê & báo cáo'],
-  ['slug' => 'assignments',  'icon' => 'fas fa-user-cog',           'label' => 'Phân công ca/kíp'],
-  ['slug' => 'appointments', 'icon' => 'fas fa-calendar-check',     'label' => 'Lịch hẹn chi nhánh'],
-  ['slug' => 'salaries',     'icon' => 'fas fa-hand-holding-usd',   'label' => 'Lương/duyệt lương'],
-  ['slug' => 'equipment',    'icon' => 'fas fa-cogs',               'label' => 'Thiết bị/tồn kho'],
-  ['slug' => 'costumes',     'icon' => 'fas fa-tshirt',             'label' => 'Trang phục chi nhánh'],
-  ['slug' => 'customers',    'icon' => 'fas fa-user-friends',       'label' => 'Khách hàng chi nhánh'],
-  ['slug' => 'expenses',     'icon' => 'fas fa-money-bill-wave',    'label' => 'Chi phí phát sinh'],
-  ['slug' => 'feedback',     'icon' => 'fas fa-comments',           'label' => 'Phản hồi khách'],
-  ['slug' => 'selfInfo',     'icon' => 'fas fa-user-circle',        'label' => 'Thông tin cá nhân'],
-];
+$managerSidebarPage = $_GET['page'] ?? 'overview';
 
-if (!function_exists('renderManagerNavItem')) {
-    function renderManagerNavItem(array $item, string $currentPage): void
+if (!function_exists('sbManagerNavClasses')) {
+    function sbManagerNavClasses($current, array $targets)
     {
-        $isActive = $currentPage === $item['slug'];
-        $classes = 'flex items-center gap-3 py-2 px-4 rounded-lg transition font-medium ' . (
-            $isActive
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/40'
-                : 'text-gray-100 hover:bg-indigo-600/60'
-        );
-        echo '<li><a href="?page=' . htmlspecialchars($item['slug']) . '" class="' . $classes . '">'
-            . '<i class="' . $item['icon'] . '"></i>'
-            . '<span>' . htmlspecialchars($item['label']) . '</span>'
-            . '</a></li>';
+        $base = 'flex items-center gap-3 py-2.5 px-4 rounded-lg transition w-full font-medium';
+        return in_array($current, $targets, true)
+            ? $base . ' bg-indigo-600 text-white shadow-md shadow-indigo-900/40'
+            : $base . ' text-indigo-100 hover:bg-indigo-600/60';
     }
 }
+
+$managerSidebarSections = [
+    'Điều hành chi nhánh' => [
+        [
+            'label'   => 'Tổng quan chi nhánh',
+            'icon'    => 'fas fa-tachometer-alt',
+            'href'    => '?page=overview',
+            'targets' => ['overview'],
+        ],
+        [
+            'label'   => 'Thống kê & báo cáo',
+            'icon'    => 'fas fa-chart-pie',
+            'href'    => '?page=reports',
+            'targets' => ['reports'],
+        ],
+        [
+            'label'   => 'Phân công ca/kíp',
+            'icon'    => 'fas fa-user-cog',
+            'href'    => '?page=assignments',
+            'targets' => ['assignments'],
+        ],
+        [
+            'label'   => 'Lịch hẹn chi nhánh',
+            'icon'    => 'fas fa-calendar-check',
+            'href'    => '?page=appointments',
+            'targets' => ['appointments', 'appointment_detail'],
+        ],
+    ],
+    'Vận hành & nguồn lực' => [
+        [
+            'label'   => 'Lương/duyệt lương',
+            'icon'    => 'fas fa-hand-holding-usd',
+            'href'    => '?page=salaries',
+            'targets' => ['salaries'],
+        ],
+        [
+            'label'   => 'Thiết bị/tồn kho',
+            'icon'    => 'fas fa-cogs',
+            'href'    => '?page=equipment',
+            'targets' => ['equipment'],
+        ],
+        [
+            'label'   => 'Trang phục chi nhánh',
+            'icon'    => 'fas fa-tshirt',
+            'href'    => '?page=costumes',
+            'targets' => ['costumes'],
+        ],
+        [
+            'label'   => 'Chi phí phát sinh',
+            'icon'    => 'fas fa-money-bill-wave',
+            'href'    => '?page=expenses',
+            'targets' => ['expenses'],
+        ],
+    ],
+    'Khách hàng & chất lượng' => [
+        [
+            'label'   => 'Khách hàng chi nhánh',
+            'icon'    => 'fas fa-user-friends',
+            'href'    => '?page=customers',
+            'targets' => ['customers'],
+        ],
+        [
+            'label'   => 'Phản hồi khách',
+            'icon'    => 'fas fa-comments',
+            'href'    => '?page=feedback',
+            'targets' => ['feedback'],
+        ],
+    ],
+    'Tài khoản cá nhân' => [
+        [
+            'label'   => 'Thông tin cá nhân',
+            'icon'    => 'fas fa-user-circle',
+            'href'    => '?page=selfInfo',
+            'targets' => ['selfInfo'],
+        ],
+    ],
+];
 ?>
-<aside class="w-64 bg-gradient-to-b from-gray-900 to-indigo-900 text-white flex flex-col shadow-2xl">
+<aside class="w-64 bg-gradient-to-b from-gray-900 to-indigo-900 text-white flex flex-col shadow-2xl sticky top-0 h-screen">
   <div class="p-6 flex items-center gap-3 border-b border-gray-700">
     <i class="fas fa-sitemap text-3xl"></i>
     <h1 class="text-2xl font-extrabold">Quản lý viên</h1>
   </div>
-  <nav class="flex-1">
-    <ul class="space-y-1 p-4 text-sm font-medium">
-      <?php foreach ($managerNavItems as $item): ?>
-        <?php renderManagerNavItem($item, $managerCurrentPage); ?>
+  <nav class="flex-1 overflow-y-auto">
+    <div class="p-4 text-sm font-medium space-y-6">
+      <?php foreach ($managerSidebarSections as $sectionTitle => $sectionItems): ?>
+        <div>
+          <p class="uppercase text-xs tracking-widest text-indigo-200 font-semibold mb-2"><?= htmlspecialchars($sectionTitle, ENT_QUOTES, 'UTF-8') ?></p>
+          <ul class="space-y-1">
+            <?php foreach ($sectionItems as $item): ?>
+              <li>
+                <a href="<?= $item['href'] ?>" class="<?= sbManagerNavClasses($managerSidebarPage, $item['targets']) ?>">
+                  <i class="<?= $item['icon'] ?>"></i>
+                  <?= htmlspecialchars($item['label'], ENT_QUOTES, 'UTF-8') ?>
+                </a>
+              </li>
+            <?php endforeach; ?>
+          </ul>
+        </div>
       <?php endforeach; ?>
-      <li class="pt-2 mt-2 border-t border-white/10">
-        <a href="./components/logout.php"
-           onclick="return confirm('Bạn có chắc chắn muốn đăng xuất không?')"
-           class="flex items-center gap-3 py-2 px-4 rounded-lg hover:bg-red-600 transition">
-          <i class="fas fa-sign-out-alt"></i> Đăng xuất
-        </a>
-      </li>
-    </ul>
+      <div class="pt-2 border-t border-indigo-800/50">
+        <ul class="space-y-1">
+          <li>
+            <a href="./components/logout.php"
+               onclick="return confirm('Bạn có chắc chắn muốn đăng xuất không?')"
+               class="flex items-center gap-3 py-2.5 px-4 rounded-lg transition w-full bg-red-600/80 hover:bg-red-600 text-white">
+              <i class="fas fa-sign-out-alt"></i>
+              Đăng xuất
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
   </nav>
 </aside>

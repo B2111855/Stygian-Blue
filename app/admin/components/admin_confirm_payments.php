@@ -140,7 +140,7 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
 
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen p-6">
   <div class="max-w-7xl mx-auto bg-white shadow-xl rounded-xl p-8">
-    <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">🧾 Quản Lý Hóa Đơn</h1>
+    <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">Quản Lý Hóa Đơn</h1>
 
     <?php
     $resolvedPercent = $stats['total_invoices'] > 0 ? round(($stats['paid_invoices'] / $stats['total_invoices']) * 100) : 0;
@@ -148,10 +148,10 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
     ?>
 
     <div class="grid lg:grid-cols-4 md:grid-cols-2 gap-4 mb-8">
-      <div class="p-5 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-600 text-white shadow-lg">
-        <p class="text-sm uppercase tracking-wide opacity-80">Tổng hóa đơn</p>
-        <p class="text-3xl font-bold"><?= number_format($stats['total_invoices']) ?></p>
-        <p class="mt-2 text-xs opacity-80">Đang lọc theo điều kiện hiện tại</p>
+      <div class="p-5 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-800 shadow-sm">
+        <p class="text-sm uppercase tracking-wide text-indigo-500">Tổng hóa đơn</p>
+        <p class="text-3xl font-bold text-indigo-700"><?= number_format($stats['total_invoices']) ?></p>
+        <p class="mt-2 text-xs text-indigo-500">Đang lọc theo điều kiện hiện tại</p>
       </div>
       <div class="p-5 rounded-xl bg-white border shadow-sm">
         <p class="text-sm font-semibold text-gray-500">Đã thanh toán</p>
@@ -170,8 +170,8 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
       <div class="p-5 rounded-xl bg-white border shadow-sm flex flex-col justify-between">
         <div>
           <p class="text-sm font-semibold text-gray-500">VNPay đang xử lý</p>
-          <p class="text-2xl font-bold text-amber-500 flex items-center gap-2">
-            <i class="fas fa-bell"></i><?= number_format($stats['pending_confirm']) ?>
+          <p class="text-2xl font-bold text-amber-500">
+            <?= number_format($stats['pending_confirm']) ?>
           </p>
         </div>
         <p class="text-xs text-gray-500">Theo dõi các IPN chưa phản hồi để đảm bảo dòng tiền.</p>
@@ -208,12 +208,12 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
 
       <button type="submit"
         class="bg-indigo-600 text-white px-5 py-2 rounded-lg hover:bg-indigo-700 shadow-md font-semibold">
-        🔍 Tìm kiếm
+        Tìm kiếm
       </button>
 
       <a href="?page=payments"
         class="border border-gray-300 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-100 shadow-sm font-semibold">
-        ↺ Làm mới
+        Làm mới
       </a>
     </form>
 
@@ -255,21 +255,20 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
                 </td>
                 <td class="px-6 py-4">
                   <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold <?= $isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600' ?>">
-                    <i class="fas <?= $isPaid ? 'fa-check-circle' : 'fa-exclamation-circle' ?>"></i>
                     <?= $isPaid ? 'Đã thanh toán' : 'Chưa thanh toán' ?>
                   </span>
                   <div class="text-xs text-gray-500 mt-1">Phương thức: <?= htmlspecialchars($methodLabel) ?></div>
                   <?php if ($gatewayStatus): ?>
                     <?php
                       $gatewayMap = [
-                        'pending' => ['label' => 'VNPay đang xử lý', 'class' => 'text-amber-600', 'icon' => 'fa-cloud-upload-alt'],
-                        'success' => ['label' => 'VNPay đã xác nhận', 'class' => 'text-emerald-600', 'icon' => 'fa-check-circle'],
-                        'failed'  => ['label' => 'VNPay lỗi', 'class' => 'text-rose-600', 'icon' => 'fa-times-circle'],
+                        'pending' => ['label' => 'VNPay đang xử lý', 'class' => 'text-amber-600'],
+                        'success' => ['label' => 'VNPay đã xác nhận', 'class' => 'text-emerald-600'],
+                        'failed'  => ['label' => 'VNPay lỗi', 'class' => 'text-rose-600'],
                       ];
-                      $gwCfg = $gatewayMap[$gatewayStatus] ?? ['label' => 'VNPay: ' . strtoupper($gatewayStatus), 'class' => 'text-slate-600', 'icon' => 'fa-info-circle'];
+                      $gwCfg = $gatewayMap[$gatewayStatus] ?? ['label' => 'VNPay: ' . strtoupper($gatewayStatus), 'class' => 'text-slate-600'];
                     ?>
                     <div class="mt-1 inline-flex items-center gap-1 text-xs font-semibold <?= $gwCfg['class'] ?>">
-                      <i class="fas <?= $gwCfg['icon'] ?>"></i><?= $gwCfg['label'] ?>
+                      <?= $gwCfg['label'] ?>
                     </div>
                     <?php if (!empty($row['VNPAY_MA_THAM_CHIEU'])): ?>
                       <div class="text-[11px] text-gray-500 mt-0.5">Mã: <?= htmlspecialchars($row['VNPAY_MA_THAM_CHIEU']) ?></div>
@@ -282,7 +281,7 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
                 <td class="px-6 py-4 text-center">
                   <a href="?page=hoa_don_chi_tiet&id_hd=<?= $row['ID_HD'] ?>"
                     class="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded shadow transition whitespace-nowrap">
-                    <i class="fas fa-file-alt"></i><span>Chi tiết</span>
+                    <span>Chi tiết</span>
                   </a>
                 </td>
               </tr>

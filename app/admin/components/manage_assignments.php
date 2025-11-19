@@ -417,7 +417,7 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                             <p class="text-sm text-gray-700" title="<?= htmlEscape($row['DIA_CHI_HEN']) ?>"><?= htmlEscape($row['DIA_CHI_HEN']) ?></p>
                                         </td>
                                         <td class="px-3 py-3">
-                                            <span class="px-2 py-1 rounded-full text-xs font-semibold <?= $statusMeta['class'] ?>">
+                                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap <?= $statusMeta['class'] ?>">
                                                 <?= $statusMeta['label'] ?>
                                             </span>
                                         </td>
