@@ -1,6 +1,3 @@
-+35
--66
-
 <?php
 session_start();
 
@@ -97,8 +94,9 @@ function finishLoginAndRedirect($conn, $userRow) {
     $_SESSION['ID_TK']     = $userRow['ID_TK'];
     $_SESSION['ID_QUYEN']  = $userRow['ID_QUYEN']; // ví dụ: 1 = admin, 2 = nhân viên, ...
     $_SESSION['branch_id'] = $nvRow ? intval($nvRow['ID_CN']) : null;
+    $_SESSION['STAFF_TYPE'] = $nvRow ? $nvRow['LOAI_NV'] : null; // Lưu loại nhân viên
 
-    // Chuẩn hóa role để dùng cho dashboard và API
+    // Xác định role dựa trên ID_QUYEN + LOAI_NV:
     // - admin: ID_QUYEN == '1'
     // - branch_manager: ID_QUYEN == '2' và LOAI_NV == 'quan_ly'
     // - staff: ID_QUYEN == '2' và LOAI_NV khác

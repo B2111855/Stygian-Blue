@@ -1,0 +1,10 @@
+ALTER TABLE `ai_chat_session`
+    ADD COLUMN `CLIENT_TOKEN` CHAR(64) DEFAULT NULL AFTER `ID_TK`;
+
+UPDATE `ai_chat_session`
+SET `CLIENT_TOKEN` = SHA2(UUID(), 256)
+WHERE `CLIENT_TOKEN` IS NULL OR `CLIENT_TOKEN` = '';
+
+ALTER TABLE `ai_chat_session`
+    MODIFY `CLIENT_TOKEN` CHAR(64) NOT NULL,
+    ADD UNIQUE KEY `uq_ai_chat_session_token` (`CLIENT_TOKEN`);

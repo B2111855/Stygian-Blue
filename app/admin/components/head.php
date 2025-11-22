@@ -9,4 +9,5 @@ require_once __DIR__ . '/../../helpers/assets.php';
   <title><?= htmlspecialchars($pageTitle) ?></title>
   <?= sb_tailwind_link_tag(); ?>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css" rel="stylesheet" />
+  <script src="<?= sb_versioned_asset('public/js/persist-scroll.js') ?>" defer></script>
 </head>

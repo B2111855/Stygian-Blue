@@ -37,6 +37,7 @@ function finishLoginAndRedirect($conn, $userRow) {
     $_SESSION['ID_TK']     = $userRow['ID_TK'];
     $_SESSION['ID_QUYEN']  = $userRow['ID_QUYEN'];
     $_SESSION['branch_id'] = $nvRow ? intval($nvRow['ID_CN']) : null;
+    $_SESSION['STAFF_TYPE'] = $nvRow ? $nvRow['LOAI_NV'] : null; // Lưu loại nhân viên
 
     // Xác định role
     if ($userRow['ID_QUYEN'] == '1') {

@@ -6,7 +6,7 @@ $staff_id = $_SESSION['ID_TK'] ?? null;
 
 $query = "
     SELECT lh.ID_LICHHEN, kh.HO_TEN AS ten_khach_hang, dv.TEN_DV AS ten_dich_vu,
-           lh.THOI_GIAN_BAT_DAU, pc.THOI_GIAN_KET_THUC, lh.DIA_CHI_HEN, lh.TRANGTHAI
+             lh.THOI_GIAN_BAT_DAU, pc.THOI_GIAN_KET_THUC, lh.DIA_CHI_HEN, lh.TRANGTHAI
     FROM phan_cong_nhan_vien pc
     JOIN lich_hen lh ON pc.ID_LICHHEN = lh.ID_LICHHEN
     JOIN khach_hang kh ON lh.ID_TK = kh.ID_TK
@@ -63,6 +63,12 @@ foreach ($assignments as &$assignment) {
         $assignment['schedule_state'] = 'completed';
     } elseif ($startTime && $startTime < $now) {
         $assignment['schedule_state'] = 'past';
+    }
+    // Nếu trạng thái yêu cầu đổi lịch là Đã duyệt, đánh dấu assignment này là đã bị thay thế
+    if (($assignment['request_status'] ?? '') === 'Đã duyệt') {
+        $assignment['is_replaced'] = true;
+    } else {
+        $assignment['is_replaced'] = false;
     }
 
     $assignment['start_display'] = $startTime ? $startTime->format('d/m/Y H:i') : ($assignment['THOI_GIAN_BAT_DAU'] ?: '—');
@@ -179,6 +185,7 @@ unset($assignment);
                             $requestStatus = $assignment['request_status'] ?? '';
                             $requestStateAttr = $requestStatus !== '' ? $requestStatus : 'none';
                             ?>
+                            <?php if (!($assignment['is_replaced'] ?? false)): ?>
                             <tr
                                 data-assignment-row
                                 data-schedule-state="<?= htmlspecialchars($assignment['schedule_state'], ENT_QUOTES, 'UTF-8') ?>"
@@ -218,7 +225,7 @@ unset($assignment);
                                 <td class="px-6 py-4">
                                     <?php if (($assignment['TRANGTHAI'] ?? '') === 'Đã hoàn thành'): ?>
                                         <span class="inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-600">Đã hoàn thành</span>
-                                    <?php else: ?>
+                                    <?php elseif (!($assignment['is_replaced'] ?? false)): ?>
                                         <?php if (!empty($assignment['TRANGTHAI'])): ?>
                                             <span class="block text-xs font-medium uppercase tracking-wide text-gray-400"><?= htmlspecialchars($assignment['TRANGTHAI'], ENT_QUOTES, 'UTF-8') ?></span>
                                         <?php else: ?>
@@ -231,6 +238,7 @@ unset($assignment);
                                     <?php endif; ?>
                                 </td>
                             </tr>
+                        <?php endif; ?>
                         <?php endforeach; ?>
                     </tbody>
                 </table>

@@ -36,6 +36,9 @@ $branchId      = $_POST['branch_id']    ?? null;
 $ngayHen       = $_POST['ngayHen']      ?? null; // yyyy-mm-dd
 $gioHen        = $_POST['gioHen']       ?? null; // HH:mm hoặc HH:mm:ss
 $address       = $_POST['address']      ?? '';
+$locationType  = $_POST['location_type'] ?? 'branch';
+$extLatRaw     = $_POST['ext_lat']       ?? '';
+$extLngRaw     = $_POST['ext_lng']       ?? '';
 $serviceId     = $_POST['service_id']   ?? null;
 $packageId     = $_POST['package_id']   ?? null;
 $bookingType   = $_POST['booking_type'] ?? 'service';
@@ -47,9 +50,12 @@ if (!$userId && isset($_SESSION['user']['ID_TK'])) {
 }
 
 $bookingType = $bookingType === 'package' ? 'package' : 'service';
+$locationType = $locationType === 'external' ? 'external' : 'branch';
 $branchId    = $branchId !== null ? (int)$branchId : null;
 $serviceId   = ctype_digit((string)$serviceId) ? (int)$serviceId : null;
 $packageId   = ctype_digit((string)$packageId) ? (int)$packageId : null;
+$extLat      = is_numeric($extLatRaw) ? (float)$extLatRaw : null;
+$extLng      = is_numeric($extLngRaw) ? (float)$extLngRaw : null;
 
 // Chuẩn hoá giờ HH:mm -> HH:mm:00
 if ($gioHen && preg_match('/^\d{2}:\d{2}$/', $gioHen)) {
@@ -67,6 +73,12 @@ $errors = [];
 if (!$userId)     $errors[] = "Không xác định được tài khoản người dùng.";
 if (!$branchId)   $errors[] = "Thiếu chi nhánh.";
 if (!$startTime)  $errors[] = "Thiếu thời gian hẹn.";
+// Nếu chọn địa điểm ngoài studio thì yêu cầu toạ độ
+if ($locationType === 'external') {
+    if (!is_finite((float)$extLat) || !is_finite((float)$extLng)) {
+        $errors[] = "Vui lòng chọn vị trí hợp lệ trên bản đồ.";
+    }
+}
 if ($bookingType === 'service' && !$serviceId) {
     $errors[] = "Thiếu dịch vụ.";
 }
@@ -144,21 +156,72 @@ $conn->begin_transaction();
 
 try {
 
+    // Tính phụ phí di chuyển (nếu có)
+    $travelFee = 0;
+    $distanceKm = null;
+    if ($locationType === 'external' && is_finite((float)$extLat) && is_finite((float)$extLng)) {
+        // Kiểm tra cột LAT/LNG của chi nhánh có tồn tại không
+        $hasBranchCoords = false;
+        if ($rs = $conn->query("SHOW COLUMNS FROM CHI_NHANH LIKE 'LATITUDE'")) {
+            $hasBranchCoords = $rs->num_rows > 0; $rs->free_result();
+        }
+        if ($hasBranchCoords) {
+            $stmtB = $conn->prepare('SELECT LATITUDE, LONGITUDE FROM CHI_NHANH WHERE ID_CN = ? LIMIT 1');
+            if ($stmtB) {
+                $stmtB->bind_param('i', $branchId);
+                if ($stmtB->execute()) {
+                    $stmtB->bind_result($bLat, $bLng);
+                    if ($stmtB->fetch() && $bLat !== null && $bLng !== null) {
+                        $distanceKm = haversineKm((float)$bLat, (float)$bLng, (float)$extLat, (float)$extLng);
+                        $travelFee  = calcTravelFee($distanceKm);
+                    }
+                }
+                $stmtB->close();
+            }
+        }
+    }
+
     // 3.1 Thêm lịch hẹn
-    if ($bookingType === 'package') {
-        $sqlInsertLich = "
-            INSERT INTO lich_hen
-                (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
-            VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?)
-        ";
-        $stmt = $conn->prepare($sqlInsertLich);
+    // Kiểm tra cột mở rộng trong lich_hen
+    $hasLocationCols = false;
+    if ($rs2 = $conn->query("SHOW COLUMNS FROM LICH_HEN LIKE 'LOCATION_TYPE'")) {
+        $hasLocationCols = $rs2->num_rows > 0; $rs2->free_result();
+    }
+
+    if ($hasLocationCols) {
+        if ($bookingType === 'package') {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH,
+                     LOCATION_TYPE, LOCATION_ADDRESS, LOCATION_LAT, LOCATION_LNG, DISTANCE_KM, TRAVEL_FEE)
+                VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?, ?, ?, ?, ?, ?, ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
+        } else {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH,
+                     LOCATION_TYPE, LOCATION_ADDRESS, LOCATION_LAT, LOCATION_LNG, DISTANCE_KM, TRAVEL_FEE)
+                VALUES (?, ?, ?, ?, NULL, 'Đang chờ', ?, ?, ?, ?, ?, ?, ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
+        }
     } else {
-        $sqlInsertLich = "
-            INSERT INTO lich_hen
-                (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
-            VALUES (?, ?, ?, ?, NULL, 'Đang chờ', ?)
-        ";
-        $stmt = $conn->prepare($sqlInsertLich);
+        if ($bookingType === 'package') {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
+                VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
+        } else {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
+                VALUES (?, ?, ?, ?, NULL, 'Đang chờ', ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
+        }
     }
     if ($stmt === false) {
         throw new Exception("Lỗi chuẩn bị truy vấn lịch hẹn: " . $conn->error);
@@ -167,10 +230,33 @@ try {
     // Ép thời gian về định dạng MySQL chuẩn Y-m-d H:i:s
     $startTimeMySQL = $selectedDateTime->format('Y-m-d H:i:s');
 
-    if ($bookingType === 'package') {
-        $stmt->bind_param("sssiii", $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId);
+    if ($hasLocationCols) {
+        // Chuẩn hoá giá trị lưu
+        $locAddr = $locationType === 'external' ? ($address ?? '') : ("Chi nhánh " . (string)$branchId);
+        $locLat  = $locationType === 'external' && is_finite((float)$extLat) ? (float)$extLat : null;
+        $locLng  = $locationType === 'external' && is_finite((float)$extLng) ? (float)$extLng : null;
+        $distVal = $distanceKm !== null ? (float)$distanceKm : null;
+        $feeVal  = (int)$travelFee;
+
+        if ($bookingType === 'package') {
+            $stmt->bind_param(
+                "sssiiissdddi",
+                $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId,
+                $locationType, $locAddr, $locLat, $locLng, $distVal, $feeVal
+            );
+        } else {
+            $stmt->bind_param(
+                "sssiissdddi",
+                $userId, $startTimeMySQL, $address, $serviceId, $branchId,
+                $locationType, $locAddr, $locLat, $locLng, $distVal, $feeVal
+            );
+        }
     } else {
-        $stmt->bind_param("sssii", $userId, $startTimeMySQL, $address, $serviceId, $branchId);
+        if ($bookingType === 'package') {
+            $stmt->bind_param("sssiii", $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId);
+        } else {
+            $stmt->bind_param("sssii", $userId, $startTimeMySQL, $address, $serviceId, $branchId);
+        }
     }
 
     if (!$stmt->execute()) {
@@ -259,4 +345,22 @@ try {
     // bạn có thể đổi trang này sang form đặt lịch của bạn
     header("Location: ../lienhe.php");
     exit();
+}
+
+// Helpers
+function haversineKm($lat1, $lng1, $lat2, $lng2)
+{
+    $R = 6371; // km
+    $dLat = deg2rad($lat2 - $lat1);
+    $dLng = deg2rad($lng2 - $lng1);
+    $a = sin($dLat/2) ** 2 + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLng/2) ** 2;
+    $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
+    return $R * $c;
+}
+
+function calcTravelFee($distanceKm)
+{
+    if (!is_finite((float)$distanceKm)) return 0;
+    if ($distanceKm <= 20) return 0;
+    return (int)ceil($distanceKm - 20) * 5000;
 }

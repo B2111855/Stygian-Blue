@@ -88,6 +88,7 @@ function calculateTotalPrice($idLichHen)
     global $conn;
     $tongTienDV = 0;
     $tongTienTB = 0;
+    $travelFee  = 0;
 
     $queryDV = "
         SELECT dv.thoi_gian,
@@ -167,7 +168,23 @@ function calculateTotalPrice($idLichHen)
         }
     }
 
-    return $tongTienDV + $tongTienTB;
+    // Cộng phụ phí di chuyển nếu có cột và dữ liệu
+    $hasTravelFee = false;
+    if ($rs = mysqli_query($conn, "SHOW COLUMNS FROM lich_hen LIKE 'TRAVEL_FEE'")) {
+        $hasTravelFee = mysqli_num_rows($rs) > 0; mysqli_free_result($rs);
+    }
+    if ($hasTravelFee) {
+        $stmtTF = mysqli_prepare($conn, "SELECT COALESCE(TRAVEL_FEE,0) FROM lich_hen WHERE ID_LICHHEN = ?");
+        if ($stmtTF) {
+            mysqli_stmt_bind_param($stmtTF, 'i', $idLichHen);
+            if (mysqli_stmt_execute($stmtTF)) {
+                mysqli_stmt_bind_result($stmtTF, $tf); if (mysqli_stmt_fetch($stmtTF)) { $travelFee = (float)$tf; }
+            }
+            mysqli_stmt_close($stmtTF);
+        }
+    }
+
+    return $tongTienDV + $tongTienTB + $travelFee;
 }
 
 if (!isset($_GET['ID_LICHHEN'])) {
@@ -235,8 +252,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_appointment'])
                     $tongTien = calculateTotalPrice($id);
                     $stmtHD = mysqli_prepare($conn, "INSERT INTO hoa_don (ID_LICHHEN, NGAY_GIO, TONG_TIEN, TRANGTHAI_THANHTOAN) VALUES (?, NOW(), ?, 'Chưa thanh toán')");
                     mysqli_stmt_bind_param($stmtHD, 'id', $id, $tongTien);
-                    mysqli_stmt_execute($stmtHD);
+                    if (!mysqli_stmt_execute($stmtHD)) {
+                        error_log('Tạo hóa đơn thất bại: ' . mysqli_stmt_error($stmtHD));
+                    }
+                    $newInvoiceId = mysqli_insert_id($conn);
                     mysqli_stmt_close($stmtHD);
+
+                    // Thêm dòng phụ phí di chuyển nếu tồn tại trong lich_hen
+                    $hasTravelFee = false;
+                    if ($rsTF = mysqli_query($conn, "SHOW COLUMNS FROM lich_hen LIKE 'TRAVEL_FEE'")) {
+                        $hasTravelFee = mysqli_num_rows($rsTF) > 0; mysqli_free_result($rsTF);
+                    }
+                    if ($hasTravelFee && $newInvoiceId) {
+                        $tfVal = 0;
+                        $stmtTF = mysqli_prepare($conn, "SELECT COALESCE(TRAVEL_FEE,0) FROM lich_hen WHERE ID_LICHHEN = ?");
+                        if ($stmtTF) {
+                            mysqli_stmt_bind_param($stmtTF, 'i', $id);
+                            if (mysqli_stmt_execute($stmtTF)) {
+                                mysqli_stmt_bind_result($stmtTF, $tfVal);
+                                mysqli_stmt_fetch($stmtTF);
+                            }
+                            mysqli_stmt_close($stmtTF);
+                        }
+                        if ((int)$tfVal > 0) {
+                            $stmtCT = mysqli_prepare($conn, "INSERT INTO chi_tiet_hoa_don (ID_HD, LOAI, ID_THAM_CHIEU, TEN_MUC, DON_GIA) VALUES (?, 'travel_fee', 0, 'Phụ phí di chuyển', ?)");
+                            if ($stmtCT) {
+                                $tfInt = (int)$tfVal;
+                                mysqli_stmt_bind_param($stmtCT, 'ii', $newInvoiceId, $tfInt);
+                                if (!mysqli_stmt_execute($stmtCT)) {
+                                    error_log('Chèn chi tiết phụ phí thất bại: ' . mysqli_stmt_error($stmtCT));
+                                }
+                                mysqli_stmt_close($stmtCT);
+                            }
+                        }
+                    }
                 }
                 mysqli_stmt_close($checkStmt);
 

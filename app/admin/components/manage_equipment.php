@@ -48,11 +48,34 @@ function sql_latest_price_subquery(bool $hasPriceHistory): string {
     ";
 }
 
+// Badge class cho tình trạng
+function status_badge_class(string $status): string {
+    $map = [
+        'Đang hoạt động' => 'bg-green-100 text-green-700 border-green-300',
+        'Bảo trì' => 'bg-yellow-100 text-yellow-800 border-yellow-300',
+        'Ngưng sử dụng' => 'bg-red-100 text-red-700 border-red-300',
+    ];
+    return $map[$status] ?? 'bg-gray-100 text-gray-700 border-gray-300';
+}
+
 // ====== phân trang & filter ======
 $limit  = 5;
 $page   = isset($_GET['p']) && is_numeric($_GET['p']) ? (int)$_GET['p'] : 1;
 $page   = max($page, 1);
 $offset = ($page - 1) * $limit;
+
+// Sắp xếp
+$allowedSort = [
+    'id' => 'tb.ID_TB',
+    'name' => 'tb.TEN_TB',
+    'date' => 'tb.NGAY_BAO_TRI',
+    'price' => 'DON_GIA', // alias từ subquery
+];
+$sortParam = isset($_GET['sort']) ? strtolower(trim($_GET['sort'])) : 'id';
+if (!array_key_exists($sortParam, $allowedSort)) { $sortParam = 'id'; }
+$dirParam = isset($_GET['dir']) ? strtolower(trim($_GET['dir'])) : 'desc';
+if (!in_array($dirParam, ['asc','desc'], true)) { $dirParam = 'desc'; }
+$orderBySql = $allowedSort[$sortParam] . ' ' . strtoupper($dirParam);
 
 $search        = isset($_GET['search']) ? trim($_GET['search']) : '';
 $filter_cn     = isset($_GET['filter_cn']) && $_GET['filter_cn'] !== '' ? (int)$_GET['filter_cn'] : null;
@@ -322,7 +345,7 @@ $sqlList = "
            ".sql_latest_price_subquery($hasPriceHistory)."
     FROM trang_thiet_bi tb
     $whereSql
-    ORDER BY tb.ID_TB DESC
+    ORDER BY $orderBySql
     LIMIT ? OFFSET ?
 ";
 $stmt = $conn->prepare($sqlList);
@@ -349,19 +372,19 @@ if ($stmt) {
 </head>
 <body class="bg-gray-100 p-6">
 <?php if (!empty($_SESSION['success'])): ?>
-    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded mb-4">✅ <?= $_SESSION['success']; unset($_SESSION['success']); ?></div>
+    <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded mb-4"><?= $_SESSION['success']; unset($_SESSION['success']); ?></div>
 <?php endif; ?>
 <?php if (!empty($_SESSION['error'])): ?>
-    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded mb-4">❌ <?= $_SESSION['error']; unset($_SESSION['error']); ?></div>
+    <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-2 rounded mb-4"><?= $_SESSION['error']; unset($_SESSION['error']); ?></div>
 <?php endif; ?>
 
 <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-xl space-y-6">
-    <h1 class="text-3xl font-bold text-indigo-700 text-center">🛠️ Quản Lý Thiết Bị (Nội bộ)</h1>
+    <h1 class="text-3xl font-bold text-indigo-700 text-center">Quản Lý Thiết Bị (Nội bộ)</h1>
 
     <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
         <form method="GET" class="flex flex-wrap items-center gap-2">
             <input type="hidden" name="page" value="equipment">
-            <input type="text" name="search" placeholder="🔍 Tìm theo tên / tình trạng" value="<?= htmlspecialchars($search) ?>"
+            <input type="text" name="search" placeholder="Tìm theo tên / tình trạng" value="<?= htmlspecialchars($search) ?>"
                    class="px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 w-72">
 
             <select name="filter_cn" class="border border-gray-300 rounded-lg px-3 py-2 shadow-sm">
@@ -378,11 +401,11 @@ if ($stmt) {
                 <?php endforeach; ?>
             </select>
 
-            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">🔍 Tìm</button>
+            <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">Tìm</button>
         </form>
 
         <button onclick="toggleForm()" class="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg shadow-lg font-semibold transition">
-            ➕ Thêm Thiết Bị
+            Thêm Thiết Bị
         </button>
     </div>
 
@@ -417,15 +440,15 @@ if ($stmt) {
             </div>
 
             <div class="md:col-span-2 flex justify-between mt-4">
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow">✅ Thêm</button>
-                <button type="button" onclick="toggleForm()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded shadow">❌ Đóng</button>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow">Thêm</button>
+                <button type="button" onclick="toggleForm()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded shadow">Đóng</button>
             </div>
         </form>
     </div>
 
     <?php if ($editData): ?>
         <div class="border p-6 rounded-lg bg-yellow-50">
-            <h2 class="text-xl font-bold text-yellow-800 mb-4">✏️ Chỉnh sửa thiết bị #<?= $editData['ID_TB'] ?></h2>
+            <h2 class="text-xl font-bold text-yellow-800 mb-4">Chỉnh sửa thiết bị #<?= $editData['ID_TB'] ?></h2>
             <form method="POST" enctype="multipart/form-data" class="grid md:grid-cols-2 gap-4">
                 <input type="hidden" name="action" value="edit">
                 <input type="hidden" name="ID_TB" value="<?= $editData['ID_TB'] ?>">
@@ -471,24 +494,45 @@ if ($stmt) {
                 </div>
 
                 <div class="md:col-span-2 flex justify-end gap-2 mt-4">
-                    <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded">💾 Lưu</button>
-                    <a href="?page=equipment" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">❌ Hủy</a>
+                    <button type="submit" class="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded">Lưu</button>
+                    <a href="?page=equipment" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">Hủy</a>
                 </div>
             </form>
         </div>
     <?php endif; ?>
 
+    <div class="flex justify-between items-center mb-2 text-sm text-gray-600">
+        <?php if (isset($totalRows)): ?>
+            <?php $from = $totalRows ? $offset + 1 : 0; $to = min($offset + $limit, $totalRows); ?>
+            <div>Hiển thị <?= $from ?>–<?= $to ?> / <?= $totalRows ?></div>
+        <?php endif; ?>
+        <div class="space-x-2">
+            <?php
+            // Link nhanh đổi số dòng (nếu muốn mở rộng)
+            ?>
+        </div>
+    </div>
     <div class="overflow-x-auto">
         <table class="w-full text-sm border border-gray-300">
             <thead class="bg-indigo-600 text-white">
                 <tr>
-                    <th class="px-4 py-2">ID</th>
-                    <th class="px-4 py-2">Tên thiết bị</th>
+                    <?php
+                    function sort_link($label, $key, $currentSort, $currentDir) {
+                        $nextDir = ($currentSort === $key && $currentDir === 'asc') ? 'desc' : 'asc';
+                        $query = $_GET; $query['sort'] = $key; $query['dir'] = $nextDir; $query['page'] = 'equipment';
+                        $url = '?' . http_build_query($query);
+                        $arrow = '';
+                        if ($currentSort === $key) { $arrow = $currentDir === 'asc' ? '▲' : '▼'; }
+                        return '<a href="'.htmlspecialchars($url).'" class="flex items-center gap-1">'.htmlspecialchars($label).' <span>'.$arrow.'</span></a>';
+                    }
+                    ?>
+                    <th class="px-4 py-2"><?= sort_link('ID','id',$sortParam,$dirParam) ?></th>
+                    <th class="px-4 py-2"><?= sort_link('Tên thiết bị','name',$sortParam,$dirParam) ?></th>
                     <th class="px-4 py-2">Chi nhánh</th>
                     <th class="px-4 py-2">Tình trạng</th>
-                    <th class="px-4 py-2">Ngày bảo trì</th>
+                    <th class="px-4 py-2"><?= sort_link('Ngày bảo trì','date',$sortParam,$dirParam) ?></th>
                     <?php if ($hasPriceHistory): ?>
-                        <th class="px-4 py-2">Đơn giá hiện hành</th>
+                        <th class="px-4 py-2"><?= sort_link('Đơn giá hiện hành','price',$sortParam,$dirParam) ?></th>
                     <?php endif; ?>
                     <th class="px-4 py-2">Ảnh</th>
                     <th class="px-4 py-2">Hành động</th>
@@ -501,19 +545,23 @@ if ($stmt) {
                         <td class="px-4 py-2 font-semibold">#<?= (int)$row['ID_TB'] ?></td>
                         <td class="px-4 py-2"><?= htmlspecialchars($row['TEN_TB']) ?></td>
                         <td class="px-4 py-2"><?= htmlspecialchars($branchMap[(int)$row['ID_CN']] ?? '—') ?></td>
-                        <td class="px-4 py-2"><?= htmlspecialchars($row['TINH_TRANG']) ?></td>
+                        <td class="px-4 py-2">
+                            <span class="px-2 py-1 border rounded text-xs font-medium <?= status_badge_class($row['TINH_TRANG']) ?>">
+                                <?= htmlspecialchars($row['TINH_TRANG']) ?>
+                            </span>
+                        </td>
                         <td class="px-4 py-2"><?= htmlspecialchars($row['NGAY_BAO_TRI']) ?></td>
                         <?php if ($hasPriceHistory): ?>
                             <td class="px-4 py-2"><?= ($row['DON_GIA']!==null) ? number_format((int)$row['DON_GIA'],0,',','.') . ' VND' : '—' ?></td>
                         <?php endif; ?>
                         <td class="px-4 py-2">
                             <?php if (!empty($row['IMAGE'])): ?>
-                                <img src="../../<?= htmlspecialchars($row['IMAGE']) ?>" alt="Ảnh thiết bị" class="h-12 w-12 object-cover rounded-full mx-auto">
+                                <img src="../../<?= htmlspecialchars($row['IMAGE']) ?>" alt="Ảnh thiết bị" loading="lazy" class="h-12 w-12 object-cover rounded-full mx-auto">
                             <?php else: ?>—<?php endif; ?>
                         </td>
                         <td class="px-4 py-2 space-x-2 text-center">
-                            <a href="?page=equipment&edit=<?= (int)$row['ID_TB'] ?>" class="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded">✏</a>
-                            <a href="?page=equipment&delete=<?= (int)$row['ID_TB'] ?>" onclick="return confirm('Xóa thiết bị này?')" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded">🗑</a>
+                            <a href="?page=equipment&edit=<?= (int)$row['ID_TB'] ?>" class="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded">Sửa</a>
+                            <a href="?page=equipment&delete=<?= (int)$row['ID_TB'] ?>" onclick="return confirm('Xóa thiết bị này?')" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded">Xóa</a>
                         </td>
                     </tr>
                 <?php endwhile; ?>
@@ -542,6 +590,37 @@ if ($stmt) {
 function toggleForm(){
     document.getElementById('addForm').classList.toggle('hidden');
 }
+
+// Auto focus ô tìm kiếm
+document.addEventListener('DOMContentLoaded', () => {
+    const searchInput = document.querySelector('input[name="search"]');
+    if (searchInput) {
+        searchInput.focus();
+        let t; searchInput.addEventListener('input', () => {
+            clearTimeout(t);
+            t = setTimeout(() => {
+                searchInput.form.requestSubmit();
+            }, 450);
+        });
+    }
+
+    // Preview ảnh cho form add & edit
+    const fileInputs = document.querySelectorAll('input[type="file"][name="IMAGE"]');
+    fileInputs.forEach(inp => {
+        inp.addEventListener('change', () => {
+            if (inp.files && inp.files[0]) {
+                const url = URL.createObjectURL(inp.files[0]);
+                let preview = inp.parentElement.querySelector('.image-preview');
+                if (!preview) {
+                    preview = document.createElement('img');
+                    preview.className = 'image-preview h-20 w-20 object-cover rounded mt-2 border';
+                    inp.parentElement.appendChild(preview);
+                }
+                preview.src = url;
+            }
+        });
+    });
+});
 </script>
 </body>
 </html>

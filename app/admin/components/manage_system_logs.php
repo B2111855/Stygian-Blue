@@ -31,6 +31,16 @@ function format_log_json(?string $payload): string
     return htmlspecialchars($payload, ENT_QUOTES, 'UTF-8');
 }
 
+function highlight_match(string $value, string $search): string
+{
+    if ($search === '') {
+        return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    }
+    $escaped = htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+    $pattern = '/' . preg_quote($search, '/') . '/i';
+    return preg_replace($pattern, '<mark class="bg-yellow-300 text-black px-0.5">$0</mark>', $escaped) ?? $escaped;
+}
+
 $feedbackMessage = null;
 $errorMessage = null;
 $logs = [];
@@ -114,17 +124,20 @@ try {
     $countStmt->fetch();
     $countStmt->close();
 
-    $totalPages = max(1, (int) ceil($totalLogs / $perPage));
-    if ($page > $totalPages) {
-        $page = $totalPages;
+    // Guard: nếu trang vượt quá totalPages sau khi tính lại offset sẽ trả về rỗng; điều chỉnh về trang cuối nếu cần
+    $calculatedTotalPages = max(1, (int) ceil($totalLogs / $perPage));
+    if ($page > $calculatedTotalPages) {
+        $page = $calculatedTotalPages;
     }
+
+    $totalPages = $calculatedTotalPages;
     $offset = ($page - 1) * $perPage;
 
-    $listSql = "SELECT ID_LOG, ACTOR_ID, VAI_TRO, HANH_DONG, DOI_TUONG, TRUOC_JSON, SAU_JSON, IP, USER_AGENT, CREATED_AT
-                FROM nhat_ky_he_thong
-                $whereSql
-                ORDER BY CREATED_AT DESC
-                LIMIT ?, ?";
+    $listSql = "SELECT ID_LOG, ACTOR_ID, VAI_TRO, HANH_DONG, DOI_TUONG, IP, USER_AGENT, CREATED_AT
+                    FROM nhat_ky_he_thong
+                    $whereSql
+                    ORDER BY CREATED_AT DESC
+                    LIMIT ?, ?"; // lazy load JSON fields via AJAX
     $listStmt = $conn->prepare($listSql);
     $listParams = array_merge($filterValues, [$offset, $perPage]);
     $listTypes = $filterTypes . 'ii';
@@ -152,12 +165,23 @@ try {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Quản lý nhật ký hệ thống</title>
         <?= sb_tailwind_link_tag(); ?>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-M9N3jdjM8JrIoVNewc19hXtOD87bwo4V/mQJu1nvLK5j1WFJsbgx5caX5/C/PObbIVdQydb9h9NP7VDaRaoo2Q==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+        <!-- Font Awesome CDN without integrity (previous integrity mismatch blocked load). Consider self-hosting or updating to correct SRI hash. -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
     </head>
     <body class="bg-slate-100 min-h-screen py-8 px-4">
-            <div>
-                <h1 class="text-3xl font-bold text-indigo-700">📜 Nhật ký hệ thống</h1>
-                <p class="text-gray-600 mt-1">Theo dõi chi tiết mọi thao tác quan trọng trên nền tảng</p>
+        <div class="mx-auto max-w-7xl bg-white bg-opacity-90 backdrop-blur-md rounded-xl p-6 shadow-xl min-h-[80vh] flex flex-col gap-6">
+            <div id="notification" class="bg-blue-100 text-blue-700 p-4 rounded mb-2 hidden shadow-md">
+                <strong>🔔 Thông báo:</strong> Bạn có cập nhật mới!
+            </div>
+            <div class="flex flex-wrap items-start gap-4 justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold text-indigo-700">📜 Nhật ký hệ thống</h1>
+                    <p class="text-gray-600 mt-1">Theo dõi chi tiết mọi thao tác quan trọng trên nền tảng</p>
+                </div>
+                <div class="flex items-center gap-2 mt-2">
+                    <button type="button" id="toggle-dark" class="text-xs px-3 py-1.5 rounded border border-gray-300 bg-white hover:bg-gray-100 font-semibold text-gray-700">Dark Mode</button>
+                    <button type="button" id="collapse-filters" class="text-xs px-3 py-1.5 rounded border border-gray-300 bg-white hover:bg-gray-100 font-semibold text-gray-700" data-state="open">Ẩn bộ lọc</button>
+                </div>
             </div>
             <form method="post" class="flex items-center gap-2 bg-white shadow rounded-lg px-4 py-2">
                 <input type="hidden" name="purge_logs" value="1">
@@ -169,7 +193,7 @@ try {
                     <i class="fas fa-trash-alt mr-1"></i>Xóa
                 </button>
             </form>
-        </div>
+        
 
         <?php if ($feedbackMessage): ?>
             <div class="mb-4 p-4 rounded-lg bg-green-50 border border-green-200 text-green-700 shadow"> <?= htmlspecialchars($feedbackMessage, ENT_QUOTES, 'UTF-8') ?> </div>
@@ -179,7 +203,7 @@ try {
             <div class="mb-4 p-4 rounded-lg bg-red-50 border border-red-200 text-red-700 shadow"> <?= htmlspecialchars($errorMessage, ENT_QUOTES, 'UTF-8') ?> </div>
         <?php endif; ?>
 
-        <form method="get" class="bg-white rounded-xl shadow p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <form method="get" id="filter-form" class="bg-white rounded-xl shadow p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <input type="hidden" name="page" value="system_logs">
             <div>
                 <label class="text-sm text-gray-600">Từ khóa</label>
@@ -229,13 +253,33 @@ try {
             </div>
         </form>
 
-        <div class="bg-white rounded-xl shadow overflow-hidden">
-            <div class="flex flex-wrap items-center justify-between px-4 py-3 border-b border-gray-100 text-sm text-gray-600">
-                <span>Tổng số log: <strong><?= number_format($totalLogs) ?></strong></span>
+        <div class="bg-white rounded-xl shadow overflow-hidden" id="logs-container">
+            <div class="flex flex-wrap items-center justify-between px-4 py-3 border-b border-gray-100 text-sm text-gray-600 gap-3">
+                <div class="flex flex-col">
+                    <span>Tổng số log: <strong><?= number_format($totalLogs) ?></strong></span>
+                    <?php
+                        $actionCounts = [];
+                        foreach ($logs as $lg) { $a = $lg['HANH_DONG'] ?? ''; if ($a !== '') { $actionCounts[$a] = ($actionCounts[$a] ?? 0) + 1; } }
+                        arsort($actionCounts);
+                        $topSummary = implode(', ', array_map(
+                            function($k,$v){ return $k.':'.$v;},
+                            array_slice(array_keys($actionCounts),0,5),
+                            array_slice(array_values($actionCounts),0,5)
+                        ));
+                    ?>
+                    <span class="text-xs text-gray-500">Top hành động trang: <?= htmlspecialchars($topSummary, ENT_QUOTES, 'UTF-8') ?></span>
+                </div>
                 <span>Trang <?= $page ?> / <?= $totalPages ?></span>
+                <div class="flex gap-2 mt-2 w-full md:w-auto">
+                    <?php $exportBase = $baseQuery; $exportBase['limit'] = $perPage; ?>
+                    <a href="?<?= http_build_query(array_merge($exportBase,['export'=>'csv'])) ?>" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700">CSV trang hiện tại</a>
+                    <a href="?<?= http_build_query(array_merge($exportBase,['export'=>'json'])) ?>" class="px-3 py-1.5 rounded bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700">JSON trang hiện tại</a>
+                    <a href="system_logs_api.php?<?= http_build_query(array_merge($baseQuery,['format'=>'csv','limit'=>1000])) ?>" class="px-3 py-1.5 rounded bg-orange-600 text-white text-xs font-semibold hover:bg-orange-700" title="Xuất tối đa 1000 dòng phù hợp">CSV (tối đa 1000)</a>
+                    <a href="system_logs_api.php?<?= http_build_query(array_merge($baseQuery,['format'=>'json','limit'=>1000])) ?>" class="px-3 py-1.5 rounded bg-fuchsia-600 text-white text-xs font-semibold hover:bg-fuchsia-700" title="Xuất tối đa 1000 dòng phù hợp">JSON (tối đa 1000)</a>
+                </div>
             </div>
             <div class="overflow-x-auto">
-                <table class="min-w-full text-sm">
+                 <table class="min-w-full text-sm" aria-label="System logs table">
                     <thead class="bg-gray-100 text-gray-600 uppercase text-xs">
                         <tr>
                             <th class="px-4 py-2 text-left">Thời gian</th>
@@ -248,9 +292,27 @@ try {
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (empty($logs)): ?>
+                        <?php if ($totalLogs > 0 && empty($logs)): ?>
                             <tr>
-                                <td colspan="7" class="text-center py-6 text-gray-500">Chưa có dữ liệu phù hợp.</td>
+                                <td colspan="7" class="text-center py-10 text-amber-600">
+                                    <div class="flex flex-col items-center gap-2">
+                                        <div class="text-4xl">⚠️</div>
+                                        <div class="font-semibold">Có <?= (int)$totalLogs ?> log trong hệ thống nhưng trang này không tải được danh sách.</div>
+                                        <div class="text-xs text-gray-500">Có thể do phân trang vượt giới hạn hoặc lỗi truy vấn. Đang thử tự động nạp lại...</div>
+                                        <button type="button" id="logs-force-reload" class="mt-2 text-xs px-3 py-1.5 rounded bg-amber-600 text-white hover:bg-amber-700">Force reload</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php elseif (empty($logs)): ?>
+                            <tr>
+                                <td colspan="7" class="text-center py-10 text-gray-500">
+                                    <div class="flex flex-col items-center gap-2">
+                                        <div class="text-4xl">🗒️</div>
+                                        <div class="font-semibold">Chưa có dữ liệu phù hợp</div>
+                                        <div class="text-xs text-gray-400">Thử thay đổi bộ lọc hoặc kiểm tra hệ thống ghi log.</div>
+                                        <button type="button" id="logs-refresh-btn" class="mt-2 text-xs px-3 py-1.5 rounded bg-indigo-600 text-white hover:bg-indigo-700">Tải lại</button>
+                                    </div>
+                                </td>
                             </tr>
                         <?php else: ?>
                             <?php foreach ($logs as $log): ?>
@@ -260,9 +322,10 @@ try {
                                         <div class="text-xs text-gray-500">#<?= (int) $log['ID_LOG'] ?></div>
                                     </td>
                                     <td class="px-4 py-3">
-                                        <div class="font-medium text-indigo-700"><?= htmlspecialchars($log['ACTOR_ID'] ?? 'Không xác định', ENT_QUOTES, 'UTF-8') ?></div>
-                                        <div class="text-xs text-gray-500 truncate max-w-[160px]" title="<?= htmlspecialchars($log['USER_AGENT'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
-                                            <?= htmlspecialchars($log['USER_AGENT'] ?? '—', ENT_QUOTES, 'UTF-8') ?>
+                                        <div class="font-medium text-indigo-700"><?= highlight_match($log['ACTOR_ID'] ?? 'Không xác định', $search) ?></div>
+                                        <div class="text-xs text-gray-500 truncate max-w-[160px] flex items-center gap-1" title="<?= htmlspecialchars($log['USER_AGENT'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                                            <span><?= highlight_match($log['USER_AGENT'] ?? '—', $search) ?></span>
+                                            <?php if (!empty($log['USER_AGENT'])): ?><button type="button" class="text-[10px] px-1 py-0.5 bg-gray-200 hover:bg-gray-300 rounded copy-btn" data-copy="<?= htmlspecialchars($log['USER_AGENT'], ENT_QUOTES, 'UTF-8') ?>">Copy</button><?php endif; ?>
                                         </div>
                                     </td>
                                     <td class="px-4 py-3 text-gray-700">
@@ -270,21 +333,31 @@ try {
                                             <?= htmlspecialchars($log['VAI_TRO'] ?? '—', ENT_QUOTES, 'UTF-8') ?>
                                         </span>
                                     </td>
-                                    <td class="px-4 py-3 font-semibold text-gray-800"><?= htmlspecialchars($log['HANH_DONG'], ENT_QUOTES, 'UTF-8') ?></td>
-                                    <td class="px-4 py-3 text-gray-700"><?= htmlspecialchars($log['DOI_TUONG'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
-                                    <td class="px-4 py-3 text-gray-600">
-                                        <span class="font-mono text-sm"><?= htmlspecialchars($log['IP'] ?? '—', ENT_QUOTES, 'UTF-8') ?></span>
+                                    <td class="px-4 py-3 font-semibold text-gray-800"><?= highlight_match($log['HANH_DONG'], $search) ?></td>
+                                    <td class="px-4 py-3 text-gray-700"><?= highlight_match($log['DOI_TUONG'] ?? '—', $search) ?></td>
+                                    <td class="px-4 py-3 text-gray-600 flex items-center gap-1">
+                                        <span class="font-mono text-sm"><?= highlight_match($log['IP'] ?? '—', $search) ?></span>
+                                        <?php if (!empty($log['IP'])): ?><button type="button" class="text-[10px] px-1 py-0.5 bg-gray-200 hover:bg-gray-300 rounded copy-btn" data-copy="<?= htmlspecialchars($log['IP'], ENT_QUOTES, 'UTF-8') ?>">Copy</button><?php endif; ?>
                                     </td>
                                     <td class="px-4 py-3">
-                                        <details class="space-y-2">
-                                            <summary class="cursor-pointer text-indigo-600 hover:text-indigo-800 text-sm font-semibold">Xem JSON</summary>
-                                            <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                                                <p class="text-xs font-semibold text-gray-500 mb-1">Trước</p>
-                                                <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-40"><?= format_log_json($log['TRUOC_JSON']) ?></pre>
-                                            </div>
-                                            <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                                                <p class="text-xs font-semibold text-gray-500 mb-1">Sau</p>
-                                                <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-40"><?= format_log_json($log['SAU_JSON']) ?></pre>
+                                        <details class="space-y-2 system-log-detail" data-log-id="<?= (int)$log['ID_LOG'] ?>">
+                                            <summary class="cursor-pointer text-indigo-600 hover:text-indigo-800 text-sm font-semibold">Xem JSON + Diff</summary>
+                                            <div class="text-xs text-gray-500" data-status>Đang tải khi mở...</div>
+                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2" hidden data-panels>
+                                                <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                                    <p class="text-xs font-semibold text-gray-500 mb-1">Trước</p>
+                                                    <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-56" data-before></pre>
+                                                </div>
+                                                <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                                    <p class="text-xs font-semibold text-gray-500 mb-1">Sau</p>
+                                                    <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-56" data-after></pre>
+                                                </div>
+                                                <div class="md:col-span-2 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                                    <p class="text-xs font-semibold text-gray-500 mb-1 flex items-center justify-between">Diff
+                                                        <span class="text-[10px] font-normal text-gray-400" data-diff-stats></span>
+                                                    </p>
+                                                    <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-64" data-diff></pre>
+                                                </div>
                                             </div>
                                         </details>
                                     </td>
@@ -314,7 +387,116 @@ try {
                 <?php endfor; ?>
             </div>
         <?php endif; ?>
-    </div>
+    </div> <!-- end inner container -->
+<script>
+// Lazy load JSON + diff when <details> is opened first time
+document.addEventListener('DOMContentLoaded', () => {
+    const detailsList = document.querySelectorAll('.system-log-detail');
+    detailsList.forEach(d => {
+        d.addEventListener('toggle', async () => {
+            if (!d.open) return;
+            if (d.dataset.loaded === '1') return; // already loaded
+            const id = d.getAttribute('data-log-id');
+            const statusEl = d.querySelector('[data-status]');
+            const panelsEl = d.querySelector('[data-panels]');
+            try {
+                statusEl.textContent = 'Đang tải...';
+                const resp = await fetch('system_log_fetch.php?id=' + encodeURIComponent(id));
+                if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                const data = await resp.json();
+                if (data.error) throw new Error(data.error);
+                panelsEl.hidden = false;
+                statusEl.remove();
+                d.dataset.loaded = '1';
+                d.querySelector('[data-before]').textContent = data.before_pretty || 'Không có dữ liệu';
+                d.querySelector('[data-after]').textContent = data.after_pretty || 'Không có dữ liệu';
+                const diffEl = d.querySelector('[data-diff]');
+                diffEl.innerHTML = '';
+                let adds = 0, dels = 0;
+                (data.diff || []).forEach(part => {
+                    const line = document.createElement('div');
+                    line.style.whiteSpace = 'pre';
+                    if (part.type === 'add') { line.style.background = '#ecfdf5'; line.style.color = '#065f46'; adds++; line.textContent = '+ ' + part.line; }
+                    else if (part.type === 'del') { line.style.background = '#fef2f2'; line.style.color = '#991b1b'; dels++; line.textContent = '- ' + part.line; }
+                    else { line.textContent = '  ' + part.line; line.style.color = '#475569'; }
+                    diffEl.appendChild(line);
+                });
+                d.querySelector('[data-diff-stats]').textContent = `+${adds} -${dels}`;
+            } catch (err) {
+                statusEl.textContent = 'Lỗi tải: ' + err.message;
+            }
+        });
+    });
+    // Copy buttons
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const txt = btn.getAttribute('data-copy') || '';
+            navigator.clipboard.writeText(txt).then(() => {
+                btn.textContent = 'Copied';
+                setTimeout(()=>btn.textContent='Copy',1500);
+            });
+        });
+    });
+    // Dark mode toggle
+    const darkBtn = document.getElementById('toggle-dark');
+    const root = document.documentElement;
+    const applyDark = (enabled) => {
+        if (enabled) { root.classList.add('dark'); darkBtn.textContent='Light Mode'; localStorage.setItem('sb_dark','1'); }
+        else { root.classList.remove('dark'); darkBtn.textContent='Dark Mode'; localStorage.setItem('sb_dark','0'); }
+    };
+    applyDark(localStorage.getItem('sb_dark')==='1');
+    darkBtn.addEventListener('click',()=>{ applyDark(!root.classList.contains('dark')); });
+    // Collapse filters
+    const collapseBtn = document.getElementById('collapse-filters');
+    const filterForm = document.getElementById('filter-form');
+    collapseBtn.addEventListener('click',()=>{
+        const open = collapseBtn.getAttribute('data-state')==='open';
+        filterForm.style.display = open ? 'none' : '';
+        collapseBtn.textContent = open ? 'Hiện bộ lọc' : 'Ẩn bộ lọc';
+        collapseBtn.setAttribute('data-state', open ? 'closed':'open');
+    });
+    // Refresh empty state
+    const refreshBtn = document.getElementById('logs-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => { location.reload(); });
+    }
+    const forceReloadBtn = document.getElementById('logs-force-reload');
+    if (forceReloadBtn) {
+        // Attempt fetch first page via API and inject simple rows if possible
+        forceReloadBtn.addEventListener('click', async () => {
+            forceReloadBtn.textContent = 'Đang lấy...';
+            try {
+                const params = new URLSearchParams({format:'json',limit:'25'});
+                const apiResp = await fetch('system_logs_api.php?' + params.toString());
+                const data = await apiResp.json();
+                if (data && Array.isArray(data.data) && data.data.length) {
+                    const tbody = document.querySelector('#logs-container tbody');
+                    tbody.innerHTML = '';
+                    data.data.forEach(row => {
+                        const tr = document.createElement('tr');
+                        tr.className = 'border-b border-gray-100 hover:bg-indigo-50/40 transition';
+                        tr.innerHTML = `
+                          <td class="px-4 py-3 text-gray-700">
+                            <div class="font-semibold text-sm">${row.CREATED_AT}</div>
+                            <div class="text-xs text-gray-500">#${row.ID_LOG}</div>
+                          </td>
+                          <td class="px-4 py-3"><div class="font-medium text-indigo-700">${row.ACTOR_ID || 'Không xác định'}</div></td>
+                          <td class="px-4 py-3 text-gray-700"><span class="inline-flex items-center px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">${row.VAI_TRO || '—'}</span></td>
+                          <td class="px-4 py-3 font-semibold text-gray-800">${row.HANH_DONG}</td>
+                          <td class="px-4 py-3 text-gray-700">${row.DOI_TUONG || '—'}</td>
+                          <td class="px-4 py-3 text-gray-600"><span class="font-mono text-sm">${row.IP || '—'}</span></td>
+                          <td class="px-4 py-3"><span class="text-xs text-gray-400">(Mở chi tiết đầy đủ để xem)</span></td>`;
+                        tbody.appendChild(tr);
+                    });
+                    forceReloadBtn.textContent = 'Đã nạp tạm';
+                } else {
+                    forceReloadBtn.textContent = 'Không có dữ liệu';
+                }
+            } catch(e){ forceReloadBtn.textContent = 'Lỗi: ' + e.message; }
+        });
+    }
+});
+</script>
 </body>
 
 </html>

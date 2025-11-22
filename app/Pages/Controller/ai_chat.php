@@ -41,6 +41,13 @@ if (array_key_exists('session_id', $input)) {
         $sessionId = (int) $candidate;
     }
 }
+$clientToken = null;
+if (array_key_exists('client_token', $input)) {
+    $tokenCandidate = trim((string) $input['client_token']);
+    if ($tokenCandidate !== '') {
+        $clientToken = $tokenCandidate;
+    }
+}
 $userId = $_SESSION['ID_TK'] ?? ($_SESSION['user']['ID_TK'] ?? null);
 
 $repo = new ChatRepository($conn);
@@ -64,25 +71,33 @@ $maxHistory = 20;
 try {
     switch ($action) {
         case 'start':
-            $sessionId = $repo->createSession($userId, 'web');
+            $sessionPayload = $repo->createSession($userId, 'web');
+            $sessionId = $sessionPayload['session_id'];
+            $clientToken = $sessionPayload['client_token'];
             $repo->appendSessionOwner($sessionId, $userId);
             $messages = $repo->fetchMessages($sessionId, $maxHistory);
             echo json_encode([
                 'ok' => true,
                 'session_id' => $sessionId,
+                'client_token' => $clientToken,
                 'messages' => $messages,
             ], JSON_UNESCAPED_UNICODE);
             break;
 
         case 'history':
-            if (!$sessionId) {
-                throw new RuntimeException('Thiếu mã phiên chat.');
+            if (!$sessionId || !$clientToken) {
+                throw new RuntimeException('Thiếu thông tin phiên chat.');
             }
-            $repo->assertSessionAccessible($sessionId, $userId);
+            $session = $repo->assertSessionAccessible($sessionId, $clientToken, $userId);
+            $clientToken = $session['CLIENT_TOKEN'];
+            if ($userId !== null && ($session['ID_TK'] ?? null) === null) {
+                $repo->appendSessionOwner($sessionId, $userId);
+            }
             $messages = $repo->fetchMessages($sessionId, $maxHistory);
             echo json_encode([
                 'ok' => true,
                 'session_id' => $sessionId,
+                'client_token' => $clientToken,
                 'messages' => $messages,
             ], JSON_UNESCAPED_UNICODE);
             break;
@@ -93,11 +108,17 @@ try {
                 throw new RuntimeException('Nội dung tin nhắn không được để trống.');
             }
 
-            if (!$sessionId) {
-                $sessionId = $repo->createSession($userId, 'web');
+            if (!$sessionId || !$clientToken) {
+                $sessionPayload = $repo->createSession($userId, 'web');
+                $sessionId = $sessionPayload['session_id'];
+                $clientToken = $sessionPayload['client_token'];
                 $repo->appendSessionOwner($sessionId, $userId);
             } else {
-                $repo->assertSessionAccessible($sessionId, $userId);
+                $session = $repo->assertSessionAccessible($sessionId, $clientToken, $userId);
+                $clientToken = $session['CLIENT_TOKEN'];
+                if ($userId !== null && ($session['ID_TK'] ?? null) === null) {
+                    $repo->appendSessionOwner($sessionId, $userId);
+                }
             }
 
             $repo->saveMessage($sessionId, 'user', $message);
@@ -118,6 +139,7 @@ try {
             echo json_encode([
                 'ok' => true,
                 'session_id' => $sessionId,
+                'client_token' => $clientToken,
                 'reply' => $geminiResponse['text'],
                 'messages' => $messages,
             ], JSON_UNESCAPED_UNICODE);

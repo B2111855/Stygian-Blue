@@ -10,7 +10,7 @@ if (!$employeeId) {
 
 $branchStmt = $conn->prepare('SELECT ID_CN FROM nhan_vien WHERE ID_TK = ? LIMIT 1');
 if (!$branchStmt) {
-    echo '<div class="rounded-xl bg-white p-6 text-center text-red-600 shadow">Không thể lấy thông tin chi nhánh.</div>';
+    echo '<div class="rounded-xl bg-white p-6 text-center text-red-600 shadow">Không thể lấy thông tin chi nhánh. Error: ' . htmlspecialchars($conn->error, ENT_QUOTES, 'UTF-8') . '</div>';
     return;
 }
 $branchStmt->bind_param('s', $employeeId);
@@ -21,7 +21,10 @@ $branchId = $branchRow['ID_CN'] ?? null;
 $branchStmt->close();
 
 if (!$branchId) {
-    echo '<div class="rounded-xl bg-white p-6 text-center text-red-600 shadow">Tài khoản của bạn chưa được gán vào chi nhánh cụ thể.</div>';
+    echo '<div class="rounded-xl bg-white p-6 text-center text-red-600 shadow">
+            <p>Tài khoản của bạn chưa được gán vào chi nhánh cụ thể.</p>
+            <p class="mt-2 text-sm text-gray-600">Employee ID: ' . htmlspecialchars($employeeId, ENT_QUOTES, 'UTF-8') . '</p>
+          </div>';
     return;
 }
 
@@ -39,7 +42,8 @@ $filters = [
 function buildWhereClause(mysqli $conn, array $filters, $branchId)
 {
     $conditions = [];
-    $conditions[] = "lh.ID_CHINHANH = '" . mysqli_real_escape_string($conn, (string)$branchId) . "'";
+    // So sánh với INT thay vì STRING
+    $conditions[] = "lh.ID_CHINHANH = " . (int)$branchId;
 
     if ($filters['ten_khach'] !== '') {
         $keyword = mysqli_real_escape_string($conn, $filters['ten_khach']);
@@ -68,12 +72,15 @@ $whereClause = buildWhereClause($conn, $filters, $branchId);
 
 function countAppointments(mysqli $conn, string $whereClause)
 {
-    $query = "SELECT COUNT(*) AS total FROM lich_hen lh \
-              INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK \
-              INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV {$whereClause}";
+    $query = "SELECT COUNT(*) AS total FROM lich_hen lh" .
+             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+             " {$whereClause}";
 
     $result = $conn->query($query);
     if (!$result) {
+        error_log("Count Query Error: " . $conn->error);
+        error_log("Count Query: " . $query);
         return 0;
     }
 
@@ -83,25 +90,30 @@ function countAppointments(mysqli $conn, string $whereClause)
 
 function fetchAppointments(mysqli $conn, string $whereClause, int $offset, int $limit)
 {
-    $query = "SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.DIA_CHI_HEN, lh.TRANGTHAI, tk.HO_TEN, dv.TEN_DV \
-              FROM lich_hen lh \
-              INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK \
-              INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV \
-              {$whereClause} \
-              ORDER BY lh.THOI_GIAN_BAT_DAU DESC \
-              LIMIT {$offset}, {$limit}";
+    $query = "SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.DIA_CHI_HEN, lh.TRANGTHAI, tk.HO_TEN, dv.TEN_DV" .
+             " FROM lich_hen lh" .
+             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+             " {$whereClause}" .
+             " ORDER BY lh.THOI_GIAN_BAT_DAU DESC" .
+             " LIMIT {$offset}, {$limit}";
 
-    return $conn->query($query);
+    $result = $conn->query($query);
+    if (!$result) {
+        error_log("Fetch Query Error: " . $conn->error);
+        error_log("Fetch Query: " . $query);
+    }
+    return $result;
 }
 
 function summarizeStatuses(mysqli $conn, string $whereClause)
 {
-    $query = "SELECT lh.TRANGTHAI, COUNT(*) AS total \
-              FROM lich_hen lh \
-              INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK \
-              INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV \
-              {$whereClause} \
-              GROUP BY lh.TRANGTHAI";
+    $query = "SELECT lh.TRANGTHAI, COUNT(*) AS total" .
+             " FROM lich_hen lh" .
+             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+             " {$whereClause}" .
+             " GROUP BY lh.TRANGTHAI";
 
     $summary = [
         'Đang chờ'     => 0,
@@ -252,10 +264,16 @@ $statusSummary = summarizeStatuses($conn, $whereClause);
                 <td class="px-6 py-4 text-gray-700"><?= htmlspecialchars($row['TEN_DV'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
                 <td class="px-6 py-4 text-gray-700"><?= htmlspecialchars($row['HO_TEN'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
                 <td class="px-6 py-4 text-gray-700"><?= formatDateTimeDisplay($row['THOI_GIAN_BAT_DAU'] ?? '') ?></td>
-                <td class="px-6 py-4 text-gray-700"><?= htmlspecialchars($row['DIA_CHI_HEN'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
+                <td class="px-6 py-4 text-gray-700">
+                  <?php 
+                    $address = $row['DIA_CHI_HEN'] ?? '—';
+                    $displayAddress = mb_strlen($address) > 50 ? mb_substr($address, 0, 50) . '...' : $address;
+                  ?>
+                  <span title="<?= htmlspecialchars($address, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayAddress, ENT_QUOTES, 'UTF-8') ?></span>
+                </td>
                 <td class="px-6 py-4">
                   <?php $status = $row['TRANGTHAI'] ?? ''; ?>
-                  <span class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold <?= statusBadgeClass($status) ?>">
+                  <span class="inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold <?= statusBadgeClass($status) ?>">
                     <?= htmlspecialchars($status ?: 'Không xác định', ENT_QUOTES, 'UTF-8') ?>
                   </span>
                 </td>

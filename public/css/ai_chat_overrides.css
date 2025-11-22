@@ -1,0 +1,5 @@
+/* Scroll / flex fixes */
+.sb-ai-messages-container { min-height: 0 !important; }
+.sb-ai-chat-body { min-height: 0 !important; }
+.sb-ai-panel { min-height: 0 !important; }
+.sb-ai-typing { flex-shrink: 0 !important; }

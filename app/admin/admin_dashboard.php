@@ -44,6 +44,7 @@ $pageTitle = 'Quản trị hệ thống';
             'customers'         => 'manage_customers.php',
             'salaries'          => 'manage_salaries.php',
             'services'          => 'manage_services.php',
+            'packages'          => 'manage_packages.php',
             'branches'          => 'manage_branches.php',
             'assignments'       => 'manage_assignments.php',
             'equipment'         => 'manage_equipment.php',

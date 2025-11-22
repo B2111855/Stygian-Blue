@@ -1,4 +1,8 @@
 <?php
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 include '../../database/config.php';
 date_default_timezone_set('Asia/Ho_Chi_Minh');
 
@@ -8,6 +12,21 @@ if (!isset($_GET['id_hd'])) {
 }
 
 $id_hd = (int)$_GET['id_hd'];
+
+// Xác định nguồn gọi (admin hay manager) dựa trên HTTP_REFERER hoặc tham số
+$referer = $_SERVER['HTTP_REFERER'] ?? '';
+$backUrl = 'admin_dashboard.php?page=payments'; // Mặc định cho admin (đã ở trong thư mục admin rồi)
+$backPage = 'payments'; // Mặc định
+
+// Kiểm tra nếu được gọi từ manager_dashboard
+if (strpos($referer, 'manager_dashboard.php') !== false || ($_GET['source'] ?? '') === 'manager') {
+    $backUrl = 'manager_dashboard.php?page=invoices';
+    $backPage = 'invoices';
+} else {
+    // Mặc định là admin
+    $backUrl = 'admin_dashboard.php?page=payments';
+    $backPage = 'payments';
+}
 
 function calculateTotalPrice($idLichHen)
 {
@@ -117,7 +136,7 @@ $stmt = mysqli_prepare($conn, "
 
 if (!$stmt) {
     error_log('Invoice detail query prepare failed: ' . mysqli_error($conn));
-    echo "<script>alert('Không thể tải dữ liệu hóa đơn lúc này.'); window.location.href='admin_dashboard.php?page=payments';</script>";
+    echo "<script>alert('Không thể tải dữ liệu hóa đơn lúc này.'); window.location.href='" . $backUrl . "';</script>";
     exit;
 }
 
@@ -212,7 +231,7 @@ if ($stmtTB) {
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Chi tiết hóa đơn</p>
             <h1 class="mt-1 text-3xl font-extrabold text-slate-900">#<?= $invoice['ID_HD'] ?></h1>
         </div>
-        <a href="admin_dashboard.php?page=payments"
+        <a href="<?= htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8') ?>"
            class="inline-flex rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-400 hover:text-slate-800">
             Quay lại danh sách
         </a>
@@ -348,7 +367,7 @@ if ($stmtTB) {
                     class="<?= $confirmBtnClasses ?>">
                     <?= $isGatewayPending ? 'Chờ VNPay' : 'Xác nhận đã thanh toán' ?>
                 </button>
-                <a href="admin_dashboard.php?page=payments"
+                <a href="<?= htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8') ?>"
                     class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
                     Quay lại danh sách
                 </a>
@@ -359,7 +378,7 @@ if ($stmtTB) {
             <p class="text-green-600 font-semibold text-base">
                 Hóa đơn đã được thanh toán
             </p>
-            <a href="admin_dashboard.php?page=payments"
+            <a href="<?= htmlspecialchars($backUrl, ENT_QUOTES, 'UTF-8') ?>"
                 class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg shadow-md transition font-semibold">
                 Quay lại danh sách
             </a>

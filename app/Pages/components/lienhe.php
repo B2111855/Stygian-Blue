@@ -1,5 +1,13 @@
 <?php
 include '../../../database/config.php';
+// Load dotenv so GOOGLE_MAPS_API_KEY / GOOGLE_API_KEY from .env is available here
+if (file_exists(__DIR__ . '/../../../vendor/autoload.php')) {
+  require_once __DIR__ . '/../../../vendor/autoload.php';
+  if (class_exists('Dotenv\Dotenv')) {
+    $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/../../..');
+    $dotenv->safeLoad();
+  }
+}
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -29,7 +37,7 @@ if ($idTk) {
 }
 
 $branches = [];
-$stmtBranches = $conn->prepare('SELECT ID_CN, TEN_CN FROM CHI_NHANH ORDER BY TEN_CN ASC');
+$stmtBranches = $conn->prepare('SELECT ID_CN, TEN_CN, LATITUDE, LONGITUDE FROM CHI_NHANH ORDER BY TEN_CN ASC');
 if ($stmtBranches) {
     $stmtBranches->execute();
     $resultBranches = $stmtBranches->get_result();
@@ -37,6 +45,22 @@ if ($stmtBranches) {
         $branches[] = $row;
     }
     $stmtBranches->close();
+}
+
+$defaultBranchLat = null;
+$defaultBranchLng = null;
+foreach ($branches as $branch) {
+  if (!empty($branch['LATITUDE']) && !empty($branch['LONGITUDE'])) {
+    $defaultBranchLat = $branch['LATITUDE'];
+    $defaultBranchLng = $branch['LONGITUDE'];
+    break;
+  }
+}
+if ($defaultBranchLat === null) {
+  $defaultBranchLat = 10.7768890;
+}
+if ($defaultBranchLng === null) {
+  $defaultBranchLng = 106.7008060;
 }
 
 $services = [];
@@ -66,19 +90,64 @@ if ($stmtPackages) {
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
+// Unified key resolution order for Maps: prefer specific, then unified
+$googleMapsApiKey = getenv('GOOGLE_MAPS_API_KEY') ?: getenv('GOOGLE_API_KEY');
+if (!$googleMapsApiKey && isset($_ENV['GOOGLE_MAPS_API_KEY'])) {
+  $googleMapsApiKey = $_ENV['GOOGLE_MAPS_API_KEY'];
+}
+if (!$googleMapsApiKey && isset($_ENV['GOOGLE_API_KEY'])) {
+  $googleMapsApiKey = $_ENV['GOOGLE_API_KEY'];
+}
+if (!$googleMapsApiKey && defined('GOOGLE_MAPS_API_KEY')) {
+  $googleMapsApiKey = constant('GOOGLE_MAPS_API_KEY');
+}
+if (!$googleMapsApiKey && defined('GOOGLE_API_KEY')) {
+  $googleMapsApiKey = constant('GOOGLE_API_KEY');
+}
+// Env name
+$appEnv = getenv('APP_ENV') ?: (isset($_ENV['APP_ENV']) ? $_ENV['APP_ENV'] : 'production');
+// mapMode: google nếu có key; nếu local và không có key thì tắt bản đồ; nếu không thì dùng leaflet.
+$hasGoogleKey = !empty($googleMapsApiKey);
+$mapMode = 'leaflet';
+$branchMapNoteText = $hasGoogleKey
+  ? 'Đang dùng OpenStreetMap; sẽ tự chuyển sang Google Maps khi API sẵn sàng.'
+  : 'Đang dùng OpenStreetMap (Leaflet).';
 ?>
-<section data-booking class="space-y-6">
+<section data-booking data-app-env="<?= htmlspecialchars($appEnv) ?>" class="space-y-6">
   <div class="grid gap-6 xl:grid-cols-5">
-    <div class="xl:col-span-2">
-      <div class="h-full overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-xl">
-        <iframe
-          class="h-64 w-full border-0 md:h-[420px] xl:h-full"
-          src="https://www.google.com/maps/embed?pb=!1m17!1m8!1m3!1d601.1369952501527!2d105.7694797520741!3d10.031037462832488!3m2!1i1024!2i768!4f13.1!4m6!3e6!4m0!4m3!3m2!1d10.031076258582523!2d105.76916785116899!5e0!3m2!1svi!2s!4v1733014584068!5m2!1svi!2s"
-          loading="lazy"
-          referrerpolicy="no-referrer-when-downgrade"
-          allowfullscreen
-          title="Bản đồ chi nhánh Stygian Blue"
-        ></iframe>
+    <div class="xl:col-span-2" id="mapColumn">
+      <div
+        class="flex h-full flex-col overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-xl"
+        data-map-mode="<?= htmlspecialchars($mapMode) ?>"
+        data-google-enabled="<?= $hasGoogleKey ? 'true' : 'false' ?>"
+        data-default-lat="<?= htmlspecialchars($defaultBranchLat ?? 10.776889) ?>"
+        data-default-lng="<?= htmlspecialchars($defaultBranchLng ?? 106.700806) ?>"
+      >
+        <div class="border-b border-slate-100 bg-white/80 p-4 backdrop-blur">
+          <label for="mapSearchInput" class="text-sm font-semibold text-slate-800">Tìm kiếm địa điểm</label>
+          <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+            <div class="flex-1">
+              <input
+                type="text"
+                id="mapSearchInput"
+                placeholder="Nhập địa điểm, địa chỉ hoặc tên chi nhánh..."
+                class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+              >
+            </div>
+            <button
+              type="button"
+              id="mapSearchBtn"
+              class="inline-flex items-center justify-center rounded-2xl bg-sky-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-sky-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
+            >Tìm</button>
+          </div>
+          <p id="mapSearchStatus" class="mt-2 text-xs text-slate-500" aria-live="polite"></p>
+        </div>
+        <div
+          id="branchMap"
+          class="min-h-[256px] w-full flex-1"
+          aria-label="Bản đồ chi nhánh và chọn địa điểm hẹn"
+        ></div>
+        <p id="branchMapNote" class="px-4 pb-4 text-center text-xs text-slate-500"><?= htmlspecialchars($branchMapNoteText) ?></p>
       </div>
     </div>
 
@@ -98,7 +167,11 @@ if (empty($_SESSION['csrf_token'])) {
             <select id="branch" name="branch_id" required class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 transition focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
               <option value="">Chọn chi nhánh...</option>
               <?php foreach ($branches as $branch): ?>
-                <option value="<?= $branch['ID_CN'] ?>"><?= htmlspecialchars($branch['TEN_CN']) ?></option>
+                <option
+                  value="<?= $branch['ID_CN'] ?>"
+                  data-lat="<?= isset($branch['LATITUDE']) ? htmlspecialchars($branch['LATITUDE']) : '' ?>"
+                  data-lng="<?= isset($branch['LONGITUDE']) ? htmlspecialchars($branch['LONGITUDE']) : '' ?>"
+                ><?= htmlspecialchars($branch['TEN_CN']) ?></option>
               <?php endforeach; ?>
             </select>
             <p class="text-xs text-slate-500">Lịch trống sẽ hiển thị theo chi nhánh đã chọn.</p>
@@ -120,10 +193,38 @@ if (empty($_SESSION['csrf_token'])) {
             <p id="slotMsg" class="text-xs text-slate-500"></p>
           </div>
 
-          <div class="space-y-2">
-            <label for="address" class="text-sm font-semibold text-slate-800">Địa điểm hẹn <span class="font-normal text-slate-400">(tuỳ chọn)</span></label>
-            <input type="text" id="address" name="address" placeholder="Tại studio hoặc địa điểm ngoài..." class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 transition focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
-          </div>
+          <fieldset class="space-y-3">
+            <legend class="text-sm font-semibold text-slate-800">Địa điểm hẹn</legend>
+            <div class="flex flex-wrap gap-3" role="radiogroup" aria-label="Chọn địa điểm hẹn">
+              <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700">
+                <input type="radio" name="location_type" value="branch" checked class="h-4 w-4 border-slate-300 text-sky-500 focus:ring-sky-400">
+                <span>Tại chi nhánh</span>
+              </label>
+              <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700">
+                <input type="radio" name="location_type" value="external" class="h-4 w-4 border-slate-300 text-sky-500 focus:ring-sky-400">
+                <span>Địa điểm khác ( Có phụ phí ) </span>
+              </label>
+            </div>
+
+            <div id="externalLocationWrap" class="hidden space-y-3">
+              <label for="address" class="text-sm font-semibold text-slate-800">Địa chỉ thực hiện</label>
+              <input type="text" id="address" name="address" placeholder="Nhập địa chỉ hoặc chọn trên bản đồ" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 transition focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200">
+
+              <div class="rounded-2xl border border-slate-200 bg-white p-3">
+                <p class="text-xs text-slate-500">Sử dụng bản đồ bên trái để chọn vị trí (click) hoặc dùng nút bên dưới.</p>
+                <div class="mt-3 flex flex-wrap items-center gap-3">
+                  <button type="button" id="locateBtn" class="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200">
+                    <span aria-hidden="true" class="inline-block h-2 w-2 rounded-full bg-sky-500"></span>
+                    Dùng vị trí hiện tại
+                  </button>
+                  <p id="locateStatus" class="text-xs text-slate-500" aria-live="polite"></p>
+                </div>
+              </div>
+
+              <input type="hidden" id="ext_lat" name="ext_lat">
+              <input type="hidden" id="ext_lng" name="ext_lng">
+            </div>
+          </fieldset>
 
           <fieldset class="space-y-3">
             <legend class="text-sm font-semibold text-slate-800">Hình thức đặt lịch</legend>
@@ -181,6 +282,11 @@ if (empty($_SESSION['csrf_token'])) {
             <div class="space-y-2">
               <label class="text-sm font-semibold text-slate-800" for="phone">Số điện thoại</label>
               <input type="text" id="phone" name="phone" value="<?= htmlspecialchars($sdt) ?>" readonly class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <?php if (empty($sdt)): ?>
+                <p id="phoneNotice" class="text-xs text-amber-600">Bạn chưa cập nhật số điện thoại để tiện xác nhận lịch. Truy cập <a href="thongtin.php" class="font-semibold text-sky-600 underline-offset-2 hover:underline">Thông tin cá nhân</a> để bổ sung.</p>
+              <?php else: ?>
+                <p id="phoneNotice" class="text-xs text-slate-500">Số điện thoại sẽ được dùng khi nhân viên liên hệ xác nhận lịch.</p>
+              <?php endif; ?>
             </div>
           </div>
 
@@ -192,6 +298,8 @@ if (empty($_SESSION['csrf_token'])) {
             <p id="quoteNote" class="mt-2 text-xs text-slate-500">Chưa bao gồm phụ phí đặc biệt (nếu có).</p>
           </div>
 
+          <div id="validationSummary" class="hidden rounded-2xl border border-rose-200 bg-rose-50/90 p-4 text-sm text-rose-700" aria-live="polite"></div>
+
           <button id="submitBtn" type="submit" class="inline-flex w-full justify-center rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-violet-500 px-6 py-3 text-sm font-semibold text-white shadow-lg transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-70">Xác nhận đặt lịch</button>
           <p id="formMsg" class="text-sm text-amber-600"></p>
         </form>
@@ -202,6 +310,86 @@ if (empty($_SESSION['csrf_token'])) {
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script>
+(function () {
+  const shouldAutoLoadLeaflet = true;
+  window._leafletReadyCallbacks = window._leafletReadyCallbacks || [];
+  window._onLeafletLoaded = function () {
+    window._leafletLoaded = true;
+    var queue = window._leafletReadyCallbacks ? window._leafletReadyCallbacks.splice(0) : [];
+    queue.forEach(function (cb) {
+      try {
+        cb();
+      } catch (error) {
+        console.error('[Leaflet] callback error', error);
+      }
+    });
+  };
+
+  window._leafletGeocoderReadyCallbacks = window._leafletGeocoderReadyCallbacks || [];
+  window._onLeafletGeocoderLoaded = function () {
+    window._leafletGeocoderReady = true;
+    var queue = window._leafletGeocoderReadyCallbacks ? window._leafletGeocoderReadyCallbacks.splice(0) : [];
+    queue.forEach(function (cb) {
+      try {
+        cb();
+      } catch (error) {
+        console.error('[Leaflet Geocoder] callback error', error);
+      }
+    });
+  };
+
+  function injectStylesheet(id, href) {
+    if (document.getElementById(id)) return;
+    var link = document.createElement('link');
+    link.id = id;
+    link.rel = 'stylesheet';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  function injectScript(id, src, onload) {
+    var existing = document.getElementById(id);
+    if (existing) {
+      if (existing.dataset.loaded === 'true') {
+        if (typeof onload === 'function') onload();
+      } else if (typeof onload === 'function') {
+        existing.addEventListener('load', onload, { once: true });
+      }
+      return;
+    }
+    var script = document.createElement('script');
+    script.id = id;
+    script.src = src;
+    script.async = true;
+    script.addEventListener('load', function () {
+      script.dataset.loaded = 'true';
+      if (typeof onload === 'function') onload();
+    }, { once: true });
+    script.addEventListener('error', function (event) {
+      console.error('[Leaflet] failed to load script', src, event);
+    });
+    document.head.appendChild(script);
+  }
+
+  window.loadLeafletFallbackAssets = window.loadLeafletFallbackAssets || function () {
+    if (window._leafletAssetsRequested) return;
+    window._leafletAssetsRequested = true;
+    injectStylesheet('leaflet-css', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+    injectStylesheet('leaflet-geocoder-css', 'https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.css');
+    injectScript('leaflet-js', 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', function () {
+      window._onLeafletLoaded && window._onLeafletLoaded();
+      injectScript('leaflet-geocoder-js', 'https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js', function () {
+        window._onLeafletGeocoderLoaded && window._onLeafletGeocoderLoaded();
+      });
+    });
+  };
+
+  if (shouldAutoLoadLeaflet) {
+    window.loadLeafletFallbackAssets();
+  }
+})();
+</script>
 
 <script>
 (function () {
@@ -216,6 +404,7 @@ if (empty($_SESSION['csrf_token'])) {
   const branchField = root.querySelector('#branch');
   const slotMessage = root.querySelector('#slotMsg');
   const bookingTypeRadios = root.querySelectorAll("input[name='booking_type']");
+  const locationTypeRadios = root.querySelectorAll("input[name='location_type']");
   const serviceFieldWrap = root.querySelector('[data-service-field]');
   const packageFieldWrap = root.querySelector('[data-package-field]');
   const serviceSelect = root.querySelector('#service');
@@ -223,16 +412,396 @@ if (empty($_SESSION['csrf_token'])) {
   const deviceWrapper = root.querySelector('#chon_thiet_bi_div');
   const deviceList = root.querySelector('#thiet_bi_checkbox_list');
   const addressField = root.querySelector('#address');
+  const externalLocationWrap = root.querySelector('#externalLocationWrap');
+  const extLatField = root.querySelector('#ext_lat');
+  const extLngField = root.querySelector('#ext_lng');
+  const locateBtn = root.querySelector('#locateBtn');
+  const locateStatus = root.querySelector('#locateStatus');
   const quoteBox = root.querySelector('#quoteBox');
   const quoteTotal = root.querySelector('#quoteTotal');
   const quoteNote = root.querySelector('#quoteNote');
+  const mapWrapper = document.querySelector('[data-map-mode]');
+  let mapMode = mapWrapper ? mapWrapper.dataset.mapMode : 'dynamic';
+  const canUseGoogle = !!(mapWrapper && mapWrapper.dataset.googleEnabled === 'true');
+  if (mapWrapper) {
+    mapWrapper.dataset.mapMode = mapMode;
+  }
+  const appEnv = root.dataset.appEnv || 'production';
+  const branchMapEl = document.getElementById('branchMap');
+  const branchMapNote = document.getElementById('branchMapNote');
+  const mapSearchInput = root.querySelector('#mapSearchInput');
+  const mapSearchBtn = root.querySelector('#mapSearchBtn');
+  const mapSearchStatus = root.querySelector('#mapSearchStatus');
+    // If map is disabled in dev mode, collapse the map column and expand form
+    if (mapMode === 'none') {
+      const mapCol = document.getElementById('mapColumn');
+      if (mapCol) mapCol.classList.add('hidden');
+      const formCol = root.closest('section')?.querySelector('.xl\\:col-span-3');
+      if (formCol) {
+        formCol.classList.remove('xl:col-span-3');
+        formCol.classList.add('xl:col-span-5');
+      }
+    }
+  // Unified map instances (google or leaflet)
+  let unifiedMap = null;            // Google Map or Leaflet Map object
+  let branchMarker = null;          // Marker for selected branch
+  let externalMarker = null;        // Marker for external location
+  let googleLocateControl = null;   // Custom control (Google only)
+  let leafletGeocoderControl = null;// Geocoder control (Leaflet only)
+  let pendingBranchTarget = null;   // Branch coordinates waiting for map init
+  let geoWatchId = null;
+  let leafletFallbackActivated = false;
+  let googleDevWatermarkTimer = null;
+  let googleDevWatermarkObserver = null;
+  let googleAutocomplete = null;
   const submitBtn = root.querySelector('#submitBtn');
   const formMsg = root.querySelector('#formMsg');
+  const validationSummary = root.querySelector('#validationSummary');
 
   const defaultQuoteNote = quoteNote ? quoteNote.textContent : '';
   const slotBaseClasses = 'flex w-full items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-center text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:text-sky-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300';
-  const slotSelectedClasses = ['border-sky-500', 'bg-sky-50', 'text-sky-700', 'shadow'];
+  const slotSelectedClasses = [
+    'border-transparent',
+    'bg-gradient-to-r',
+    'from-sky-500',
+    'to-indigo-500',
+    'text-white',
+    'shadow-xl',
+    'ring-2',
+    'ring-sky-200'
+  ];
   const slotDisabledClasses = ['cursor-not-allowed', 'bg-rose-50', 'border-rose-200', 'text-rose-500', 'opacity-70'];
+  const defaultBranchMapNote = branchMapNote ? branchMapNote.textContent : '';
+  const GEO_ACCURACY_ACCEPTABLE = 3000;
+  const GEO_ACCURACY_CAUTION = 8000;
+
+  function registerLeafletReadyCallback(callback) {
+    if (mapMode !== 'leaflet' || typeof callback !== 'function') return;
+    if (window._leafletLoaded && typeof window.L !== 'undefined') {
+      callback();
+      return;
+    }
+    window._leafletReadyCallbacks = window._leafletReadyCallbacks || [];
+    window._leafletReadyCallbacks.push(callback);
+  }
+
+  function registerLeafletGeocoderReady(callback) {
+    if (mapMode !== 'leaflet' || typeof callback !== 'function') return;
+    var geocoderReady = window._leafletGeocoderReady && window.L && window.L.Control && typeof window.L.Control.geocoder === 'function';
+    if (geocoderReady) {
+      callback();
+      return;
+    }
+    window._leafletGeocoderReadyCallbacks = window._leafletGeocoderReadyCallbacks || [];
+    window._leafletGeocoderReadyCallbacks.push(callback);
+  }
+
+  function registerMapsReadyCallback(callback) {
+    if (!canUseGoogle || typeof callback !== 'function') return;
+    window._afterMapsReadyCallbacks = window._afterMapsReadyCallbacks || [];
+    window._afterMapsReadyCallbacks.push(callback);
+    if (window._mapsApiLoaded) {
+      callback();
+    }
+  }
+
+  function setBranchMapNote(message, tone = 'muted') {
+    if (!branchMapNote) return;
+    branchMapNote.textContent = message || defaultBranchMapNote;
+    branchMapNote.classList.remove('text-slate-500', 'text-rose-600', 'text-sky-600');
+    const toneClass = tone === 'error' ? 'text-rose-600' : tone === 'accent' ? 'text-sky-600' : 'text-slate-500';
+    branchMapNote.classList.add(toneClass);
+  }
+
+  function setMapSearchStatus(message, tone = 'muted') {
+    if (!mapSearchStatus) return;
+    mapSearchStatus.textContent = message || '';
+    mapSearchStatus.classList.remove('text-slate-500', 'text-rose-600', 'text-sky-600');
+    const toneClass = tone === 'error' ? 'text-rose-600' : tone === 'accent' ? 'text-sky-600' : 'text-slate-500';
+    mapSearchStatus.classList.add(toneClass);
+  }
+
+  function activateLeafletFallback(reason) {
+    stopGoogleDevWatermarkMonitor();
+    if (mapMode === 'leaflet' && leafletFallbackActivated) {
+      if (reason) setBranchMapNote(reason, 'error');
+      return;
+    }
+    const switchingFromGoogle = mapMode !== 'leaflet';
+    mapMode = 'leaflet';
+    leafletFallbackActivated = true;
+    if (mapWrapper) {
+      mapWrapper.dataset.mapMode = 'leaflet';
+    }
+    if (switchingFromGoogle) {
+      unifiedMap = null;
+      googleAutocomplete = null;
+      if (branchMapEl) {
+        branchMapEl.innerHTML = '';
+      }
+    }
+    if (typeof window.loadLeafletFallbackAssets === 'function') {
+      window.loadLeafletFallbackAssets();
+    }
+    setBranchMapNote(reason || 'Google Maps không khả dụng, đang dùng Leaflet.', 'error');
+    registerLeafletReadyCallback(() => {
+      ensureUnifiedMap();
+      const current = selectedBranchCoordinates();
+      if (current && current.position) {
+        panToBranch(current.position, current.label);
+      }
+    });
+  }
+
+  window._handleMapsFailure = function (reason) {
+    activateLeafletFallback(reason);
+  };
+
+  function getDefaultBranchCenter() {
+  function destroyLeafletMap() {
+    if (mapMode !== 'leaflet') return;
+    if (unifiedMap) {
+      try {
+        if (typeof unifiedMap.off === 'function') {
+          unifiedMap.off();
+        }
+      } catch (error) {
+        console.warn('[Leaflet] off() error', error);
+      }
+      try {
+        if (typeof unifiedMap.remove === 'function') {
+          unifiedMap.remove();
+        }
+      } catch (error) {
+        console.warn('[Leaflet] remove() error', error);
+      }
+    }
+    unifiedMap = null;
+    branchMarker = null;
+    externalMarker = null;
+    if (branchMapEl) {
+      branchMapEl.innerHTML = '';
+    }
+  }
+
+  function promoteToGoogleMaps() {
+    if (!canUseGoogle || mapMode === 'google') return;
+    if (!(window.google && window.google.maps)) return;
+    destroyLeafletMap();
+    mapMode = 'google';
+    leafletFallbackActivated = false;
+    if (mapWrapper) {
+      mapWrapper.dataset.mapMode = 'google';
+    }
+    unifiedMap = null;
+    branchMarker = null;
+    externalMarker = null;
+    ensureUnifiedMap();
+    const current = selectedBranchCoordinates();
+    if (current && current.position) {
+      panToBranch(current.position, current.label);
+    } else {
+      setBranchMapNote('Đang dùng Google Maps.', 'accent');
+    }
+    if (
+      currentLocationType() === 'external' &&
+      extLatField && extLatField.value &&
+      extLngField && extLngField.value
+    ) {
+      const lat = parseFloat(extLatField.value);
+      const lng = parseFloat(extLngField.value);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        applyExternalCoords(lat, lng, {
+          label: addressField && addressField.value ? addressField.value : 'Địa điểm đã chọn',
+          zoom: 16,
+          reverseLookup: false
+        });
+      }
+    }
+  }
+
+    const source = mapWrapper || branchMapEl;
+    if (!source) {
+      return { lat: 10.776889, lng: 106.700806 };
+    }
+    const lat = parseFloat(source.dataset.defaultLat || '10.776889');
+    const lng = parseFloat(source.dataset.defaultLng || '106.700806');
+    return {
+      lat: Number.isFinite(lat) ? lat : 10.776889,
+      lng: Number.isFinite(lng) ? lng : 106.700806
+    };
+  }
+
+  function ensureUnifiedMap() {
+    if (!branchMapEl || unifiedMap) return;
+    if (mapMode === 'none') return; // dev mode without map
+    const center = getDefaultBranchCenter();
+    if (mapMode === 'google') {
+      if (!(window.google && window.google.maps)) return;
+      unifiedMap = new window.google.maps.Map(branchMapEl, {
+        center,
+        zoom: 13,
+        mapTypeControl: false,
+        streetViewControl: false,
+        fullscreenControl: false
+      });
+      branchMarker = new window.google.maps.Marker({ map: unifiedMap, position: center });
+      unifiedMap.addListener('click', (e) => {
+        if (currentLocationType() !== 'external') return; // only set external when mode selected
+        const lat = e.latLng.lat();
+        const lng = e.latLng.lng();
+        applyExternalCoords(lat, lng, {
+          reverseLookup: true,
+          label: 'Đang xác định địa chỉ từ bản đồ...'
+        });
+      });
+      installGoogleLocateControl();
+      setupGoogleAutocomplete();
+      startGoogleDevWatermarkMonitor();
+    } else { // leaflet fallback
+      if (typeof window.L === 'undefined') {
+        registerLeafletReadyCallback(ensureUnifiedMap);
+        return;
+      }
+      unifiedMap = window.L.map(branchMapEl).setView([center.lat, center.lng], 13);
+      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(unifiedMap);
+      branchMarker = window.L.marker([center.lat, center.lng]).addTo(unifiedMap);
+      unifiedMap.on('click', (event) => {
+        if (currentLocationType() !== 'external') return;
+        const { lat, lng } = event.latlng;
+        applyExternalCoords(lat, lng, {
+          reverseLookup: true,
+          label: 'Đang xác định địa chỉ từ bản đồ...'
+        });
+      });
+      registerLeafletGeocoderReady(attachLeafletGeocoder);
+      setTimeout(() => {
+        if (unifiedMap && typeof unifiedMap.invalidateSize === 'function') unifiedMap.invalidateSize();
+      }, 0);
+    }
+    if (pendingBranchTarget && pendingBranchTarget.position) {
+      panToBranch(pendingBranchTarget.position, pendingBranchTarget.label);
+      pendingBranchTarget = null;
+    }
+  }
+
+  function hasGoogleDevWatermark() {
+    if (!branchMapEl) return false;
+    const text = (branchMapEl.textContent || branchMapEl.innerText || '').toLowerCase();
+    return text.includes('for development purposes only');
+  }
+
+  function stopGoogleDevWatermarkMonitor() {
+    if (googleDevWatermarkTimer) {
+      clearTimeout(googleDevWatermarkTimer);
+      googleDevWatermarkTimer = null;
+    }
+    if (googleDevWatermarkObserver) {
+      try {
+        googleDevWatermarkObserver.disconnect();
+      } catch (error) {
+        console.warn('[Maps] watermark observer disconnect error', error);
+      }
+      googleDevWatermarkObserver = null;
+    }
+  }
+
+  function startGoogleDevWatermarkMonitor() {
+    if (mapMode !== 'google' || !branchMapEl) return;
+    if (googleDevWatermarkTimer || googleDevWatermarkObserver) return;
+
+    const fallbackToLeaflet = () => {
+      stopGoogleDevWatermarkMonitor();
+      console.warn('[Maps] Development watermark detected, falling back to Leaflet');
+      if (typeof window._handleMapsFailure === 'function') {
+        window._handleMapsFailure('Google Maps đang ở chế độ phát triển. Đang chuyển sang Leaflet.');
+      }
+    };
+
+    const checkWatermark = () => {
+      if (mapMode !== 'google') {
+        stopGoogleDevWatermarkMonitor();
+        return;
+      }
+      if (hasGoogleDevWatermark()) {
+        fallbackToLeaflet();
+        return;
+      }
+      googleDevWatermarkTimer = window.setTimeout(checkWatermark, 1500);
+    };
+
+    if (window.MutationObserver) {
+      googleDevWatermarkObserver = new window.MutationObserver(() => {
+        if (hasGoogleDevWatermark()) {
+          fallbackToLeaflet();
+        }
+      });
+      googleDevWatermarkObserver.observe(branchMapEl, {
+        subtree: true,
+        childList: true,
+        characterData: true
+      });
+    }
+
+    googleDevWatermarkTimer = window.setTimeout(checkWatermark, 1000);
+  }
+
+  function attachLeafletGeocoder() {
+    if (mapMode !== 'leaflet' || !unifiedMap || leafletGeocoderControl) return;
+    if (!(window.L && window.L.Control && typeof window.L.Control.geocoder === 'function')) return;
+    leafletGeocoderControl = window.L.Control.geocoder({
+      defaultMarkGeocode: false,
+      placeholder: 'Tìm kiếm địa điểm...',
+      errorMessage: 'Không tìm thấy địa điểm phù hợp.',
+      collapsed: false
+    })
+      .on('markgeocode', (event) => {
+        const geo = event && event.geocode;
+        if (!geo || !geo.center) return;
+        const { lat, lng } = geo.center;
+        applyExternalCoords(lat, lng, { label: geo.name, zoom: 16 });
+      })
+      .addTo(unifiedMap);
+  }
+
+  function selectedBranchCoordinates() {
+    if (!branchField) return null;
+    const option = branchField.options[branchField.selectedIndex];
+    if (!option || !option.value) return null;
+    const lat = parseFloat(option.dataset.lat || '');
+    const lng = parseFloat(option.dataset.lng || '');
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return { label: option.textContent.trim() };
+    }
+    return {
+      label: option.textContent.trim(),
+      position: { lat, lng }
+    };
+  }
+
+
+  function panToBranch(position, label) {
+    if (!position) return;
+    if (!unifiedMap) {
+      pendingBranchTarget = { position, label };
+      setBranchMapNote('Đang tải bản đồ, vui lòng đợi...', 'accent');
+      ensureUnifiedMap();
+      return;
+    }
+    if (mapMode === 'google') {
+      unifiedMap.panTo(position);
+      unifiedMap.setZoom(Math.max(unifiedMap.getZoom() || 13, 14));
+      if (branchMarker) branchMarker.setPosition(position);
+    } else {
+      if (branchMarker && typeof branchMarker.setLatLng === 'function') {
+        branchMarker.setLatLng([position.lat, position.lng]);
+      }
+      if (typeof unifiedMap.setView === 'function') unifiedMap.setView([position.lat, position.lng], Math.max(unifiedMap.getZoom() || 13, 14));
+    }
+    if (label) setBranchMapNote(`Đang hiển thị ${label}.`, 'accent');
+  }
 
   function setSlotMessage(text, tone = 'muted') {
     if (!slotMessage) return;
@@ -244,6 +813,339 @@ if (empty($_SESSION['csrf_token'])) {
     }
     const toneClass = tone === 'error' ? 'text-rose-600' : tone === 'accent' ? 'text-sky-600' : 'text-slate-500';
     slotMessage.classList.add(toneClass);
+  }
+
+  function setLocateStatus(message, tone = 'muted') {
+    if (!locateStatus) return;
+    locateStatus.textContent = message || '';
+    locateStatus.classList.remove('text-slate-500', 'text-rose-600', 'text-sky-600');
+    if (!message) {
+      locateStatus.classList.add('text-slate-500');
+      return;
+    }
+    const toneClass = tone === 'error' ? 'text-rose-600' : tone === 'accent' ? 'text-sky-600' : 'text-slate-500';
+    locateStatus.classList.add(toneClass);
+  }
+
+  function ensureExternalLocationSelected() {
+    const externalRadio = root.querySelector("input[name='location_type'][value='external']");
+    if (externalRadio && !externalRadio.checked) {
+      externalRadio.checked = true;
+      toggleLocationFields();
+    }
+  }
+
+  function applyExternalCoords(lat, lng, options = {}) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    ensureExternalLocationSelected();
+
+    const latNum = Number(lat);
+    const lngNum = Number(lng);
+    if (extLatField) {
+      extLatField.value = latNum.toFixed(6);
+    }
+    if (extLngField) {
+      extLngField.value = lngNum.toFixed(6);
+    }
+    const shouldPrefillAddress = !!(addressField && (options.label || options.reverseLookup));
+    if (shouldPrefillAddress) {
+      const fallbackLabel = options.label || `Đang xác định địa chỉ tại (${latNum.toFixed(5)}, ${lngNum.toFixed(5)})`;
+      addressField.value = fallbackLabel;
+      addressField.dataset.autofill = 'true';
+      if (options.autofillToken) {
+        addressField.dataset.autofillToken = String(options.autofillToken);
+      }
+    }
+
+    const positionObj = { lat: latNum, lng: lngNum };
+    const doPlace = () => {
+      if (!unifiedMap) {
+        ensureUnifiedMap();
+        if (!unifiedMap) return; // will try again via pending callbacks
+      }
+      if (mapMode === 'google') {
+        unifiedMap.panTo(positionObj);
+        const targetZoom = Math.max(unifiedMap.getZoom() || 12, options.zoom || 15);
+        unifiedMap.setZoom(targetZoom);
+        if (!externalMarker) {
+          externalMarker = new window.google.maps.Marker({ map: unifiedMap, position: positionObj, icon: null });
+        } else {
+          externalMarker.setPosition(positionObj);
+        }
+      } else if (mapMode === 'leaflet') {
+        if (typeof unifiedMap.setView === 'function') {
+          unifiedMap.setView([positionObj.lat, positionObj.lng], Math.max(unifiedMap.getZoom() || 12, options.zoom || 15));
+        }
+        if (!externalMarker) {
+          externalMarker = window.L.marker([positionObj.lat, positionObj.lng]).addTo(unifiedMap);
+        } else if (typeof externalMarker.setLatLng === 'function') {
+          externalMarker.setLatLng([positionObj.lat, positionObj.lng]);
+        }
+      }
+    };
+    if (mapMode === 'google') {
+      if (unifiedMap && window.google && window.google.maps) doPlace(); else registerMapsReadyCallback(doPlace);
+    } else {
+      if (unifiedMap && window.L) doPlace(); else registerLeafletReadyCallback(doPlace);
+    }
+
+    updateQuotePreview();
+    refreshValidationSummary();
+
+    if (options.reverseLookup) {
+      const token = Date.now();
+      if (addressField) {
+        addressField.dataset.autofillToken = String(token);
+      }
+      reverseGeocodeLatLng(latNum, lngNum)
+        .then((humanAddress) => {
+          if (!humanAddress || !addressField) return;
+          const currentToken = addressField.dataset.autofillToken;
+          if (String(currentToken) !== String(token)) return;
+          addressField.value = humanAddress;
+          addressField.dataset.autofill = 'true';
+        })
+        .catch(() => {
+          /* noop */
+        });
+    }
+  }
+
+  function geolocationErrorMessage(error) {
+    if (!error) return 'Không thể lấy vị trí hiện tại.';
+    switch (error.code) {
+      case 1:
+        return 'Bạn đã từ chối cấp quyền truy cập vị trí.';
+      case 2:
+        return 'Không thể xác định vị trí từ thiết bị.';
+      case 3:
+        return 'Quá thời gian chờ khi lấy vị trí. Vui lòng thử lại.';
+      default:
+        return 'Không thể lấy vị trí hiện tại.';
+    }
+  }
+
+  async function reverseGeocodeLatLng(lat, lng) {
+    const params = new URLSearchParams({
+      format: 'jsonv2',
+      lat: String(lat),
+      lon: String(lng),
+      'accept-language': 'vi'
+    });
+    const endpoint = `https://nominatim.openstreetmap.org/reverse?${params.toString()}`;
+    const response = await fetch(endpoint, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'StygianBlueBooking/1.0 (contact@stygianblue.local)'
+      }
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (data && data.display_name) {
+      return data.display_name;
+    }
+    if (data && data.address) {
+      const { road, suburb, city, state } = data.address;
+      return [road, suburb, city, state].filter(Boolean).join(', ');
+    }
+    return null;
+  }
+
+  function stopGeolocationWatch(info) {
+    if (geoWatchId !== null && navigator.geolocation && typeof navigator.geolocation.clearWatch === 'function') {
+      try {
+        navigator.geolocation.clearWatch(geoWatchId);
+      } catch (error) {
+        console.warn('[Geolocation] clearWatch error', error);
+      }
+      geoWatchId = null;
+    }
+    if (locateBtn) {
+      locateBtn.disabled = false;
+    }
+    setGoogleLocateBusy(false);
+    if (info && info.message) {
+      setLocateStatus(info.message, info.tone || 'muted');
+    }
+  }
+
+  function handleGeolocationSuccess(position, options = {}) {
+    const { allowRetry = false, fromWatch = false } = options;
+    if (!position || !position.coords) {
+      setLocateStatus('Không thể lấy vị trí hiện tại.', 'error');
+      if (!fromWatch) {
+        stopGeolocationWatch();
+      }
+      return;
+    }
+
+    const { latitude, longitude, accuracy } = position.coords;
+    const hasAccuracy = Number.isFinite(accuracy);
+    const roundedAccuracy = hasAccuracy ? Math.round(accuracy) : null;
+    const isAcceptable = hasAccuracy && accuracy <= GEO_ACCURACY_ACCEPTABLE;
+    const isCaution = hasAccuracy && accuracy <= GEO_ACCURACY_CAUTION;
+    const needsReverse = !fromWatch || isAcceptable;
+
+    applyExternalCoords(latitude, longitude, {
+      label: 'Vị trí hiện tại của tôi',
+      zoom: 16,
+      reverseLookup: needsReverse
+    });
+
+    if (!fromWatch && locateBtn) {
+      locateBtn.disabled = false;
+    }
+    if (!fromWatch) {
+      setGoogleLocateBusy(false);
+    }
+
+    if (!hasAccuracy) {
+      setLocateStatus('Đã lấy vị trí hiện tại. Kiểm tra lại điểm đánh dấu trước khi xác nhận.', 'accent');
+      if (allowRetry) {
+        startGeolocationWatch(10000);
+      }
+      return;
+    }
+
+    if (isAcceptable) {
+      setLocateStatus(`Đã lấy vị trí hiện tại (sai số ±${roundedAccuracy}m).`, 'accent');
+      stopGeolocationWatch();
+      return;
+    }
+
+    if (isCaution) {
+      setLocateStatus(`Vị trí hiện tại có sai số ±${roundedAccuracy}m. Bạn có thể kéo điểm đánh dấu để tinh chỉnh thêm.`, 'accent');
+      stopGeolocationWatch();
+      return;
+    }
+
+    setLocateStatus(`Vị trí hệ thống trả về sai số ±${roundedAccuracy}m (có thể chỉ là tọa độ trung tâm khu vực). Kéo điểm đánh dấu hoặc nhập địa chỉ chính xác hơn.`, 'error');
+    if (allowRetry) {
+      startGeolocationWatch(roundedAccuracy);
+    }
+  }
+
+  function startGeolocationWatch(initialAccuracy) {
+    if (!(navigator.geolocation && typeof navigator.geolocation.watchPosition === 'function')) {
+      setLocateStatus('Thiết bị không hỗ trợ đo chính xác hơn. Vui lòng chỉnh tay trên bản đồ.', 'error');
+      return;
+    }
+    stopGeolocationWatch();
+    if (locateBtn) {
+      locateBtn.disabled = true;
+    }
+    const rounded = Number.isFinite(initialAccuracy) ? Math.round(initialAccuracy) : 'lớn';
+    setLocateStatus(`Sai số hiện tại khoảng ±${rounded}m. Đang cố gắng đo chính xác hơn...`, 'error');
+    const deadline = Date.now() + 20000;
+    geoWatchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const currentAccuracy = position.coords && position.coords.accuracy;
+        handleGeolocationSuccess(position, { allowRetry: false, fromWatch: true });
+        if (Number.isFinite(currentAccuracy) && currentAccuracy <= GEO_ACCURACY_ACCEPTABLE) {
+          stopGeolocationWatch({ message: `Đã cải thiện vị trí (sai số ±${Math.round(currentAccuracy)}m).`, tone: 'accent' });
+        } else if (Date.now() > deadline) {
+          stopGeolocationWatch({ message: 'Không thể đo chính xác hơn, vui lòng kéo điểm đánh dấu hoặc nhập địa chỉ cụ thể.', tone: 'error' });
+        }
+      },
+      (error) => {
+        stopGeolocationWatch({ message: geolocationErrorMessage(error), tone: 'error' });
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+    );
+  }
+
+  function requestCurrentLocation(triggerSource = 'button') {
+    ensureExternalLocationSelected();
+    if (currentLocationType() !== 'external') {
+      setLocateStatus('Chọn "Địa điểm khác" trước khi dùng vị trí hiện tại.', 'error');
+      setGoogleLocateBusy(false);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setLocateStatus('Trình duyệt không hỗ trợ định vị.', 'error');
+      setGoogleLocateBusy(false);
+      return;
+    }
+
+    stopGeolocationWatch();
+    if (triggerSource === 'button' && locateBtn) {
+      locateBtn.disabled = true;
+    }
+    if (triggerSource === 'google-control') {
+      setGoogleLocateBusy(true);
+    }
+
+    setLocateStatus(
+      triggerSource === 'google-control'
+        ? 'Google Maps đang xác định vị trí của bạn...'
+        : 'Đang xác định vị trí của bạn...',
+      'accent'
+    );
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        handleGeolocationSuccess(position, { allowRetry: true, fromWatch: false });
+      },
+      (error) => {
+        stopGeolocationWatch({ message: geolocationErrorMessage(error), tone: 'error' });
+      },
+      { enableHighAccuracy: true, timeout: triggerSource === 'google-control' ? 20000 : 15000, maximumAge: 0 }
+    );
+  }
+
+  function buildValidationErrors() {
+    const errors = [];
+    if (!branchField || !branchField.value) {
+      errors.push('Chọn chi nhánh làm việc.');
+    }
+    if (!dateField || !dateField.value) {
+      errors.push('Chọn ngày hẹn.');
+    }
+    if (!slotField || !slotField.value) {
+      errors.push('Chọn khung giờ trống.');
+    }
+    const type = currentBookingType();
+    const serviceValue = serviceSelect ? serviceSelect.value : '';
+    const serviceId = serviceValue ? parseInt(serviceValue, 10) : 0;
+    const packageId = parseInt(packageSelect ? packageSelect.value : '0', 10);
+    if (type === 'service' && !serviceId) {
+      errors.push('Chọn dịch vụ lẻ.');
+    }
+    if (type === 'package' && !packageId) {
+      errors.push('Chọn gói dịch vụ.');
+    }
+    if (currentLocationType() === 'external') {
+      const hasAddress = !!(addressField && addressField.value.trim());
+      const hasCoords = !!(extLatField && extLatField.value && extLngField && extLngField.value);
+      if (!hasAddress && !hasCoords) {
+        errors.push('Nhập địa chỉ hoặc chọn vị trí trên bản đồ cho địa điểm khác.');
+      }
+    }
+    return errors;
+  }
+
+  function refreshValidationSummary() {
+    const errors = buildValidationErrors();
+    const isComplete = errors.length === 0;
+    if (submitBtn) {
+      submitBtn.disabled = !isComplete;
+    }
+    if (!validationSummary) {
+      return isComplete;
+    }
+    if (!isComplete) {
+      validationSummary.classList.remove('hidden');
+      validationSummary.innerHTML = [
+        '<p class="font-semibold">Cần bổ sung:</p>',
+        '<ul class="mt-2 list-disc list-inside space-y-1">',
+        errors.map((msg) => `<li>${msg}</li>`).join(''),
+        '</ul>'
+      ].join('');
+    } else {
+      validationSummary.classList.add('hidden');
+      validationSummary.innerHTML = '';
+    }
+    return isComplete;
   }
 
   function currentBookingType() {
@@ -265,6 +1167,7 @@ if (empty($_SESSION['csrf_token'])) {
       if (packageSelect) packageSelect.value = '';
     }
     updateQuotePreview();
+    refreshValidationSummary();
   }
 
   function updateAddressDefault() {
@@ -280,16 +1183,212 @@ if (empty($_SESSION['csrf_token'])) {
     }
   }
 
+  function currentLocationType() {
+    const checked = root.querySelector("input[name='location_type']:checked");
+    return checked && checked.value === 'external' ? 'external' : 'branch';
+  }
+
+  // legacy external map removed (unified)
+
+  function installGoogleLocateControl() {
+    if (mapMode !== 'google' || !unifiedMap || googleLocateControl || !(window.google && window.google.maps)) {
+      return;
+    }
+    const controlDiv = document.createElement('div');
+    controlDiv.style.background = '#ffffff';
+    controlDiv.style.border = '1px solid rgba(148, 163, 184, 0.7)';
+    controlDiv.style.borderRadius = '9999px';
+    controlDiv.style.padding = '8px 12px';
+    controlDiv.style.margin = '12px';
+    controlDiv.style.fontSize = '12px';
+    controlDiv.style.fontWeight = '600';
+    controlDiv.style.color = '#0ea5e9';
+    controlDiv.style.cursor = 'pointer';
+    controlDiv.style.boxShadow = '0 1px 3px rgba(15, 23, 42, 0.15)';
+    controlDiv.style.transition = 'transform 120ms ease, opacity 120ms ease';
+    controlDiv.style.display = 'flex';
+    controlDiv.style.alignItems = 'center';
+    controlDiv.style.gap = '6px';
+    controlDiv.style.userSelect = 'none';
+    controlDiv.setAttribute('role', 'button');
+    controlDiv.setAttribute('tabindex', '0');
+    controlDiv.title = 'Dùng vị trí hiện tại (Google Maps)';
+
+    const dot = document.createElement('span');
+    dot.style.display = 'inline-block';
+    dot.style.width = '6px';
+    dot.style.height = '6px';
+    dot.style.borderRadius = '9999px';
+    dot.style.background = '#0ea5e9';
+    controlDiv.appendChild(dot);
+
+    const label = document.createElement('span');
+    label.textContent = 'Vị trí của tôi';
+    controlDiv.appendChild(label);
+
+    controlDiv.addEventListener('click', () => {
+      setGoogleLocateBusy(true);
+      requestCurrentLocation('google-control');
+    });
+    controlDiv.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        setGoogleLocateBusy(true);
+        requestCurrentLocation('google-control');
+      }
+    });
+
+    unifiedMap.controls[window.google.maps.ControlPosition.RIGHT_BOTTOM].push(controlDiv);
+    googleLocateControl = controlDiv;
+    setGoogleLocateBusy(false);
+  }
+
+  function setGoogleLocateBusy(isBusy) {
+    if (!googleLocateControl) return;
+    googleLocateControl.dataset.busy = isBusy ? 'true' : 'false';
+    googleLocateControl.style.transform = isBusy ? 'scale(0.97)' : 'scale(1)';
+    googleLocateControl.style.opacity = isBusy ? '0.75' : '1';
+  }
+
+  function setupGoogleAutocomplete() {
+    if (!mapSearchInput || mapMode !== 'google') return;
+    if (!(window.google && window.google.maps && window.google.maps.places)) return;
+    if (googleAutocomplete) return;
+    googleAutocomplete = new window.google.maps.places.Autocomplete(mapSearchInput, {
+      fields: ['geometry', 'formatted_address', 'name'],
+      types: ['geocode']
+    });
+    googleAutocomplete.addListener('place_changed', () => {
+      const place = googleAutocomplete.getPlace();
+      if (!place || !place.geometry || !place.geometry.location) {
+        setMapSearchStatus('Không tìm thấy địa điểm phù hợp.', 'error');
+        return;
+      }
+      const loc = place.geometry.location;
+      const label = place.formatted_address || place.name || mapSearchInput.value.trim();
+      handleMapSearchResult(loc.lat(), loc.lng(), label);
+    });
+  }
+
+  function handleMapSearchResult(lat, lng, label) {
+    applyExternalCoords(lat, lng, {
+      label: label || 'Vị trí vừa tìm',
+      zoom: 16,
+      reverseLookup: !label
+    });
+    setMapSearchStatus(label ? `Đã di chuyển đến ${label}.` : 'Đã tìm thấy vị trí.', 'accent');
+  }
+
+  function handleMapSearchQuery(rawQuery) {
+    const query = (rawQuery || '').trim();
+    if (!query) {
+      setMapSearchStatus('Nhập địa điểm cần tìm.', 'error');
+      return;
+    }
+    if (mapMode === 'none') {
+      setMapSearchStatus('Bản đồ đang tắt trong môi trường phát triển.', 'error');
+      return;
+    }
+    if (mapMode === 'google' && window.google && window.google.maps) {
+      performGoogleTextSearch(query);
+    } else {
+      performLeafletSearch(query);
+    }
+  }
+
+  function performGoogleTextSearch(query) {
+    if (!(window.google && window.google.maps)) {
+      setMapSearchStatus('Google Maps chưa sẵn sàng.', 'error');
+      return;
+    }
+    setMapSearchStatus('Đang tìm kiếm trên Google Maps...', 'accent');
+    const geocoder = new window.google.maps.Geocoder();
+    geocoder.geocode({ address: query }, (results, status) => {
+      if (status !== 'OK' || !Array.isArray(results) || !results.length) {
+        setMapSearchStatus('Không tìm thấy địa điểm phù hợp.', 'error');
+        return;
+      }
+      const best = results[0];
+      if (!(best.geometry && best.geometry.location)) {
+        setMapSearchStatus('Không thể lấy tọa độ cho địa điểm đã chọn.', 'error');
+        return;
+      }
+      handleMapSearchResult(best.geometry.location.lat(), best.geometry.location.lng(), best.formatted_address || query);
+    });
+  }
+
+  async function performLeafletSearch(query) {
+    setMapSearchStatus('Đang tìm kiếm địa điểm...', 'accent');
+    try {
+      const params = new URLSearchParams({
+        format: 'jsonv2',
+        q: query,
+        limit: '1',
+        addressdetails: '1',
+        'accept-language': 'vi'
+      });
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'StygianBlueBooking/1.0 (contact@stygianblue.local)'
+        }
+      });
+      if (!response.ok) {
+        throw new Error('bad_response');
+      }
+      const data = await response.json();
+      if (!Array.isArray(data) || !data.length) {
+        setMapSearchStatus('Không tìm thấy địa điểm phù hợp.', 'error');
+        return;
+      }
+      const best = data[0];
+      const lat = parseFloat(best.lat);
+      const lng = parseFloat(best.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        setMapSearchStatus('Không thể lấy tọa độ cho địa điểm đã chọn.', 'error');
+        return;
+      }
+      const label = best.display_name || query;
+      handleMapSearchResult(lat, lng, label);
+    } catch (error) {
+      setMapSearchStatus('Không thể tìm kiếm, vui lòng thử lại.', 'error');
+    }
+  }
+
+  // legacy separate leaflet external map removed (unified)
+
+  function toggleLocationFields() {
+    const type = currentLocationType();
+    if (type === 'external') {
+      externalLocationWrap.classList.remove('hidden');
+      // marker remains / will be created when user clicks or locates
+    } else {
+      externalLocationWrap.classList.add('hidden');
+      extLatField.value = '';
+      extLngField.value = '';
+      if (externalMarker) {
+        if (mapMode === 'google' && externalMarker.setMap) externalMarker.setMap(null);
+        if (mapMode === 'leaflet' && unifiedMap && unifiedMap.removeLayer && externalMarker) unifiedMap.removeLayer(externalMarker);
+        externalMarker = null;
+      }
+      stopGeolocationWatch();
+      setLocateStatus('', 'muted');
+    }
+    updateQuotePreview();
+    refreshValidationSummary();
+  }
+
   async function loadBookedSlots() {
     const date = dateField.value;
     const branchId = parseInt(branchField.value, 10);
     slotField.value = '';
     slotContainer.innerHTML = '';
     setSlotMessage('');
-    submitBtn.disabled = true;
+    refreshValidationSummary();
 
     if (!date || Number.isNaN(branchId)) {
       setSlotMessage('Vui lòng chọn chi nhánh và ngày.', 'accent');
+      refreshValidationSummary();
       return;
     }
 
@@ -306,6 +1405,7 @@ if (empty($_SESSION['csrf_token'])) {
       slotContainer.innerHTML = '';
       setSlotMessage('Không thể tải khung giờ, vui lòng thử lại.', 'error');
     }
+    refreshValidationSummary();
   }
 
   function renderSlots(booked) {
@@ -341,8 +1441,9 @@ if (empty($_SESSION['csrf_token'])) {
           button.setAttribute('aria-checked', 'true');
           slotSelectedClasses.forEach((cls) => button.classList.add(cls));
           slotField.value = time;
-          submitBtn.disabled = false;
           updateQuotePreview();
+          refreshValidationSummary();
+          setSlotMessage(`Đã chọn khung giờ ${time.slice(0, 5)}`, 'accent');
         });
       }
 
@@ -352,9 +1453,11 @@ if (empty($_SESSION['csrf_token'])) {
     if (!hasAvailableSlot) {
       slotContainer.innerHTML = '<p class="col-span-full rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-600">Không còn khung giờ trống trong ngày này. Vui lòng chọn ngày khác.</p>';
       setSlotMessage('Không còn khung giờ trống trong ngày này. Vui lòng chọn ngày khác.', 'error');
+      refreshValidationSummary();
       return false;
     }
 
+    refreshValidationSummary();
     return true;
   }
 
@@ -363,23 +1466,59 @@ if (empty($_SESSION['csrf_token'])) {
       dateFormat: 'Y-m-d',
       minDate: 'today',
       disableMobile: true,
-      onChange: loadBookedSlots
+      onChange: () => {
+        loadBookedSlots();
+        refreshValidationSummary();
+      }
     });
   }
 
-  dateField.addEventListener('change', loadBookedSlots);
-  branchField.addEventListener('change', () => {
-    updateAddressDefault();
+  dateField.addEventListener('change', () => {
     loadBookedSlots();
+    refreshValidationSummary();
   });
+  if (branchField) {
+    branchField.addEventListener('change', () => {
+      updateAddressDefault();
+      loadBookedSlots();
+      const current = selectedBranchCoordinates();
+      if (current && current.position) panToBranch(current.position, current.label);
+      refreshValidationSummary();
+    });
+  }
   if (addressField) {
     addressField.addEventListener('input', () => {
       addressField.dataset.autofill = 'false';
+      refreshValidationSummary();
     });
   }
   bookingTypeRadios.forEach((radio) => {
     radio.addEventListener('change', toggleBookingFields);
   });
+  locationTypeRadios.forEach((radio) => {
+    radio.addEventListener('change', toggleLocationFields);
+  });
+
+  if (locateBtn) {
+    locateBtn.addEventListener('click', () => {
+      requestCurrentLocation('button');
+    });
+  }
+
+  if (mapSearchBtn && mapSearchInput) {
+    mapSearchBtn.addEventListener('click', () => {
+      handleMapSearchQuery(mapSearchInput.value);
+    });
+  }
+
+  if (mapSearchInput) {
+    mapSearchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handleMapSearchQuery(mapSearchInput.value);
+      }
+    });
+  }
 
   if (serviceSelect) {
     serviceSelect.addEventListener('change', async function onServiceChange() {
@@ -430,17 +1569,22 @@ if (empty($_SESSION['csrf_token'])) {
       }
 
       updateQuotePreview();
+      refreshValidationSummary();
     });
   }
 
   if (packageSelect) {
-    packageSelect.addEventListener('change', updateQuotePreview);
+    packageSelect.addEventListener('change', () => {
+      updateQuotePreview();
+      refreshValidationSummary();
+    });
   }
 
   if (deviceList) {
     deviceList.addEventListener('change', (e) => {
       if (e.target && e.target.matches("input[name='thiet_bi_id[]']")) {
         updateQuotePreview();
+        refreshValidationSummary();
       }
     });
   }
@@ -456,31 +1600,33 @@ if (empty($_SESSION['csrf_token'])) {
     const date = dateField.value;
     const time = slotField.value;
     const type = currentBookingType();
-    const serviceId = parseInt(serviceSelect ? serviceSelect.value : '0', 10);
+    const serviceValue = serviceSelect ? serviceSelect.value : '';
+    const serviceId = serviceValue ? parseInt(serviceValue, 10) : 0;
     const packageId = parseInt(packageSelect ? packageSelect.value : '0', 10);
+    const locationType = currentLocationType();
+    const extLat = extLatField ? parseFloat(extLatField.value) : NaN;
+    const extLng = extLngField ? parseFloat(extLngField.value) : NaN;
 
     if (!branchId || !date || !time) {
       quoteBox.classList.add('hidden');
       return;
     }
 
+    let packagePrice = 0;
     if (type === 'package') {
       if (!packageId) {
         quoteBox.classList.add('hidden');
         return;
       }
-
       const selectedOption = packageSelect.options[packageSelect.selectedIndex];
-      const price = selectedOption ? parseInt(selectedOption.getAttribute('data-price') || '0', 10) : 0;
-      quoteTotal.textContent = price.toLocaleString('vi-VN') + '₫';
+      packagePrice = selectedOption ? parseInt(selectedOption.getAttribute('data-price') || '0', 10) : 0;
       if (quoteNote) {
         quoteNote.textContent = 'Giá gói đã bao gồm toàn bộ dịch vụ trong gói.';
       }
       quoteBox.classList.remove('hidden');
-      return;
     }
 
-    if (!serviceId) {
+    if (type === 'service' && !serviceId) {
       quoteBox.classList.add('hidden');
       return;
     }
@@ -491,39 +1637,98 @@ if (empty($_SESSION['csrf_token'])) {
       quoteNote.textContent = defaultQuoteNote;
     }
 
+    let travelRow = document.getElementById('travelFeeRow');
+    let travelValueEl = document.getElementById('travelFeeValue');
+    if (!travelRow) {
+      travelRow = document.createElement('div');
+      travelRow.id = 'travelFeeRow';
+      travelRow.className = 'mt-2 flex items-center justify-between text-sm text-slate-700';
+      const label = document.createElement('span');
+      label.textContent = 'Phụ phí di chuyển';
+      travelValueEl = document.createElement('span');
+      travelValueEl.id = 'travelFeeValue';
+      travelRow.appendChild(label);
+      travelRow.appendChild(travelValueEl);
+      quoteBox.appendChild(travelRow);
+    }
+    if (!travelValueEl) {
+      travelValueEl = document.getElementById('travelFeeValue');
+    }
+    if (travelValueEl) {
+      travelValueEl.textContent = 'Đang tính...';
+    }
+    if (travelRow) {
+      travelRow.classList.toggle('hidden', locationType !== 'external');
+    }
+
     try {
+      const payload = {
+        branch_id: branchId,
+        date,
+        time,
+        service_id: type === 'service' ? serviceId : null,
+        device_ids: selectedDeviceIds(),
+        location_type: locationType,
+        ext_lat: Number.isFinite(extLat) ? extLat : null,
+        ext_lng: Number.isFinite(extLng) ? extLng : null
+      };
+
       const response = await fetch('../controller/quote_preview.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch_id: branchId,
-          date,
-          time,
-          service_id: serviceId,
-          device_ids: selectedDeviceIds()
-        })
+        body: JSON.stringify(payload)
       });
       const data = await response.json();
-      const total = data && typeof data.total === 'number' ? data.total : 0;
-      quoteTotal.textContent = total.toLocaleString('vi-VN') + '₫';
+      const fee = data && typeof data.travel_fee === 'number' ? data.travel_fee : 0;
+      let displayTotal;
+      if (type === 'package') {
+        displayTotal = packagePrice + fee;
+      } else {
+        const total = data && typeof data.total === 'number' ? data.total : 0;
+        displayTotal = total;
+      }
+      quoteTotal.textContent = displayTotal.toLocaleString('vi-VN') + '₫';
+      // Show travel fee if present
+      const feeVal = data && typeof data.travel_fee === 'number' ? data.travel_fee : 0;
+      if (travelValueEl) {
+        travelValueEl.textContent = Number.isFinite(feeVal)
+          ? feeVal.toLocaleString('vi-VN') + '₫'
+          : '—';
+      }
     } catch (error) {
       quoteTotal.textContent = '—';
+      if (travelValueEl) {
+        travelValueEl.textContent = '—';
+      }
     }
   }
 
   toggleBookingFields();
+  toggleLocationFields();
   updateAddressDefault();
+  const initialBranch = selectedBranchCoordinates();
+  if (initialBranch && initialBranch.position) panToBranch(initialBranch.position, initialBranch.label);
+  refreshValidationSummary();
+  registerLeafletReadyCallback(() => {
+    ensureUnifiedMap();
+    const cur = selectedBranchCoordinates();
+    if (cur && cur.position) panToBranch(cur.position, cur.label);
+  });
+
+  if (canUseGoogle) {
+    registerMapsReadyCallback(() => {
+      promoteToGoogleMaps();
+    });
+  }
 
   const form = root.querySelector('#scheduleForm');
   form.addEventListener('submit', (event) => {
     formMsg.textContent = '';
-    const type = currentBookingType();
-    const missingService = type === 'service' && !(serviceSelect && serviceSelect.value);
-    const missingPackage = type === 'package' && !(packageSelect && packageSelect.value);
-
-    if (!branchField.value || !dateField.value || !slotField.value || missingService || missingPackage) {
+    const errors = buildValidationErrors();
+    if (errors.length > 0) {
       event.preventDefault();
-      formMsg.textContent = 'Vui lòng chọn đủ chi nhánh, ngày, giờ và loại dịch vụ phù hợp.';
+      formMsg.textContent = errors[0];
+      refreshValidationSummary();
       return;
     }
 
@@ -531,4 +1736,77 @@ if (empty($_SESSION['csrf_token'])) {
     submitBtn.textContent = 'Đang gửi...';
   });
 })();
+
+// Fallback: nếu Google Maps JS không tải sau 3s khi chọn 'Địa điểm khác', báo cho người dùng cấu hình API key.
+setTimeout(() => {
+  const wrapper = document.querySelector('[data-map-mode]');
+  const mode = wrapper ? wrapper.dataset.mapMode : 'leaflet';
+  const branchMapDiv = document.getElementById('branchMap');
+  if (!branchMapDiv) return;
+  if (mode === 'none') {
+    // Hide container completely in dev mode without map
+    const mapCol = document.getElementById('mapColumn');
+    if (mapCol) mapCol.classList.add('hidden');
+    const formCol = document.querySelector('.xl\\:col-span-3');
+    if (formCol) {
+      formCol.classList.remove('xl:col-span-3');
+      formCol.classList.add('xl:col-span-5');
+    }
+    return;
+  }
+  if (mode === 'google') {
+    const hasGoogle = typeof window.google !== 'undefined' && window.google.maps;
+    if (!hasGoogle && !branchMapDiv.dataset.fallbackShown) {
+      branchMapDiv.dataset.fallbackShown = 'true';
+      branchMapDiv.innerHTML = '<div class="flex h-full w-full items-center justify-center p-4 text-center text-sm text-rose-600">Không tải được Google Maps. Đang chuyển sang Leaflet dự phòng...</div>';
+      if (typeof window._handleMapsFailure === 'function') {
+        window._handleMapsFailure('Không tải được Google Maps, đang chuyển sang Leaflet.');
+      }
+    }
+  } else { // leaflet
+    const hasLeaflet = typeof window.L !== 'undefined';
+    if (!hasLeaflet && !branchMapDiv.dataset.fallbackShown) {
+      branchMapDiv.dataset.fallbackShown = 'true';
+      branchMapDiv.innerHTML = '<div class="flex h-full w-full items-center justify-center p-4 text-center text-sm text-rose-600">Không tải được Leaflet. Kiểm tra CDN hoặc kết nối mạng.</div>';
+    }
+  }
+}, 3000);
 </script>
+
+<?php if (!empty($googleMapsApiKey)): ?>
+  <script>
+    // Callback khi Google Maps JS tải xong
+    function initGoogleMaps() {
+      console.log('[Maps] API loaded');
+      window._mapsApiLoaded = true;
+      if (Array.isArray(window._afterMapsReadyCallbacks)) {
+        window._afterMapsReadyCallbacks.forEach(function (cb) {
+          try {
+            cb();
+          } catch (error) {
+            console.error('[Maps] callback error', error);
+          }
+        });
+      }
+    }
+    // Nếu Google Maps fail, đặt cờ để có thể quyết định fallback (hiện chỉ hiển thị thông báo có sẵn)
+    function onGoogleMapsError() {
+      console.error('[Maps] failed to load Google Maps script');
+      window._mapsApiFailed = true;
+      if (typeof window._handleMapsFailure === 'function') {
+        window._handleMapsFailure('Không tải được Google Maps (lỗi script). Đang chuyển sang Leaflet.');
+      }
+    }
+    // Được Google Maps gọi khi API key không hợp lệ / chưa bật thanh toán
+    window.gm_authFailure = function () {
+      console.error('[Maps] gm_authFailure triggered');
+      window._mapsApiFailed = true;
+      if (typeof window._handleMapsFailure === 'function') {
+        window._handleMapsFailure('Google Maps API key không hợp lệ hoặc chưa bật thanh toán. Đang chuyển sang Leaflet.');
+      }
+    };
+  </script>
+  <script async src="https://maps.googleapis.com/maps/api/js?key=<?= htmlspecialchars($googleMapsApiKey) ?>&callback=initGoogleMaps&loading=async&libraries=places" onerror="onGoogleMapsError();"></script>
+<?php else: ?>
+  <!-- Chưa có GOOGLE_MAPS_API_KEY: thiết lập biến môi trường hoặc define('GOOGLE_MAPS_API_KEY','your_key') -->
+<?php endif; ?>

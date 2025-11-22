@@ -174,16 +174,13 @@ if (!$requests) {
 $requestCount = mysqli_num_rows($requests);
 mysqli_data_seek($requests, 0);
 
-$unassignedCount = fetchCount($conn, "
-    SELECT COUNT(*) as total
-    FROM lich_hen lh
-    WHERE lh.TRANGTHAI = 'Đã xác nhận'
-    AND NOT EXISTS (
-        SELECT 1 FROM phan_cong_nhan_vien pc WHERE pc.ID_LICHHEN = lh.ID_LICHHEN
-    )
-");
 
-$unassignedList = mysqli_query($conn, "
+// Tách lịch chưa phân công thành 2 nhóm: chưa quá hạn và quá hạn
+$unassignedCount = 0;
+$overdueUnassignedCount = 0;
+$unassignedListArr = [];
+$overdueUnassignedListArr = [];
+$unassignedQuery = mysqli_query($conn, "
     SELECT lh.ID_LICHHEN, lh.DIA_CHI_HEN, lh.THOI_GIAN_BAT_DAU
     FROM lich_hen lh
     WHERE lh.TRANGTHAI = 'Đã xác nhận'
@@ -191,9 +188,21 @@ $unassignedList = mysqli_query($conn, "
         SELECT 1 FROM phan_cong_nhan_vien pc WHERE pc.ID_LICHHEN = lh.ID_LICHHEN
     )
     ORDER BY lh.THOI_GIAN_BAT_DAU ASC
-    LIMIT 5
 ");
-$unassignedListCount = $unassignedList ? mysqli_num_rows($unassignedList) : 0;
+if ($unassignedQuery) {
+    $now = time();
+    while ($row = mysqli_fetch_assoc($unassignedQuery)) {
+        $start = strtotime($row['THOI_GIAN_BAT_DAU']);
+        if ($start >= $now) {
+            $unassignedListArr[] = $row;
+        } else {
+            $overdueUnassignedListArr[] = $row;
+        }
+    }
+    $unassignedCount = count($unassignedListArr);
+    $overdueUnassignedCount = count($overdueUnassignedListArr);
+}
+
 
 $stats = [
     'thisWeek' => fetchCount($conn, "
@@ -272,6 +281,10 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                     <div class="bg-white/20 rounded-xl px-4 py-2 text-center">
                         <p class="text-xs uppercase opacity-80">Chờ phân công</p>
                         <p class="text-2xl font-semibold"><?= number_format($unassignedCount) ?></p>
+                    </div>
+                    <div class="bg-white/20 rounded-xl px-4 py-2 text-center">
+                        <p class="text-xs uppercase opacity-80">Quá hẹn</p>
+                        <p class="text-2xl font-semibold text-pink-200"><?= number_format($overdueUnassignedCount) ?></p>
                     </div>
                     <a href="./components/add_assignment.php" class="inline-flex items-center gap-2 bg-white text-indigo-700 font-semibold px-4 py-2 rounded-xl shadow transition hover:-translate-y-0.5">
                         <span>Thêm phân công</span>
@@ -414,7 +427,11 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                             <p class="text-xs text-gray-500">KT: <?= formatDateTime($row['THOI_GIAN_KET_THUC']) ?></p>
                                         </td>
                                         <td class="px-3 py-3">
-                                            <p class="text-sm text-gray-700" title="<?= htmlEscape($row['DIA_CHI_HEN']) ?>"><?= htmlEscape($row['DIA_CHI_HEN']) ?></p>
+                                            <?php 
+                                                $address = $row['DIA_CHI_HEN'] ?? '';
+                                                $displayAddress = mb_strlen($address) > 50 ? mb_substr($address, 0, 50) . '...' : $address;
+                                            ?>
+                                            <p class="text-sm text-gray-700" title="<?= htmlEscape($address) ?>"><?= htmlEscape($displayAddress) ?></p>
                                         </td>
                                         <td class="px-3 py-3">
                                             <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap <?= $statusMeta['class'] ?>">
@@ -461,17 +478,18 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                     </div>
                 </div>
 
+
                 <div class="bg-white rounded-2xl shadow p-5">
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <h3 class="text-lg font-semibold text-gray-800">Lịch hẹn chờ phân công</h3>
-                            <p class="text-sm text-gray-500"><?= $unassignedCount ?> lịch chưa có nhân sự</p>
+                            <p class="text-sm text-gray-500"><?= $unassignedCount ?> lịch chưa quá hạn</p>
                         </div>
                         <span class="px-3 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-700">Ưu tiên</span>
                     </div>
-                    <?php if ($unassignedList && $unassignedListCount > 0): ?>
+                    <?php if ($unassignedCount > 0): ?>
                         <ul class="divide-y divide-gray-100">
-                            <?php while ($item = mysqli_fetch_assoc($unassignedList)): ?>
+                            <?php foreach ($unassignedListArr as $item): ?>
                                 <li class="py-3 flex items-start justify-between gap-3">
                                     <div>
                                         <p class="font-semibold text-gray-800">Lịch #<?= htmlEscape($item['ID_LICHHEN']) ?></p>
@@ -480,10 +498,36 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                     </div>
                                     <a href="./components/add_assignment.php?scheduleId=<?= $item['ID_LICHHEN'] ?>" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Phân công</a>
                                 </li>
-                            <?php endwhile; ?>
+                            <?php endforeach; ?>
                         </ul>
                     <?php else: ?>
                         <p class="text-sm text-gray-500">Tất cả lịch đã được xử lý.</p>
+                    <?php endif; ?>
+                </div>
+
+                <div class="bg-white rounded-2xl shadow p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h3 class="text-lg font-semibold text-pink-800">Lịch quá hẹn</h3>
+                            <p class="text-sm text-pink-600"><?= $overdueUnassignedCount ?> lịch chưa phân công, đã quá hạn</p>
+                        </div>
+                        <span class="px-3 py-1 text-xs font-semibold rounded-full bg-pink-100 text-pink-700">Cảnh báo</span>
+                    </div>
+                    <?php if ($overdueUnassignedCount > 0): ?>
+                        <ul class="divide-y divide-pink-100">
+                            <?php foreach ($overdueUnassignedListArr as $item): ?>
+                                <li class="py-3 flex items-start justify-between gap-3">
+                                    <div>
+                                        <p class="font-semibold text-pink-800">Lịch #<?= htmlEscape($item['ID_LICHHEN']) ?></p>
+                                        <p class="text-xs text-pink-600"><?= formatDateTime($item['THOI_GIAN_BAT_DAU']) ?></p>
+                                        <p class="text-xs text-pink-500 truncate max-w-[200px]" title="<?= htmlEscape($item['DIA_CHI_HEN']) ?>"><?= htmlEscape($item['DIA_CHI_HEN']) ?></p>
+                                    </div>
+                                    <a href="./components/add_assignment.php?scheduleId=<?= $item['ID_LICHHEN'] ?>" class="text-xs font-semibold text-pink-600 hover:text-pink-800">Phân công</a>
+                                </li>
+                            <?php endforeach; ?>
+                        </ul>
+                    <?php else: ?>
+                        <p class="text-sm text-gray-500">Không có lịch quá hạn.</p>
                     <?php endif; ?>
                 </div>
 

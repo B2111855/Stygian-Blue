@@ -14,13 +14,19 @@ class GeminiClient
 
     public function __construct(?string $apiKey = null, string $model = 'models/gemini-2.5-flash')
     {
+        // Resolve API key in order of precedence:
+        // 1. Explicit constructor argument
+        // 2. GEMINI_API_KEY (env array or getenv)
+        // 3. GOOGLE_API_KEY (unified key for Google services)
         $resolvedKey = $apiKey
-            ?? $_ENV['GEMINI_API_KEY']
+            ?? ($_ENV['GEMINI_API_KEY'] ?? null)
+            ?? ($_ENV['GOOGLE_API_KEY'] ?? null)
             ?? getenv('GEMINI_API_KEY')
+            ?? getenv('GOOGLE_API_KEY')
             ?? '';
 
         if ($resolvedKey === '') {
-            throw new RuntimeException('Gemini API key is missing. Set GEMINI_API_KEY in your environment.');
+            throw new RuntimeException('Gemini API key is missing. Set GOOGLE_API_KEY or GEMINI_API_KEY in your environment.');
         }
 
         $this->apiKey = $resolvedKey;
