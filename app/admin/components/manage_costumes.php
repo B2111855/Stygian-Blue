@@ -1,37 +1,74 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 date_default_timezone_set('Asia/Ho_Chi_Minh');
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+$csrf_init_marker = true; // marker (will be removed if needed)
+// CSRF protection setup
+if (empty($_SESSION['csrf_token'])) {
+    try {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    } catch (Exception $e) {
+        $_SESSION['csrf_token'] = md5(uniqid((string)mt_rand(), true));
+    }
+}
+
+function csrf_token(): string
+{
+    return $_SESSION['csrf_token'] ?? '';
+}
+
+function require_valid_csrf_action(string $action): void
+{
+    $protected = ['add_category','add_costume','edit_costume','delete_costume'];
+    if (!in_array($action, $protected, true)) {
+        return;
+    }
+    $posted = $_POST['csrf'] ?? '';
+    $stored = $_SESSION['csrf_token'] ?? '';
+    if (!is_string($posted) || $posted === '' || $stored === '' || !hash_equals($stored, $posted)) {
+        redirect_costume('error', 'CSRF token không hợp lệ, vui lòng thử lại.');
+    }
+}
+
 $statusCatalog = [
-    'san_sang' => [
+    'available' => [
         'label'       => 'Sẵn sàng',
         'badge_class' => 'bg-emerald-100 text-emerald-700',
         'dot_class'   => 'bg-emerald-500',
         'description' => 'Trang phục đã sẵn sàng phục vụ khách hàng.',
     ],
-    'dang_thue' => [
+    'rented' => [
         'label'       => 'Đang thuê',
         'badge_class' => 'bg-blue-100 text-blue-700',
         'dot_class'   => 'bg-blue-500',
         'description' => 'Trang phục đang ở cùng khách hoặc chuẩn bị giao.',
     ],
-    'bao_tri' => [
+    'maintenance' => [
         'label'       => 'Bảo trì',
         'badge_class' => 'bg-amber-100 text-amber-700',
         'dot_class'   => 'bg-amber-500',
         'description' => 'Cần giặt ủi, sửa chữa hoặc kiểm tra chất lượng.',
     ],
-    'ngung' => [
+    'retired' => [
         'label'       => 'Ngưng hoạt động',
         'badge_class' => 'bg-gray-200 text-gray-600',
         'dot_class'   => 'bg-gray-500',
         'description' => 'Tạm dừng khai thác hoặc đã loại bỏ khỏi kho.',
     ],
 ];
+
+// Legacy aliases to chấp nhận dữ liệu cũ
+$statusCatalog['san_sang']  = $statusCatalog['available'];
+$statusCatalog['dang_thue'] = $statusCatalog['rented'];
+$statusCatalog['bao_tri']   = $statusCatalog['maintenance'];
+$statusCatalog['ngung']     = $statusCatalog['retired'];
+
+$statusSelectableKeys = ['available', 'rented', 'maintenance', 'retired'];
 
 function status_meta(array $catalog, string $value): array
 {
@@ -47,16 +84,17 @@ function status_meta(array $catalog, string $value): array
     ];
 }
 
-function redirect_costume(string $type, string $message): void
+function redirect_costume(string $type, string $message, ?string $returnQuery = null): void
 {
     $_SESSION[$type] = $message;
+    $suffix = ($returnQuery && $returnQuery !== '') ? ('&' . $returnQuery) : '';
+    $target = '?page=costumes' . $suffix;
     if (!headers_sent()) {
-        header('Location: ?page=costumes');
+        header('Location: ' . $target);
         exit;
     }
-
-    echo '<script>window.location.href = "?page=costumes";</script>';
-    echo '<noscript><meta http-equiv="refresh" content="0;url=?page=costumes"></noscript>';
+    echo '<script>window.location.href = "' . htmlspecialchars($target, ENT_QUOTES) . '";</script>'; // fallback
+    echo '<noscript><meta http-equiv="refresh" content="0;url=' . htmlspecialchars($target, ENT_QUOTES) . '"></noscript>';
     exit;
 }
 
@@ -117,10 +155,64 @@ function fetch_scope_branches(mysqli $conn, array $scope): array
 function resolve_category(mysqli $conn): ?int
 {
     if (isset($_POST['ID_LOAI']) && $_POST['ID_LOAI'] !== '') {
-        return (int) $_POST['ID_LOAI'];
+        $categoryId = (int) $_POST['ID_LOAI'];
+        $result     = $conn->query('SELECT TRANG_THAI FROM trang_phuc_loai WHERE ID_LOAI = ' . $categoryId . ' LIMIT 1');
+        if (!$result || !$result->num_rows) {
+            redirect_costume('error', 'Loại trang phục đã chọn không tồn tại.');
+        }
+
+        $row = $result->fetch_assoc();
+        if (($row['TRANG_THAI'] ?? '') !== 'active') {
+            redirect_costume('error', 'Loại trang phục đã bị ngưng hoạt động, vui lòng chọn loại khác.');
+        }
+
+        return $categoryId;
     }
 
     return null;
+}
+
+function ensure_branch_exists(mysqli $conn, int $branchId): void
+{
+    static $branchCache = [];
+
+    if (isset($branchCache[$branchId])) {
+        if ($branchCache[$branchId] === false) {
+            redirect_costume('error', 'Chi nhánh đã chọn không còn tồn tại.');
+        }
+        return;
+    }
+
+    $result = $conn->query('SELECT ID_CN FROM chi_nhanh WHERE ID_CN = ' . $branchId . ' LIMIT 1');
+    if (!$result || !$result->num_rows) {
+        $branchCache[$branchId] = false;
+        redirect_costume('error', 'Chi nhánh đã chọn không tồn tại hoặc đã bị xóa.');
+    }
+
+    $branchCache[$branchId] = true;
+}
+
+function assert_unique_costume(mysqli $conn, int $branchId, string $name, string $size, string $color, ?int $excludeId = null): void
+{
+    $nameEsc  = mysqli_real_escape_string($conn, $name);
+    $sizeEsc  = mysqli_real_escape_string($conn, $size);
+    $colorEsc = mysqli_real_escape_string($conn, $color);
+
+    $query = "SELECT ID_TRANG_PHUC FROM trang_phuc WHERE ID_CN = $branchId"
+        . " AND LOWER(TEN) = LOWER('$nameEsc')"
+        . " AND LOWER(COALESCE(SIZE, '')) = LOWER('$sizeEsc')"
+        . " AND LOWER(COALESCE(MAU_SAC, '')) = LOWER('$colorEsc')";
+
+    if ($excludeId) {
+        $query .= ' AND ID_TRANG_PHUC <> ' . (int) $excludeId;
+    }
+
+    $query .= ' LIMIT 1';
+
+    $dup = $conn->query($query);
+    if ($dup && $dup->num_rows) {
+        redirect_costume('error', 'Trang phục có cùng tên/kích thước/màu tại chi nhánh đã tồn tại.');
+    }
 }
 
 function locate_project_root(): ?string
@@ -128,9 +220,14 @@ function locate_project_root(): ?string
     $documentRoot = $_SERVER['DOCUMENT_ROOT'] ?? '';
     if ($documentRoot !== '') {
         $normalized = rtrim(str_replace('\\\\', '/', $documentRoot), '/');
-        if (substr($normalized, -13) !== 'Stygian-Blue' && is_dir($normalized . '/Stygian-Blue/public')) {
+        // Support both repo folder names: StygianBlue (current) or Stygian-Blue (legacy naming)
+        if (is_dir($normalized . '/StygianBlue/public')) {
+            return $normalized . '/StygianBlue';
+        }
+        if (is_dir($normalized . '/Stygian-Blue/public')) {
             return $normalized . '/Stygian-Blue';
         }
+        // Direct public under document root (unlikely here but keep fallback)
         if (is_dir($normalized . '/public')) {
             return $normalized;
         }
@@ -170,13 +267,27 @@ function upload_costume_cover(array $file, string $fallbackName): ?string
         return null;
     }
 
+    // Basic whitelist validation
     $originalName = basename($file['name']);
-    $extension    = pathinfo($originalName, PATHINFO_EXTENSION);
+    $extension    = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
     $baseName     = pathinfo($originalName, PATHINFO_FILENAME);
-    $safeName     = preg_replace('/[^A-Za-z0-9_\\-\.]+/', '_', $baseName);
+    $safeName     = preg_replace('/[^A-Za-z0-9_.-]+/', '_', $baseName);
+
+    $allowedExt = ['jpg','jpeg','png','gif','webp'];
+    if ($extension !== '' && !in_array($extension, $allowedExt, true)) {
+        return null; // silently ignore unsupported type
+    }
+    // MIME check if provided
+    if (isset($file['type']) && $file['type'] !== '') {
+        $mime = strtolower($file['type']);
+        $allowedMime = ['image/jpeg','image/png','image/gif','image/webp'];
+        if (!in_array($mime, $allowedMime, true)) {
+            return null;
+        }
+    }
 
     if ($safeName === '' && $fallbackName !== '') {
-        $safeName = preg_replace('/[^A-Za-z0-9_\\-\.]+/', '_', $fallbackName);
+        $safeName = preg_replace('/[^A-Za-z0-9_.-]+/', '_', $fallbackName);
     }
 
     $filename = ($safeName !== '' ? $safeName : 'cover') . '_' . time();
@@ -190,12 +301,33 @@ function upload_costume_cover(array $file, string $fallbackName): ?string
     }
 
     $targetDir = rtrim($rootPath, '/') . '/public/images/trangphuc/';
-    if (!is_dir($targetDir) && !mkdir($targetDir, 0777, true)) {
-        return null;
+    if (!is_dir($targetDir)) {
+        // Attempt to create directory tree if missing
+        if (!mkdir($targetDir, 0777, true) && !is_dir($targetDir)) {
+            return null;
+        }
+    }
+    // Extra safety: ensure writable (Windows may ignore 0777) 
+    if (!is_writable($targetDir)) {
+        @chmod($targetDir, 0777);
     }
 
     $targetPath = $targetDir . $filename;
-    if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
+    $tmp = $file['tmp_name'];
+    $moved = false;
+    if (is_uploaded_file($tmp)) {
+        $moved = move_uploaded_file($tmp, $targetPath);
+    }
+    if (!$moved) {
+        // Fallback attempts in case is_uploaded_file fails under some Windows configs
+        if (@rename($tmp, $targetPath)) {
+            $moved = true;
+        } elseif (@copy($tmp, $targetPath)) {
+            $moved = true;
+            @unlink($tmp);
+        }
+    }
+    if (!$moved || !is_file($targetPath)) {
         return null;
     }
 
@@ -273,7 +405,7 @@ function upload_costume_gallery(array $files, string $fallbackName): array
 function fetch_categories(mysqli $conn): array
 {
     $categories = [];
-    $result     = $conn->query('SELECT ID_LOAI, TEN_LOAI FROM trang_phuc_loai WHERE IS_ACTIVE = 1 ORDER BY TEN_LOAI');
+    $result     = $conn->query("SELECT ID_LOAI, TEN_LOAI FROM trang_phuc_loai WHERE TRANG_THAI = 'active' ORDER BY TEN_LOAI");
     if ($result) {
         while ($row = $result->fetch_assoc()) {
             $categories[(int) $row['ID_LOAI']] = $row['TEN_LOAI'];
@@ -294,7 +426,7 @@ function build_filter_state(mysqli $conn, array $scope, array $branches, array $
     $conditions = [];
     if ($search !== '') {
         $escaped = mysqli_real_escape_string($conn, $search);
-        $conditions[] = "(tp.TEN_TP LIKE '%$escaped%' OR tp.MAU LIKE '%$escaped%' OR tp.SIZE LIKE '%$escaped%' OR tp.GHI_CHU LIKE '%$escaped%')";
+        $conditions[] = "(tp.TEN LIKE '%$escaped%' OR tp.MAU_SAC LIKE '%$escaped%' OR tp.SIZE LIKE '%$escaped%' OR tp.GHI_CHU LIKE '%$escaped%')";
     }
 
     if ($scope['mode'] === 'branch' && $scope['branch_id'] > 0) {
@@ -312,13 +444,17 @@ function build_filter_state(mysqli $conn, array $scope, array $branches, array $
 
     if ($filterStatus !== '' && isset($catalog[$filterStatus])) {
         $escaped = mysqli_real_escape_string($conn, $filterStatus);
-        $conditions[] = "tp.TINH_TRANG = '$escaped'";
+        $conditions[] = "tp.TRANG_THAI = '$escaped'";
     } else {
         $filterStatus = '';
     }
 
-    if ($filterActive !== '') {
-        $conditions[] = $filterActive === '1' ? 'tp.IS_ACTIVE = 1' : 'tp.IS_ACTIVE = 0';
+    if ($filterActive === '1') {
+        $conditions[] = "tp.TRANG_THAI = 'available'";
+    } elseif ($filterActive === '0') {
+        $conditions[] = "tp.TRANG_THAI <> 'available'";
+    } else {
+        $filterActive = '';
     }
 
     return [
@@ -337,10 +473,23 @@ function fetch_edit_context(mysqli $conn, int $id, bool $restrictBranch, int $br
     $history = [];
 
     $editSql = "
-        SELECT tp.*, cn.TEN_CN, tl.TEN_LOAI,
-               price.DON_GIA AS DON_GIA_HIEN_TAI,
-               price.NGAY_GIO AS GIA_CAP_NHAT,
-               cover.URL AS COVER_URL
+        SELECT
+            tp.ID_TRANG_PHUC AS ID_TP,
+            tp.TEN AS TEN_TP,
+            tp.SIZE,
+            tp.MAU_SAC AS MAU,
+            tp.ID_CN,
+            tp.ID_LOAI,
+            tp.TRANG_THAI AS TINH_TRANG,
+            tp.GHI_CHU,
+            tp.GIA_THUE,
+            tp.CREATED_AT,
+            tp.UPDATED_AT,
+            cn.TEN_CN,
+            tl.TEN_LOAI,
+            COALESCE(price.DON_GIA, tp.GIA_THUE) AS DON_GIA_HIEN_TAI,
+            price.NGAY_GIO AS GIA_CAP_NHAT,
+            cover.URL AS COVER_URL
         FROM trang_phuc tp
         LEFT JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN
         LEFT JOIN trang_phuc_loai tl ON tl.ID_LOAI = tp.ID_LOAI
@@ -352,14 +501,14 @@ function fetch_edit_context(mysqli $conn, int $id, bool $restrictBranch, int $br
                 FROM don_gia_trang_phuc
                 GROUP BY ID_TP
             ) latest ON latest.ID_TP = d1.ID_TP AND latest.NGAY_GIO = d1.NGAY_GIO
-        ) price ON price.ID_TP = tp.ID_TP
+        ) price ON price.ID_TP = tp.ID_TRANG_PHUC
         LEFT JOIN (
             SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY UPDATED_AT DESC), ',', 1) AS URL
             FROM trang_phuc_hinh_anh
             WHERE IS_ACTIVE = 1 AND IS_COVER = 1
             GROUP BY ID_TP
-        ) cover ON cover.ID_TP = tp.ID_TP
-        WHERE tp.ID_TP = $id";
+        ) cover ON cover.ID_TP = tp.ID_TRANG_PHUC
+        WHERE tp.ID_TRANG_PHUC = $id";
 
     if ($restrictBranch) {
         $editSql .= ' AND tp.ID_CN = ' . $branchId;
@@ -394,23 +543,24 @@ function fetch_costume_dataset(mysqli $conn, string $where, int $limit, int $off
                 FROM don_gia_trang_phuc
                 GROUP BY ID_TP
             ) latest ON latest.ID_TP = d1.ID_TP AND latest.NGAY_GIO = d1.NGAY_GIO
-        ) price ON price.ID_TP = tp.ID_TP
+        ) price ON price.ID_TP = tp.ID_TRANG_PHUC
         LEFT JOIN (
             SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY UPDATED_AT DESC), ',', 1) AS URL
             FROM trang_phuc_hinh_anh
             WHERE IS_ACTIVE = 1 AND IS_COVER = 1
             GROUP BY ID_TP
-        ) cover ON cover.ID_TP = tp.ID_TP
+        ) cover ON cover.ID_TP = tp.ID_TRANG_PHUC
         $where";
 
     $totalResult = $conn->query('SELECT COUNT(*) AS total ' . $baseQuery);
     $totalRows   = $totalResult ? (int) $totalResult->fetch_assoc()['total'] : 0;
     $totalPages  = max(1, (int) ceil($totalRows / $limit));
 
-    $listSql = 'SELECT tp.ID_TP, tp.TEN_TP, tp.SIZE, tp.MAU, tp.TINH_TRANG, tp.IS_ACTIVE,'
-        . ' tp.NGAY_GIAT_CUOI, tp.GHI_CHU, tp.UPDATED_AT,'
+    $listSql = 'SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.TRANG_THAI AS TINH_TRANG,'
+        . " CASE WHEN tp.TRANG_THAI = 'retired' THEN 0 ELSE 1 END AS IS_ACTIVE,"
+        . ' tp.GHI_CHU, tp.GIA_THUE, tp.UPDATED_AT,'
         . ' cn.TEN_CN, tl.TEN_LOAI,'
-        . ' price.DON_GIA, price.NGAY_GIO,'
+        . ' COALESCE(price.DON_GIA, tp.GIA_THUE) AS DON_GIA, price.NGAY_GIO,'
         . ' cover.URL AS COVER_URL '
         . $baseQuery
         . ' ORDER BY tp.UPDATED_AT DESC LIMIT ' . $limit . ' OFFSET ' . $offset;
@@ -433,14 +583,14 @@ function fetch_insights(mysqli $conn, string $where): array
         'active'    => ['1' => 0, '0' => 0],
     ];
 
-    $statusRes = $conn->query('SELECT tp.TINH_TRANG, COUNT(*) AS total FROM trang_phuc tp ' . ($where !== '' ? $where : '') . ' GROUP BY tp.TINH_TRANG');
+    $statusRes = $conn->query('SELECT tp.TRANG_THAI, COUNT(*) AS total FROM trang_phuc tp ' . ($where !== '' ? $where : '') . ' GROUP BY tp.TRANG_THAI');
     if ($statusRes) {
         while ($row = $statusRes->fetch_assoc()) {
-            $insights['by_status'][$row['TINH_TRANG']] = (int) $row['total'];
+            $insights['by_status'][$row['TRANG_THAI']] = (int) $row['total'];
         }
     }
 
-    $activeRes = $conn->query('SELECT tp.IS_ACTIVE, COUNT(*) AS total FROM trang_phuc tp ' . ($where !== '' ? $where : '') . ' GROUP BY tp.IS_ACTIVE');
+    $activeRes = $conn->query('SELECT CASE WHEN tp.TRANG_THAI = "retired" THEN "0" ELSE "1" END AS IS_ACTIVE, COUNT(*) AS total FROM trang_phuc tp ' . ($where !== '' ? $where : '') . ' GROUP BY IS_ACTIVE');
     if ($activeRes) {
         while ($row = $activeRes->fetch_assoc()) {
             $insights['active'][(string) $row['IS_ACTIVE']] = (int) $row['total'];
@@ -463,18 +613,21 @@ $allowedBranches = $branchesModel['allowed'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
+    require_valid_csrf_action($action);
 
     if ($action === 'add_category') {
         $tenLoai  = trim($_POST['TEN_LOAI'] ?? '');
         $moTaLoai = trim($_POST['MOTA'] ?? '');
 
+        $returnQuery = $_POST['return_query'] ?? '';
         if ($tenLoai === '') {
-            redirect_costume('error', 'Vui lòng nhập tên loại trang phục.');
+            redirect_costume('error', 'Vui lòng nhập tên loại trang phục.', $returnQuery);
         }
 
-        $stmt = $conn->prepare('SELECT ID_LOAI, IS_ACTIVE FROM trang_phuc_loai WHERE LOWER(TEN_LOAI) = LOWER(?) LIMIT 1');
+        $stmt = $conn->prepare('SELECT ID_LOAI, TRANG_THAI FROM trang_phuc_loai WHERE LOWER(TEN_LOAI) = LOWER(?) LIMIT 1');
         if (!$stmt) {
             redirect_costume('error', 'Không thể kiểm tra loại trang phục: ' . $conn->error);
+            redirect_costume('error', 'Không thể kiểm tra loại trang phục: ' . $conn->error, $returnQuery);
         }
 
         $stmt->bind_param('s', $tenLoai);
@@ -485,12 +638,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($hasExisting) {
             $idLoaiExisting = (int) $existingId;
-            $wasInactive    = (int) $existingActive === 0;
+            $wasInactive    = strtolower((string) $existingActive) !== 'active';
 
             if ($wasInactive || $moTaLoai !== '') {
-                $updateSql = 'UPDATE trang_phuc_loai SET UPDATED_AT = NOW(), IS_ACTIVE = 1';
+                $updateSql = "UPDATE trang_phuc_loai SET UPDATED_AT = NOW(), TRANG_THAI = 'active'";
                 if ($moTaLoai !== '') {
-                    $updateSql .= ', MOTA = ?';
+                    $updateSql .= ', MO_TA = ?';
                 }
                 $updateSql .= ' WHERE ID_LOAI = ?';
 
@@ -510,11 +663,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             redirect_costume('success', 'Loại trang phục đã tồn tại được kích hoạt sử dụng.');
+            redirect_costume('success', 'Loại trang phục đã tồn tại được kích hoạt sử dụng.', $returnQuery);
         }
 
-        $insertStmt = $conn->prepare('INSERT INTO trang_phuc_loai (TEN_LOAI, MOTA, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES (?, ?, 1, NOW(), NOW())');
+        $insertStmt = $conn->prepare("INSERT INTO trang_phuc_loai (TEN_LOAI, MO_TA, TRANG_THAI, CREATED_AT, UPDATED_AT) VALUES (?, ?, 'active', NOW(), NOW())");
         if (!$insertStmt) {
             redirect_costume('error', 'Không thể thêm loại trang phục mới: ' . $conn->error);
+            redirect_costume('error', 'Không thể thêm loại trang phục mới: ' . $conn->error, $returnQuery);
         }
 
         $insertStmt->bind_param('ss', $tenLoai, $moTaLoai);
@@ -522,119 +677,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $insertStmt->close();
 
         redirect_costume('success', 'Đã thêm loại trang phục mới thành công.');
+        redirect_costume('success', 'Đã thêm loại trang phục mới thành công.', $returnQuery);
     }
 
     if ($action === 'add_costume') {
         $tenTp     = trim($_POST['TEN_TP'] ?? '');
         $size      = trim($_POST['SIZE'] ?? '');
         $mau       = trim($_POST['MAU'] ?? '');
-        $tinhTrang = $_POST['TINH_TRANG'] ?? 'san_sang';
+        $tinhTrang = $_POST['TINH_TRANG'] ?? 'available';
         $donGia    = (int) ($_POST['DON_GIA'] ?? 0);
-        $ngayGiat  = trim($_POST['NGAY_GIAT_CUOI'] ?? '');
         $ghiChu    = trim($_POST['GHI_CHU'] ?? '');
-
-        if ($tenTp === '') {
-            redirect_costume('error', 'Vui lòng nhập tên trang phục.');
-        }
-
+        $returnQuery = $_POST['return_query'] ?? '';
+        if ($tenTp === '') { redirect_costume('error', 'Vui lòng nhập tên trang phục.', $returnQuery); }
         $rawBranch        = $_POST['ID_CN'] ?? '';
         $applyAllBranches = !$isBranchScope && $rawBranch === 'all';
         $targetBranches   = [];
-
         if ($applyAllBranches) {
-            $targetBranches = array_values(array_filter(array_map('intval', $allowedBranches), static function ($branchId) {
-                return (int) $branchId > 0;
-            }));
-
-            if (empty($targetBranches)) {
-                redirect_costume('error', 'Không tìm thấy danh sách chi nhánh hợp lệ để thêm trang phục.');
-            }
+            $targetBranches = array_values(array_filter(array_map('intval', $allowedBranches), static fn($branchId)=> (int)$branchId>0));
+            if (empty($targetBranches)) { redirect_costume('error', 'Không tìm thấy danh sách chi nhánh hợp lệ để thêm trang phục.', $returnQuery); }
         } else {
-            $idCn = $isBranchScope ? $scope['branch_id'] : (int) $rawBranch;
-            if ($idCn <= 0 || (!in_array($idCn, $allowedBranches, true) && !$isBranchScope)) {
-                redirect_costume('error', 'Vui lòng chọn chi nhánh hợp lệ.');
-            }
-            $targetBranches = [(int) $idCn];
+            $idCn = $isBranchScope ? $scope['branch_id'] : (int)$rawBranch;
+            if ($idCn <= 0 || (!in_array($idCn, $allowedBranches, true) && !$isBranchScope)) { redirect_costume('error', 'Vui lòng chọn chi nhánh hợp lệ.', $returnQuery); }
+            $targetBranches = [$idCn];
         }
-
-        if ($donGia <= 0) {
-            redirect_costume('error', 'Đơn giá phải lớn hơn 0.');
-        }
-
-        if (!isset($statusCatalog[$tinhTrang])) {
-            $tinhTrang = 'san_sang';
-        }
-
+        if ($donGia <= 0) { redirect_costume('error', 'Đơn giá phải lớn hơn 0.', $returnQuery); }
+        if (!isset($statusCatalog[$tinhTrang])) { $tinhTrang = 'available'; }
         $idLoai      = resolve_category($conn);
         $tenEsc      = mysqli_real_escape_string($conn, $tenTp);
         $sizeEsc     = mysqli_real_escape_string($conn, $size);
         $mauEsc      = mysqli_real_escape_string($conn, $mau);
         $tinhEsc     = mysqli_real_escape_string($conn, $tinhTrang);
         $ghiChuSql   = $ghiChu !== '' ? "'" . mysqli_real_escape_string($conn, $ghiChu) . "'" : 'NULL';
-        $ngayGiatSql = $ngayGiat !== '' ? "'" . mysqli_real_escape_string($conn, $ngayGiat) . "'" : 'NULL';
         $idLoaiSql   = $idLoai ? $idLoai : 'NULL';
-
         $coverFile = $_FILES['COVER_IMAGE'] ?? [];
         $coverPath = null;
         if (!empty($coverFile) && isset($coverFile['tmp_name']) && ($coverFile['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
             $coverPath = upload_costume_cover($coverFile, $tenTp);
-            if ($coverPath === null) {
-                redirect_costume('error', 'Không thể tải ảnh bìa lên, vui lòng thử lại.');
-            }
+            if ($coverPath === null) { redirect_costume('error', 'Không thể tải ảnh bìa lên, vui lòng thử lại.', $returnQuery); }
         }
-
         $galleryResult = upload_costume_gallery($_FILES['GALLERY_IMAGES'] ?? [], $tenTp);
         if ($galleryResult['error'] !== null) {
-            if ($coverPath) {
-                remove_uploaded_costume_files([$coverPath]);
-            }
-            redirect_costume('error', $galleryResult['error']);
+            if ($coverPath) { remove_uploaded_costume_files([$coverPath]); }
+            redirect_costume('error', $galleryResult['error'], $returnQuery);
         }
-
         $galleryPaths = $galleryResult['paths'];
-
         $coverEsc = $coverPath ? mysqli_real_escape_string($conn, $coverPath) : null;
         $altEsc   = $coverPath ? mysqli_real_escape_string($conn, 'Ảnh bìa trang phục ' . $tenTp) : null;
         $galleryEscaped = [];
         foreach ($galleryPaths as $index => $path) {
-            $galleryEscaped[] = [
-                'url'  => mysqli_real_escape_string($conn, $path),
-                'alt'  => mysqli_real_escape_string($conn, 'Ảnh trang phục ' . $tenTp . ' #' . ($index + 1)),
-            ];
+            $galleryEscaped[] = [ 'url' => mysqli_real_escape_string($conn,$path), 'alt' => mysqli_real_escape_string($conn,'Ảnh trang phục ' . $tenTp . ' #' . ($index+1)) ];
         }
-
         foreach ($targetBranches as $branchId) {
-            $branchId = (int) $branchId;
-            $insert   = "INSERT INTO trang_phuc (ID_CN, ID_LOAI, TEN_TP, SIZE, MAU, TINH_TRANG, NGAY_GIAT_CUOI, GHI_CHU, IS_ACTIVE, CREATED_AT, UPDATED_AT)"
-                . " VALUES ($branchId, $idLoaiSql, '$tenEsc', '$sizeEsc', '$mauEsc', '$tinhEsc', $ngayGiatSql, $ghiChuSql, 1, NOW(), NOW())";
-
-            if (!$conn->query($insert)) {
-                redirect_costume('error', 'Không thể thêm trang phục mới: ' . $conn->error);
-            }
-
-            $idTp = (int) $conn->insert_id;
-            $now  = date('Y-m-d H:i:s');
+            $branchId = (int)$branchId;
+            ensure_branch_exists($conn,$branchId);
+            assert_unique_costume($conn,$branchId,$tenTp,$size,$mau);
+            $insert = "INSERT INTO trang_phuc (ID_CN, ID_LOAI, TEN, SIZE, MAU_SAC, TRANG_THAI, GHI_CHU, GIA_THUE, CREATED_AT, UPDATED_AT) VALUES ($branchId, $idLoaiSql, '$tenEsc', '$sizeEsc', '$mauEsc', '$tinhEsc', $ghiChuSql, $donGia, NOW(), NOW())";
+            if (!$conn->query($insert)) { redirect_costume('error', 'Không thể thêm trang phục mới: ' . $conn->error, $returnQuery); }
+            $idTp = (int)$conn->insert_id;
+            $now = date('Y-m-d H:i:s');
             $conn->query("INSERT INTO don_gia_trang_phuc (ID_TP, NGAY_GIO, DON_GIA) VALUES ($idTp, '$now', $donGia)");
-
             $orderStart = 1;
-            if ($coverPath) {
-                $conn->query("UPDATE trang_phuc_hinh_anh SET IS_COVER = 0 WHERE ID_TP = $idTp");
-                $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '$coverEsc', '$altEsc', $orderStart, 1, 1, NOW(), NOW())");
-                $orderStart++;
-            }
-
-            foreach ($galleryEscaped as $offset => $entry) {
-                $position = $orderStart + $offset;
-                $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '{$entry['url']}', '{$entry['alt']}', $position, 0, 1, NOW(), NOW())");
-            }
-
+            if ($coverPath) { $conn->query("UPDATE trang_phuc_hinh_anh SET IS_COVER = 0 WHERE ID_TP = $idTp"); $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '$coverEsc', '$altEsc', $orderStart, 1, 1, NOW(), NOW())"); $orderStart++; }
+            foreach ($galleryEscaped as $offset => $entry) { $position = $orderStart + $offset; $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '{$entry['url']}', '{$entry['alt']}', $position, 0, 1, NOW(), NOW())"); }
         }
-
-        $successMessage = $applyAllBranches
-            ? 'Đã thêm trang phục mới cho tất cả chi nhánh.'
-            : 'Đã thêm trang phục mới thành công.';
-
-        redirect_costume('success', $successMessage);
+        $successMessage = $applyAllBranches ? 'Đã thêm trang phục mới cho tất cả chi nhánh.' : 'Đã thêm trang phục mới thành công.';
+        redirect_costume('success', $successMessage, $returnQuery);
     }
 
     if ($action === 'edit_costume') {
@@ -643,29 +750,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect_costume('error', 'Trang phục không hợp lệ.');
         }
 
-        if ($isBranchScope) {
-            $check = $conn->query('SELECT ID_TP FROM trang_phuc WHERE ID_TP = ' . $idTp . ' AND ID_CN = ' . (int) $scope['branch_id'] . ' LIMIT 1');
-            if (!$check || !$check->num_rows) {
-                redirect_costume('error', 'Bạn không có quyền chỉnh sửa trang phục thuộc chi nhánh khác.');
-            }
+        $record = $conn->query('SELECT ID_CN FROM trang_phuc WHERE ID_TRANG_PHUC = ' . $idTp . ' LIMIT 1');
+        if (!$record || !$record->num_rows) {
+            redirect_costume('error', 'Trang phục không tồn tại hoặc đã bị xóa.');
+        }
+
+        $recordData = $record->fetch_assoc();
+        if ($isBranchScope && (int) $recordData['ID_CN'] !== (int) $scope['branch_id']) {
+            redirect_costume('error', 'Bạn không có quyền chỉnh sửa trang phục thuộc chi nhánh khác.');
         }
 
         $tenTp     = trim($_POST['TEN_TP'] ?? '');
         $size      = trim($_POST['SIZE'] ?? '');
         $mau       = trim($_POST['MAU'] ?? '');
-        $tinhTrang = $_POST['TINH_TRANG'] ?? 'san_sang';
+        $tinhTrang = $_POST['TINH_TRANG'] ?? 'available';
         $donGia    = isset($_POST['DON_GIA']) && $_POST['DON_GIA'] !== '' ? (int) $_POST['DON_GIA'] : 0;
-        $ngayGiat  = trim($_POST['NGAY_GIAT_CUOI'] ?? '');
         $ghiChu    = trim($_POST['GHI_CHU'] ?? '');
-        $isActive  = isset($_POST['IS_ACTIVE']) ? 1 : 0;
 
         $idCn = $isBranchScope ? $scope['branch_id'] : (int) ($_POST['ID_CN'] ?? 0);
         if ($tenTp === '' || $idCn <= 0 || (!in_array($idCn, $allowedBranches, true) && !$isBranchScope)) {
             redirect_costume('error', 'Vui lòng nhập đầy đủ tên trang phục và chọn chi nhánh hợp lệ.');
         }
 
+        ensure_branch_exists($conn, $idCn);
+
         if (!isset($statusCatalog[$tinhTrang])) {
-            $tinhTrang = 'san_sang';
+            $tinhTrang = 'available';
         }
 
         $idLoai      = resolve_category($conn);
@@ -674,12 +784,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $mauEsc      = mysqli_real_escape_string($conn, $mau);
         $tinhEsc     = mysqli_real_escape_string($conn, $tinhTrang);
         $ghiChuSql   = $ghiChu !== '' ? "'" . mysqli_real_escape_string($conn, $ghiChu) . "'" : 'NULL';
-        $ngayGiatSql = $ngayGiat !== '' ? "'" . mysqli_real_escape_string($conn, $ngayGiat) . "'" : 'NULL';
         $idLoaiSql   = $idLoai ? $idLoai : 'NULL';
+        $giaThueSql  = $donGia > 0 ? (string) $donGia : 'GIA_THUE';
 
-        $update = "UPDATE trang_phuc SET ID_CN = $idCn, ID_LOAI = $idLoaiSql, TEN_TP = '$tenEsc', SIZE = '$sizeEsc', MAU = '$mauEsc',"
-            . " TINH_TRANG = '$tinhEsc', NGAY_GIAT_CUOI = $ngayGiatSql, GHI_CHU = $ghiChuSql, IS_ACTIVE = $isActive, UPDATED_AT = NOW()"
-            . " WHERE ID_TP = $idTp";
+        assert_unique_costume($conn, $idCn, $tenTp, $size, $mau, $idTp);
+
+        $update = "UPDATE trang_phuc SET ID_CN = $idCn, ID_LOAI = $idLoaiSql, TEN = '$tenEsc', SIZE = '$sizeEsc', MAU_SAC = '$mauEsc',"
+            . " TRANG_THAI = '$tinhEsc', GHI_CHU = $ghiChuSql, GIA_THUE = $giaThueSql, UPDATED_AT = NOW()"
+            . " WHERE ID_TRANG_PHUC = $idTp";
         if (!$conn->query($update)) {
             redirect_costume('error', 'Không thể cập nhật trang phục: ' . $conn->error);
         }
@@ -698,38 +810,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $coverEsc = mysqli_real_escape_string($conn, $coverPath);
             $alt      = 'Ảnh bìa trang phục ' . $tenTp;
             $altEsc   = mysqli_real_escape_string($conn, $alt);
+            // Đẩy ảnh bìa mới về vị trí 1, các ảnh khác dời thứ tự lần lượt
             $conn->query("UPDATE trang_phuc_hinh_anh SET IS_COVER = 0 WHERE ID_TP = $idTp");
             $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '$coverEsc', '$altEsc', 1, 1, 1, NOW(), NOW())");
         }
 
-        redirect_costume('success', 'Đã cập nhật trang phục thành công.');
-    }
-}
-if (isset($_GET['delete'])) {
-    $deleteId = (int) $_GET['delete'];
-    if ($deleteId > 0) {
-        if ($isBranchScope) {
-            $check = $conn->query('SELECT ID_TP FROM trang_phuc WHERE ID_TP = ' . $deleteId . ' AND ID_CN = ' . (int) $scope['branch_id'] . ' LIMIT 1');
-            if (!$check || !$check->num_rows) {
-                redirect_costume('error', 'Bạn không có quyền xóa trang phục thuộc chi nhánh khác.');
+        // Ảnh bổ sung mới (nếu có)
+        $galleryUpload = upload_costume_gallery($_FILES['GALLERY_IMAGES'] ?? [], $tenTp);
+        if (!empty($galleryUpload['paths'])) {
+            $maxOrderRes = $conn->query("SELECT COALESCE(MAX(THU_TU),0) AS max_order FROM trang_phuc_hinh_anh WHERE ID_TP = $idTp");
+            $maxOrder = 0;
+            if ($maxOrderRes && $maxOrderRes->num_rows) {
+                $maxOrder = (int) $maxOrderRes->fetch_assoc()['max_order'];
+            }
+            foreach ($galleryUpload['paths'] as $idx => $path) {
+                $urlEsc = mysqli_real_escape_string($conn, $path);
+                $alt    = 'Ảnh bổ sung ' . $tenTp . ' #' . ($idx + 1);
+                $altEsc = mysqli_real_escape_string($conn, $alt);
+                $order  = $maxOrder + $idx + 1; // tiếp nối thứ tự hiện có
+                $conn->query("INSERT INTO trang_phuc_hinh_anh (ID_TP, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES ($idTp, '$urlEsc', '$altEsc', $order, 0, 1, NOW(), NOW())");
             }
         }
 
-        $check = $conn->query("SELECT COUNT(*) AS cnt
-            FROM don_thue_trang_phuc_ct ct
-            JOIN don_thue_trang_phuc ttp ON ct.ID_TTP = ttp.ID_TTP
-            WHERE ct.ID_TP = $deleteId AND ttp.TRANG_THAI IN ('cho_duyet','da_duyet','dang_thue')");
+        redirect_costume('success', 'Đã cập nhật trang phục thành công.', $returnQuery);
+    }
+    if ($action === 'delete_costume') {
+        $deleteId = (int) ($_POST['ID_TP'] ?? 0);
+        $returnQuery = $_POST['return_query'] ?? '';
+        if ($deleteId <= 0) {
+            redirect_costume('error', 'Yêu cầu xóa không hợp lệ.', $returnQuery);
+        }
+        $detail = $conn->query('SELECT ID_CN, TRANG_THAI FROM trang_phuc WHERE ID_TRANG_PHUC = ' . $deleteId . ' LIMIT 1');
+        if (!$detail || !$detail->num_rows) {
+            redirect_costume('error', 'Trang phục không tồn tại hoặc đã bị xóa.', $returnQuery);
+        }
+        $detailRow = $detail->fetch_assoc();
+        if ($isBranchScope && (int) $detailRow['ID_CN'] !== (int) $scope['branch_id']) {
+            redirect_costume('error', 'Bạn không có quyền xóa trang phục thuộc chi nhánh khác.', $returnQuery);
+        }
+        if (($detailRow['TRANG_THAI'] ?? '') === 'rented') {
+            redirect_costume('error', 'Không thể xóa trang phục đang được đánh dấu là đang thuê.', $returnQuery);
+        }
+        $check = $conn->query("SELECT COUNT(*) AS cnt FROM don_thue_trang_phuc_ct ct JOIN don_thue_trang_phuc ttp ON ct.ID_TTP = ttp.ID_TTP WHERE ct.ID_TP = $deleteId AND ttp.TRANG_THAI IN ('cho_duyet','da_duyet','dang_thue')");
         $row = $check ? $check->fetch_assoc() : ['cnt' => 0];
         if ((int) $row['cnt'] > 0) {
-            redirect_costume('error', 'Không thể xóa: trang phục đang được đặt/thuê.');
+            redirect_costume('error', 'Không thể xóa: trang phục đang được đặt/thuê.', $returnQuery);
         }
-
         $conn->query('DELETE FROM trang_phuc_hinh_anh WHERE ID_TP = ' . $deleteId);
         $conn->query('DELETE FROM don_gia_trang_phuc WHERE ID_TP = ' . $deleteId);
-        $conn->query('DELETE FROM trang_phuc WHERE ID_TP = ' . $deleteId);
-        redirect_costume('success', 'Đã xóa trang phục khỏi hệ thống.');
+        $conn->query('DELETE FROM trang_phuc WHERE ID_TRANG_PHUC = ' . $deleteId);
+        redirect_costume('success', 'Đã xóa trang phục khỏi hệ thống.', $returnQuery);
     }
 }
+// Xóa qua GET đã bị vô hiệu hóa (dùng POST + CSRF)
 
 $limit  = 8;
 $page   = isset($_GET['p']) ? max(1, (int) $_GET['p']) : 1;
@@ -750,6 +883,16 @@ if (isset($_GET['edit'])) {
 
 [$costumeRows, $totalRows, $totalPages] = fetch_costume_dataset($conn, $where, $limit, $offset);
 $insights = fetch_insights($conn, $where);
+
+// Xây dựng chuỗi truy vấn hiện tại để giữ bộ lọc sau redirect
+$returnQueryParts = [];
+if ($filters['search'] !== '') { $returnQueryParts['search'] = $filters['search']; }
+if ($filters['branch'] > 0) { $returnQueryParts['filter_branch'] = (string)$filters['branch']; }
+if ($filters['status'] !== '') { $returnQueryParts['filter_status'] = $filters['status']; }
+if ($filters['active'] !== '') { $returnQueryParts['filter_active'] = $filters['active']; }
+if ($filters['category'] > 0) { $returnQueryParts['filter_category'] = (string)$filters['category']; }
+if ($page > 1) { $returnQueryParts['p'] = (string)$page; }
+$encodedReturnQuery = http_build_query($returnQueryParts);
 
 ?>
 <div class="max-w-7xl mx-auto bg-white p-6 rounded-xl shadow-lg space-y-6">
@@ -775,13 +918,51 @@ $insights = fetch_insights($conn, $where);
         <?php unset($_SESSION['error']); ?>
     <?php endif; ?>
 
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var costumeReturnQuery = '<?= htmlspecialchars($encodedReturnQuery) ?>';
+        var csrfValue = '<?= htmlspecialchars(csrf_token()) ?>';
+        // Inject CSRF hidden input into all POST forms if missing
+        document.querySelectorAll('form').forEach(function(f){
+            if ((f.getAttribute('method')||'').toLowerCase() === 'post') {
+                if (!f.querySelector('input[name="csrf"]')) {
+                    var inp = document.createElement('input');
+                    inp.type = 'hidden';
+                    inp.name = 'csrf';
+                    inp.value = csrfValue;
+                    f.appendChild(inp);
+                }
+            }
+        });
+        // Replace legacy GET delete links with secure POST forms
+        document.querySelectorAll('a[href*="page=costumes&delete="]').forEach(function(link){
+            var m = /delete=(\d+)/.exec(link.getAttribute('href'));
+            if (!m) return;
+            var id = m[1];
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.className = 'inline';
+            form.onsubmit = function(){return confirm('Xóa trang phục này? Hành động không thể hoàn tác.');};
+            var a1 = document.createElement('input'); a1.type='hidden'; a1.name='action'; a1.value='delete_costume';
+            var a2 = document.createElement('input'); a2.type='hidden'; a2.name='ID_TP'; a2.value=id;
+            var a3 = document.createElement('input'); a3.type='hidden'; a3.name='csrf'; a3.value=csrfValue;
+            var rq = document.createElement('input'); rq.type='hidden'; rq.name='return_query'; rq.value=costumeReturnQuery;
+            var btn = document.createElement('button'); btn.type='submit'; btn.textContent='Xóa'; btn.className=link.className;
+            form.appendChild(a1); form.appendChild(a2); form.appendChild(a3); form.appendChild(rq); form.appendChild(btn);
+            link.parentNode.replaceChild(form, link);
+        });
+    });
+    </script>
+
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <div class="border border-gray-200 rounded-xl p-4 bg-gray-50">
             <div class="text-sm text-gray-500">Tổng số trang phục</div>
             <div class="text-2xl font-semibold text-gray-800 mt-2"><?= $totalRows ?></div>
             <div class="text-xs text-gray-400 mt-1">Bao gồm tất cả bộ lọc hiện tại.</div>
         </div>
-        <?php foreach ($statusCatalog as $code => $meta): ?>
+        <?php foreach ($statusSelectableKeys as $code): ?>
+            <?php $meta = $statusCatalog[$code] ?? null; ?>
+            <?php if (!$meta) { continue; } ?>
             <div class="border border-gray-200 rounded-xl p-4">
                 <div class="flex items-center justify-between">
                     <span class="text-sm font-medium text-gray-600"><?= htmlspecialchars($meta['label']) ?></span>
@@ -827,7 +1008,8 @@ $insights = fetch_insights($conn, $where);
             <label class="block text-sm font-medium text-gray-600 mb-1">Tình trạng</label>
             <select name="filter_status" class="w-full px-3 py-2 border rounded-lg">
                 <option value="">Tất cả</option>
-                <?php foreach ($statusCatalog as $value => $meta): ?>
+                <?php foreach ($statusSelectableKeys as $value): ?>
+                    <?php $meta = $statusCatalog[$value]; ?>
                     <option value="<?= $value ?>" <?= $filters['status'] === $value ? 'selected' : '' ?>><?= htmlspecialchars($meta['label']) ?></option>
                 <?php endforeach; ?>
             </select>
@@ -858,7 +1040,6 @@ $insights = fetch_insights($conn, $where);
                             <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Kích thước</th>
                             <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Đơn giá</th>
                             <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Tình trạng</th>
-                            <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Ngày giặt cuối</th>
                             <th class="px-4 py-2 text-right text-xs font-semibold text-gray-600 uppercase tracking-wider">Thao tác</th>
                         </tr>
                     </thead>
@@ -870,7 +1051,7 @@ $insights = fetch_insights($conn, $where);
                                     <td class="px-4 py-3">
                                         <div class="flex items-center gap-3">
                                             <?php if (!empty($row['COVER_URL'])): ?>
-                                                <img src="/<?= htmlspecialchars($row['COVER_URL']) ?>" alt="<?= htmlspecialchars($row['TEN_TP']) ?>" class="w-12 h-12 rounded object-cover border" />
+                                                <img src="<?= htmlspecialchars(sb_asset_href($row['COVER_URL'])) ?>" alt="<?= htmlspecialchars($row['TEN_TP']) ?>" class="w-12 h-12 rounded object-cover border" />
                                             <?php else: ?>
                                                 <div class="w-12 h-12 flex items-center justify-center bg-gray-200 rounded text-gray-500 text-xs font-semibold">Ảnh</div>
                                             <?php endif; ?>
@@ -898,26 +1079,25 @@ $insights = fetch_insights($conn, $where);
                                             <span class="w-2 h-2 rounded-full <?= $meta['dot_class'] ?>"></span>
                                             <?= htmlspecialchars($meta['label']) ?>
                                         </span>
-                                        <?php if (!(int) $row['IS_ACTIVE']): ?>
+                                        <?php if ($row['TINH_TRANG'] === 'retired'): ?>
                                             <div class="text-xs text-red-500">Đã ngưng hoạt động</div>
                                         <?php endif; ?>
                                     </td>
-                                    <td class="px-4 py-3 text-sm text-gray-700">
-                                        <?php if ($row['NGAY_GIAT_CUOI'] && $row['NGAY_GIAT_CUOI'] !== '0000-00-00'): ?>
-                                            <?= htmlspecialchars(date('d/m/Y', strtotime($row['NGAY_GIAT_CUOI']))) ?>
-                                        <?php else: ?>
-                                            <span class="text-gray-400">—</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td class="px-4 py-3 text-sm text-right space-x-2 whitespace-nowrap">
-                                        <a href="?page=costumes&edit=<?= $row['ID_TP'] ?>" class="inline-flex items-center px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100">Sửa</a>
-                                        <a href="?page=costumes&delete=<?= $row['ID_TP'] ?>" onclick="return confirm('Xóa trang phục này? Hành động không thể hoàn tác.');" class="inline-flex items-center px-3 py-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100">Xóa</a>
+                                    <td class="px-4 py-3 text-sm text-right space-y-1">
+                                        <div class="flex flex-wrap items-center justify-end gap-2">
+                                            <a href="../Pages/components/trangphuc_chitiet.php?id=<?= $row['ID_TP'] ?>" target="_blank" class="inline-flex items-center px-3 py-1.5 bg-slate-50 text-slate-700 rounded hover:bg-slate-100">Chi tiết</a>
+                                            <a href="../Pages/components/trangphuc_datthue.php?id=<?= $row['ID_TP'] ?>" target="_blank" class="inline-flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100">Đặt thuê</a>
+                                        </div>
+                                        <div class="flex flex-wrap items-center justify-end gap-2">
+                                            <a href="?page=costumes&edit=<?= $row['ID_TP'] ?>" class="inline-flex items-center px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100">Sửa</a>
+                                            <a href="?page=costumes&delete=<?= $row['ID_TP'] ?>" onclick="return confirm('Xóa trang phục này? Hành động không thể hoàn tác.');" class="inline-flex items-center px-3 py-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100">Xóa</a>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="8" class="px-4 py-6 text-center text-gray-500">Chưa có dữ liệu trang phục phù hợp.</td>
+                                <td colspan="7" class="px-4 py-6 text-center text-gray-500">Chưa có dữ liệu trang phục phù hợp.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -956,6 +1136,7 @@ $insights = fetch_insights($conn, $where);
                 </div>
                 <div id="addCostumeForm" class="hidden space-y-4" data-form-section>
                     <form method="POST" enctype="multipart/form-data" class="space-y-4">
+                        <input type="hidden" name="return_query" value="<?= htmlspecialchars($encodedReturnQuery) ?>">
                         <input type="hidden" name="action" value="add_costume">
                         <div>
                             <label class="block text-sm font-medium text-gray-600 mb-1">Tên trang phục *</label>
@@ -980,7 +1161,8 @@ $insights = fetch_insights($conn, $where);
                         <div>
                             <label class="block text-sm font-medium text-gray-600 mb-1">Tình trạng</label>
                             <select name="TINH_TRANG" class="w-full px-3 py-2 border rounded-lg">
-                                <?php foreach ($statusCatalog as $value => $meta): ?>
+                                <?php foreach ($statusSelectableKeys as $value): ?>
+                                    <?php $meta = $statusCatalog[$value]; ?>
                                     <option value="<?= $value ?>"><?= htmlspecialchars($meta['label']) ?></option>
                                 <?php endforeach; ?>
                             </select>
@@ -1005,15 +1187,9 @@ $insights = fetch_insights($conn, $where);
                             </select>
                             <p class="text-xs text-gray-400 mt-1">Cần thêm loại mới? Hãy mở form bên dưới.</p>
                         </div>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-600 mb-1">Đơn giá (₫)</label>
-                                <input type="number" name="DON_GIA" min="0" required class="w-full px-3 py-2 border rounded-lg">
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-600 mb-1">Ngày giặt gần nhất</label>
-                                <input type="date" name="NGAY_GIAT_CUOI" class="w-full px-3 py-2 border rounded-lg">
-                            </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 mb-1">Đơn giá (₫)</label>
+                            <input type="number" name="DON_GIA" min="0" required class="w-full px-3 py-2 border rounded-lg">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-600 mb-1">Ghi chú</label>
@@ -1054,6 +1230,7 @@ $insights = fetch_insights($conn, $where);
                 <div id="editCostumeForm" class="hidden" data-form-section<?= $editData ? ' data-open-default="true"' : '' ?>>
                     <?php if ($editData): ?>
                         <form method="POST" enctype="multipart/form-data" class="space-y-4">
+                            <input type="hidden" name="return_query" value="<?= htmlspecialchars($encodedReturnQuery) ?>">
                             <input type="hidden" name="action" value="edit_costume">
                             <input type="hidden" name="ID_TP" value="<?= $editData['ID_TP'] ?>">
                             <div class="grid grid-cols-1 gap-4">
@@ -1078,7 +1255,8 @@ $insights = fetch_insights($conn, $where);
                                     <div>
                                         <label class="block text-sm font-medium text-gray-600 mb-1">Tình trạng</label>
                                         <select name="TINH_TRANG" class="w-full px-3 py-2 border rounded-lg">
-                                            <?php foreach ($statusCatalog as $value => $meta): ?>
+                                            <?php foreach ($statusSelectableKeys as $value): ?>
+                                                <?php $meta = $statusCatalog[$value]; ?>
                                                 <option value="<?= $value ?>" <?= $editData['TINH_TRANG'] === $value ? 'selected' : '' ?>><?= htmlspecialchars($meta['label']) ?></option>
                                             <?php endforeach; ?>
                                         </select>
@@ -1103,33 +1281,30 @@ $insights = fetch_insights($conn, $where);
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-600 mb-1">Đơn giá mới (₫)</label>
-                                        <input type="number" name="DON_GIA" min="0" class="w-full px-3 py-2 border rounded-lg" placeholder="Giữ nguyên nếu bỏ trống">
-                                        <?php if (!empty($editData['DON_GIA_HIEN_TAI'])): ?>
-                                            <p class="text-xs text-gray-500 mt-1">Giá hiện tại: <?= number_format((float) $editData['DON_GIA_HIEN_TAI'], 0, ',', '.') ?> ₫</p>
-                                        <?php endif; ?>
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-600 mb-1">Ngày giặt gần nhất</label>
-                                        <input type="date" name="NGAY_GIAT_CUOI" value="<?= ($editData['NGAY_GIAT_CUOI'] && $editData['NGAY_GIAT_CUOI'] !== '0000-00-00') ? htmlspecialchars($editData['NGAY_GIAT_CUOI']) : '' ?>" class="w-full px-3 py-2 border rounded-lg">
-                                    </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-600 mb-1">Đơn giá mới (₫)</label>
+                                    <input type="number" name="DON_GIA" min="0" class="w-full px-3 py-2 border rounded-lg" placeholder="Giữ nguyên nếu bỏ trống">
+                                    <?php if (!empty($editData['DON_GIA_HIEN_TAI'])): ?>
+                                        <p class="text-xs text-gray-500 mt-1">Giá hiện tại: <?= number_format((float) $editData['DON_GIA_HIEN_TAI'], 0, ',', '.') ?> ₫</p>
+                                    <?php endif; ?>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium text-gray-600 mb-1">Ghi chú</label>
                                     <textarea name="GHI_CHU" rows="2" class="w-full px-3 py-2 border rounded-lg" placeholder="Thông tin thêm..."><?= htmlspecialchars($editData['GHI_CHU']) ?></textarea>
                                 </div>
-                                <div class="flex items-center gap-2">
-                                    <input type="checkbox" id="IS_ACTIVE" name="IS_ACTIVE" value="1" <?= (int) $editData['IS_ACTIVE'] === 1 ? 'checked' : '' ?> class="rounded border-gray-300">
-                                    <label for="IS_ACTIVE" class="text-sm text-gray-600">Đang hoạt động</label>
-                                </div>
-                                <div>
-                                    <label class="block text-sm font-medium text-gray-600 mb-1">Ảnh bìa mới</label>
-                                    <input type="file" name="COVER_IMAGE" accept="image/*" class="w-full text-sm text-gray-600">
-                                    <?php if (!empty($editData['COVER_URL'])): ?>
-                                        <img src="/<?= htmlspecialchars($editData['COVER_URL']) ?>" alt="Ảnh hiện tại" class="mt-3 w-32 h-32 object-cover rounded border">
-                                    <?php endif; ?>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-600 mb-1">Ảnh bìa mới</label>
+                                        <input type="file" name="COVER_IMAGE" accept="image/*" class="w-full text-sm text-gray-600">
+                                        <?php if (!empty($editData['COVER_URL'])): ?>
+                                            <img src="<?= htmlspecialchars(sb_asset_href($editData['COVER_URL'])) ?>" alt="Ảnh hiện tại" class="mt-3 w-32 h-32 object-cover rounded border">
+                                        <?php endif; ?>
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-600 mb-1">Ảnh bổ sung mới</label>
+                                        <input type="file" name="GALLERY_IMAGES[]" accept="image/*" multiple class="w-full text-sm text-gray-600">
+                                        <p class="text-xs text-gray-400 mt-1">Chọn nhiều ảnh để thêm vào gallery chi tiết.</p>
+                                    </div>
                                 </div>
                             </div>
                             <div class="pt-2">
@@ -1168,6 +1343,7 @@ $insights = fetch_insights($conn, $where);
                 <p class="text-xs text-gray-500">Tạo mới hoặc kích hoạt lại loại trang phục để dùng chung cho các chi nhánh.</p>
                 <div id="addCategoryForm" class="hidden space-y-4" data-form-section>
                     <form method="POST" class="space-y-4">
+                        <input type="hidden" name="return_query" value="<?= htmlspecialchars($encodedReturnQuery) ?>">
                         <input type="hidden" name="action" value="add_category">
                         <div>
                             <label class="block text-sm font-medium text-gray-600 mb-1">Tên loại trang phục *</label>
@@ -1254,5 +1430,65 @@ document.addEventListener('DOMContentLoaded', function () {
             }, 50);
         }
     });
+});
+</script>
+<script>
+// Inline client-side validation for costume forms
+document.addEventListener('DOMContentLoaded', function(){
+    function addError(el,msg){
+        var group = el.closest('[data-validate-group]') || el.parentElement;
+        var box = group.querySelector('.field-error');
+        if(!box){
+            box = document.createElement('div');
+            box.className='field-error text-xs text-red-600 mt-1';
+            group.appendChild(box);
+        }
+        box.textContent = msg;
+        el.classList.add('border-red-500');
+    }
+    function clearError(el){
+        var group = el.closest('[data-validate-group]') || el.parentElement;
+        var box = group.querySelector('.field-error');
+        if(box){ box.textContent=''; }
+        el.classList.remove('border-red-500');
+    }
+    function validateAdd(form){
+        var valid=true;
+        var ten=form.querySelector('input[name="TEN_TP"]');
+        var gia=form.querySelector('input[name="DON_GIA"]');
+        var cn=form.querySelector('select[name="ID_CN"]');
+        if(ten){ if(ten.value.trim().length<2){ addError(ten,'Tên ≥ 2 ký tự'); valid=false;} else clearError(ten); }
+        if(gia){ var v=parseInt(gia.value,10); if(isNaN(v)||v<=0){ addError(gia,'Đơn giá > 0'); valid=false;} else clearError(gia); }
+        if(cn){ if(cn.value===''){ addError(cn,'Chọn chi nhánh'); valid=false;} else clearError(cn); }
+        return valid;
+    }
+    function validateEdit(form){
+        var valid=true;
+        var ten=form.querySelector('input[name="TEN_TP"]');
+        var gia=form.querySelector('input[name="DON_GIA"]');
+        var cn=form.querySelector('select[name="ID_CN"]');
+        if(ten){ if(ten.value.trim().length<2){ addError(ten,'Tên ≥ 2 ký tự'); valid=false;} else clearError(ten); }
+        if(gia && gia.value.trim()!==''){ var v=parseInt(gia.value,10); if(isNaN(v)||v<=0){ addError(gia,'Giá mới > 0'); valid=false;} else clearError(gia);} else if(gia){ clearError(gia);} 
+        if(cn){ if(cn.value===''){ addError(cn,'Chọn chi nhánh'); valid=false;} else clearError(cn); }
+        return valid;
+    }
+    var addForm=document.querySelector('#addCostumeForm form');
+    if(addForm){
+        addForm.setAttribute('novalidate','novalidate');
+        addForm.querySelectorAll('input,select,textarea').forEach(function(el){
+            el.addEventListener('input', function(){ validateAdd(addForm); });
+            el.addEventListener('change', function(){ validateAdd(addForm); });
+        });
+        addForm.addEventListener('submit', function(e){ if(!validateAdd(addForm)){ e.preventDefault(); } });
+    }
+    var editForm=document.querySelector('#editCostumeForm form');
+    if(editForm){
+        editForm.setAttribute('novalidate','novalidate');
+        editForm.querySelectorAll('input,select,textarea').forEach(function(el){
+            el.addEventListener('input', function(){ validateEdit(editForm); });
+            el.addEventListener('change', function(){ validateEdit(editForm); });
+        });
+        editForm.addEventListener('submit', function(e){ if(!validateEdit(editForm)){ e.preventDefault(); } });
+    }
 });
 </script>

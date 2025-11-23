@@ -91,6 +91,27 @@ $managerSidebarSections = [
             'targets' => ['costumes'],
             'badge'   => null,
         ],
+      [
+        'label'   => 'Gói dịch vụ',
+        'icon'    => 'fas fa-box-open',
+        'href'    => '?page=packages',
+        'targets' => ['packages'],
+        'badge'   => null,
+      ],
+      [
+        'label'   => 'Gói trang phục',
+        'icon'    => 'fas fa-palette',
+        'href'    => '?page=package_costumes',
+        'targets' => ['package_costumes'],
+        'badge'   => null,
+      ],
+        [
+          'label'   => 'Đơn thuê trang phục',
+          'icon'    => 'fas fa-file-signature',
+          'href'    => '?page=costume_rentals',
+          'targets' => ['costume_rentals'],
+          'badge'   => null,
+        ],
         [
             'label'   => 'Chi phí phát sinh',
             'icon'    => 'fas fa-money-bill-wave',

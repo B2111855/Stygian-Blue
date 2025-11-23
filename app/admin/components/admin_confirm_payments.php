@@ -7,39 +7,50 @@ function old($key)
   return isset($_GET[$key]) ? htmlspecialchars($_GET[$key]) : '';
 }
 
-// Xử lý phân trang và bộ lọc
+// Xử lý phân trang và bộ lọc (tách riêng cho lịch hẹn và thuê trang phục)
 $limit = 5;
 $page = isset($_GET['p']) ? max(1, intval($_GET['p'])) : 1;
 $offset = ($page - 1) * $limit;
 
-$where = "WHERE 1";
+$scheduleWhere = "WHERE 1";
+$rentalWhere   = "WHERE 1";
+
 if (!empty($_GET['ten_kh'])) {
   $ten_kh = mysqli_real_escape_string($conn, $_GET['ten_kh']);
-  $where .= " AND kh.HO_TEN LIKE '%$ten_kh%'";
+  $scheduleWhere .= " AND kh.HO_TEN LIKE '%$ten_kh%'";
+  $rentalWhere   .= " AND kh.HO_TEN LIKE '%$ten_kh%'";
 }
 if (!empty($_GET['ten_dv'])) {
   $ten_dv = mysqli_real_escape_string($conn, $_GET['ten_dv']);
-  $where .= " AND dv.TEN_DV LIKE '%$ten_dv%'";
+  // Áp dụng cho tên dịch vụ lịch hẹn và danh sách trang phục thuê
+  $scheduleWhere .= " AND dv.TEN_DV LIKE '%$ten_dv%'";
+  $rentalWhere   .= " AND (ic.item_names LIKE '%$ten_dv%' OR CONCAT('Thuê trang phục') LIKE '%$ten_dv%')";
 }
 if (!empty($_GET['ma_hd'])) {
   $ma_hd = (int)$_GET['ma_hd'];
-  $where .= " AND h.ID_HD = $ma_hd";
+  $scheduleWhere .= " AND h.ID_HD = $ma_hd";
+  $rentalWhere   .= " AND h.ID_HD = $ma_hd";
 }
 if (!empty($_GET['trangthai'])) {
   $trangthai = mysqli_real_escape_string($conn, $_GET['trangthai']);
   if ($trangthai === 'pending_confirm') {
-    $where .= " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending'";
+    $pendingCondition = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending'";
+    $scheduleWhere .= $pendingCondition;
+    $rentalWhere   .= $pendingCondition;
   } else {
-    $where .= " AND h.TRANGTHAI_THANHTOAN = '$trangthai'";
+    $scheduleWhere .= " AND h.TRANGTHAI_THANHTOAN = '$trangthai'";
+    $rentalWhere   .= " AND h.TRANGTHAI_THANHTOAN = '$trangthai'";
   }
 }
 if (!empty($_GET['date_from'])) {
   $date_from = mysqli_real_escape_string($conn, $_GET['date_from']);
-  $where .= " AND DATE(h.NGAY_GIO) >= '$date_from'";
+  $scheduleWhere .= " AND DATE(h.NGAY_GIO) >= '$date_from'";
+  $rentalWhere   .= " AND DATE(h.NGAY_GIO) >= '$date_from'";
 }
 if (!empty($_GET['date_to'])) {
   $date_to = mysqli_real_escape_string($conn, $_GET['date_to']);
-  $where .= " AND DATE(h.NGAY_GIO) <= '$date_to'";
+  $scheduleWhere .= " AND DATE(h.NGAY_GIO) <= '$date_to'";
+  $rentalWhere   .= " AND DATE(h.NGAY_GIO) <= '$date_to'";
 }
 
 $latestVnpayJoin = "
@@ -61,19 +72,35 @@ $latestVnpayJoin = "
 
 // Thống kê nhanh
 $statsQuery = "
-    SELECT 
-        COUNT(*) AS total_invoices,
-        SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN 1 ELSE 0 END) AS paid_invoices,
-        SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Chưa thanh toán' THEN 1 ELSE 0 END) AS unpaid_invoices,
-        SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN h.TONG_TIEN ELSE 0 END) AS paid_amount,
-        SUM(CASE WHEN h.TRANGTHAI_THANHTOAN = 'Chưa thanh toán' THEN h.TONG_TIEN ELSE 0 END) AS unpaid_amount,
-    SUM(CASE WHEN h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending' THEN 1 ELSE 0 END) AS pending_confirm
+  SELECT 
+    COUNT(*) AS total_invoices,
+    SUM(CASE WHEN TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN 1 ELSE 0 END) AS paid_invoices,
+    SUM(CASE WHEN TRANGTHAI_THANHTOAN = 'Chưa thanh toán' THEN 1 ELSE 0 END) AS unpaid_invoices,
+    SUM(CASE WHEN TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN TONG_TIEN ELSE 0 END) AS paid_amount,
+    SUM(CASE WHEN TRANGTHAI_THANHTOAN = 'Chưa thanh toán' THEN TONG_TIEN ELSE 0 END) AS unpaid_amount,
+    SUM(CASE WHEN TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND VNPAY_TRANG_THAI = 'pending' THEN 1 ELSE 0 END) AS pending_confirm
+  FROM (
+    SELECT h.ID_HD, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN, tt.VNPAY_TRANG_THAI
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
     JOIN tai_khoan kh ON l.ID_TK = kh.ID_TK
     JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
-" . $latestVnpayJoin . "
-  $where
+    " . $latestVnpayJoin . "
+    $scheduleWhere
+    UNION ALL
+    SELECT h.ID_HD, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN, tt.VNPAY_TRANG_THAI
+    FROM hoa_don h
+    JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
+    JOIN tai_khoan kh ON ttp.ID_TK = kh.ID_TK
+    LEFT JOIN (
+      SELECT ct.ID_TTP, GROUP_CONCAT(tp.TEN ORDER BY tp.TEN SEPARATOR ', ') AS item_names
+      FROM don_thue_trang_phuc_ct ct
+      LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+      GROUP BY ct.ID_TTP
+    ) ic ON ic.ID_TTP = ttp.ID_TTP
+    " . $latestVnpayJoin . "
+    $rentalWhere
+  ) agg
 ";
 
 $statsResult = mysqli_query($conn, $statsQuery);
@@ -89,13 +116,28 @@ $stats = [
 
 // Truy vấn đếm tổng số bản ghi
 $countQuery = "
-    SELECT COUNT(*) as total
+  SELECT COUNT(*) AS total FROM (
+    SELECT h.ID_HD
     FROM hoa_don h
     JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
     JOIN tai_khoan kh ON l.ID_TK = kh.ID_TK
     JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
-" . $latestVnpayJoin . "
-    $where
+    " . $latestVnpayJoin . "
+    $scheduleWhere
+    UNION ALL
+    SELECT h.ID_HD
+    FROM hoa_don h
+    JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
+    JOIN tai_khoan kh ON ttp.ID_TK = kh.ID_TK
+    LEFT JOIN (
+      SELECT ct.ID_TTP, GROUP_CONCAT(tp.TEN ORDER BY tp.TEN SEPARATOR ', ') AS item_names
+      FROM don_thue_trang_phuc_ct ct
+      LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+      GROUP BY ct.ID_TTP
+    ) ic ON ic.ID_TTP = ttp.ID_TTP
+    " . $latestVnpayJoin . "
+    $rentalWhere
+  ) merged
 ";
 $countResult = mysqli_query($conn, $countQuery);
 $totalRows = mysqli_fetch_assoc($countResult)['total'];
@@ -103,19 +145,44 @@ $totalPages = ceil($totalRows / $limit);
 
 // Truy vấn dữ liệu phân trang
 $query = "
-    SELECT 
-      h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN,
-      h.PHUONGTHUC_THANHTOAN,
-      tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
-        kh.HO_TEN AS TEN_KH,
-        dv.TEN_DV AS TEN_DV
-    FROM hoa_don h
-    JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
-    JOIN tai_khoan kh ON l.ID_TK = kh.ID_TK
-    JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
-" . $latestVnpayJoin . "
-    $where
-    ORDER BY h.NGAY_GIO DESC
+    SELECT * FROM (
+        SELECT 
+          h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN,
+          h.PHUONGTHUC_THANHTOAN,
+          tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
+          kh.HO_TEN AS TEN_KH,
+          dv.TEN_DV AS TEN_DV,
+          'schedule' AS KIND,
+          NULL AS RENTAL_SUMMARY
+        FROM hoa_don h
+        JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
+        JOIN tai_khoan kh ON l.ID_TK = kh.ID_TK
+        JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
+        " . $latestVnpayJoin . "
+        $scheduleWhere
+        UNION ALL
+        SELECT 
+          h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN,
+          h.PHUONGTHUC_THANHTOAN,
+          tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
+          kh.HO_TEN AS TEN_KH,
+          CONCAT('Thuê trang phục (', COALESCE(icCnt.item_count,0), ' món)') AS TEN_DV,
+          'rental' AS KIND,
+          icCnt.item_names AS RENTAL_SUMMARY
+        FROM hoa_don h
+        JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
+        JOIN tai_khoan kh ON ttp.ID_TK = kh.ID_TK
+        LEFT JOIN (
+            SELECT ct.ID_TTP, COUNT(*) AS item_count,
+                   GROUP_CONCAT(tp.TEN ORDER BY tp.TEN SEPARATOR ', ') AS item_names
+            FROM don_thue_trang_phuc_ct ct
+            LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+            GROUP BY ct.ID_TTP
+        ) icCnt ON icCnt.ID_TTP = ttp.ID_TTP
+        " . $latestVnpayJoin . "
+        $rentalWhere
+    ) merged
+    ORDER BY NGAY_GIO DESC
     LIMIT $limit OFFSET $offset
 ";
 
@@ -246,7 +313,12 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
               <tr class="hover:shadow-lg hover:bg-indigo-50 transition duration-200 <?= $rowClass ?>">
                 <td class="px-6 py-4 font-medium whitespace-nowrap">#<?= $row['ID_HD'] ?></td>
                 <td class="px-6 py-4 whitespace-nowrap"><?= htmlspecialchars($row['TEN_KH']) ?></td>
-                <td class="px-6 py-4 whitespace-nowrap"><?= htmlspecialchars($row['TEN_DV']) ?></td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <?= htmlspecialchars($row['TEN_DV']) ?>
+                  <?php if ($row['KIND'] === 'rental'): ?>
+                    <div class="text-[11px] text-gray-500 mt-0.5"><?= htmlspecialchars($row['RENTAL_SUMMARY'] ?? '') ?></div>
+                  <?php endif; ?>
+                </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
                   <?= date('d/m/Y H:i', strtotime($row['NGAY_GIO'])) ?>
                 </td>

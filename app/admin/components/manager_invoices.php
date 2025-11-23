@@ -76,58 +76,92 @@ if (!in_array($filters['method'], $methodOptions, true)) {
     $filters['method'] = '';
 }
 
-// Build query
-$fromClause = 'FROM hoa_don hd
-JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
-JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK
-LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV';
+// Build unified (schedule + rental) query parts
+$scheduleConds = ['lh.ID_CHINHANH = ?'];
+$rentalConds   = ['ttp.ID_CN = ?'];
+$baseTypes = 'i';
+$scheduleParams = [$branchId];
+$rentalParams   = [$branchId];
 
-$conditions = ['lh.ID_CHINHANH = ?'];
-$types = 'i';
-$params = [$branchId];
-
+// Helper to append condition to both sets (field names differ only for customer)
 if ($filters['customer'] !== '') {
-    $conditions[] = 'tk.HO_TEN LIKE ?';
-    $types .= 's';
-    $params[] = '%' . $filters['customer'] . '%';
+    $scheduleConds[] = 'tk.HO_TEN LIKE ?';
+    $rentalConds[]   = 'tk.HO_TEN LIKE ?';
+    $baseTypes      .= 's';
+    $scheduleParams[] = '%' . $filters['customer'] . '%';
+    $rentalParams[]   = '%' . $filters['customer'] . '%';
 }
 if ($filters['status'] !== '') {
-    $conditions[] = 'hd.TRANGTHAI_THANHTOAN = ?';
-    $types .= 's';
-    $params[] = $filters['status'];
+    $scheduleConds[] = 'hd.TRANGTHAI_THANHTOAN = ?';
+    $rentalConds[]   = 'hd.TRANGTHAI_THANHTOAN = ?';
+    $baseTypes      .= 's';
+    $scheduleParams[] = $filters['status'];
+    $rentalParams[]   = $filters['status'];
 }
 if ($filters['method'] !== '') {
-    $conditions[] = 'hd.PHUONGTHUC_THANHTOAN = ?';
-    $types .= 's';
-    $params[] = $filters['method'];
+    $scheduleConds[] = 'hd.PHUONGTHUC_THANHTOAN = ?';
+    $rentalConds[]   = 'hd.PHUONGTHUC_THANHTOAN = ?';
+    $baseTypes      .= 's';
+    $scheduleParams[] = $filters['method'];
+    $rentalParams[]   = $filters['method'];
 }
 if ($filters['date_from']) {
-    $conditions[] = 'DATE(hd.NGAY_GIO) >= ?';
-    $types .= 's';
-    $params[] = $filters['date_from'];
+    $scheduleConds[] = 'DATE(hd.NGAY_GIO) >= ?';
+    $rentalConds[]   = 'DATE(hd.NGAY_GIO) >= ?';
+    $baseTypes      .= 's';
+    $scheduleParams[] = $filters['date_from'];
+    $rentalParams[]   = $filters['date_from'];
 }
 if ($filters['date_to']) {
-    $conditions[] = 'DATE(hd.NGAY_GIO) <= ?';
-    $types .= 's';
-    $params[] = $filters['date_to'];
+    $scheduleConds[] = 'DATE(hd.NGAY_GIO) <= ?';
+    $rentalConds[]   = 'DATE(hd.NGAY_GIO) <= ?';
+    $baseTypes      .= 's';
+    $scheduleParams[] = $filters['date_to'];
+    $rentalParams[]   = $filters['date_to'];
 }
 if ($filters['min_amount'] !== null) {
-    $conditions[] = 'hd.TONG_TIEN >= ?';
-    $types .= 'd';
-    $params[] = $filters['min_amount'];
+    $scheduleConds[] = 'hd.TONG_TIEN >= ?';
+    $rentalConds[]   = 'hd.TONG_TIEN >= ?';
+    $baseTypes      .= 'd';
+    $scheduleParams[] = $filters['min_amount'];
+    $rentalParams[]   = $filters['min_amount'];
 }
 if ($filters['max_amount'] !== null) {
-    $conditions[] = 'hd.TONG_TIEN <= ?';
-    $types .= 'd';
-    $params[] = $filters['max_amount'];
+    $scheduleConds[] = 'hd.TONG_TIEN <= ?';
+    $rentalConds[]   = 'hd.TONG_TIEN <= ?';
+    $baseTypes      .= 'd';
+    $scheduleParams[] = $filters['max_amount'];
+    $rentalParams[]   = $filters['max_amount'];
 }
 
-$whereClause = 'WHERE ' . implode(' AND ', $conditions);
+$scheduleWhere = 'WHERE ' . implode(' AND ', $scheduleConds);
+$rentalWhere   = 'WHERE ' . implode(' AND ', $rentalConds);
 
-// Count total
-$countSql = 'SELECT COUNT(*) ' . $fromClause . ' ' . $whereClause;
+// COUNT with UNION
+$countSql = 'SELECT COUNT(*) FROM (
+    SELECT hd.ID_HD
+    FROM hoa_don hd
+    JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
+    JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK
+    LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+    ' . $scheduleWhere . '
+    UNION ALL
+    SELECT hd.ID_HD
+    FROM hoa_don hd
+    JOIN don_thue_trang_phuc ttp ON hd.ID_TTP = ttp.ID_TTP
+    JOIN tai_khoan tk ON ttp.ID_TK = tk.ID_TK
+    LEFT JOIN (
+        SELECT ct.ID_TTP, GROUP_CONCAT(tp.TEN ORDER BY tp.TEN SEPARATOR ", ") AS item_names
+        FROM don_thue_trang_phuc_ct ct
+        LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+        GROUP BY ct.ID_TTP
+    ) ic ON ic.ID_TTP = ttp.ID_TTP
+    ' . $rentalWhere . '
+) merged';
 $countStmt = $conn->prepare($countSql);
-bindParams($countStmt, $types, $params);
+$countTypes = $baseTypes . $baseTypes; // schedule params + rental params
+$countParams = array_merge($scheduleParams, $rentalParams);
+bindParams($countStmt, $countTypes, $countParams);
 $countStmt->execute();
 $countStmt->bind_result($totalRows);
 $countStmt->fetch();
@@ -135,16 +169,40 @@ $countStmt->close();
 $totalRows = (int)($totalRows ?? 0);
 $totalPages = max(1, (int)ceil($totalRows / $perPage));
 
-// Get data
-$dataSql = 'SELECT hd.ID_HD, hd.NGAY_GIO, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN,
-                   tk.HO_TEN AS TEN_KHACH_HANG, tk.SDT, tk.EMAIL,
-                   dv.TEN_DV, lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU
-            ' . $fromClause . ' ' . $whereClause . ' 
-            ORDER BY hd.NGAY_GIO DESC 
-            LIMIT ? OFFSET ?';
+// DATA with UNION
+$dataSql = 'SELECT * FROM (
+    SELECT hd.ID_HD, hd.NGAY_GIO, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN,
+           tk.HO_TEN AS TEN_KHACH_HANG, tk.SDT, tk.EMAIL,
+           dv.TEN_DV AS TEN_DV, lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU,
+           "schedule" AS KIND, NULL AS RENTAL_SUMMARY
+    FROM hoa_don hd
+    JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
+    JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK
+    LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+    ' . $scheduleWhere . '
+    UNION ALL
+    SELECT hd.ID_HD, hd.NGAY_GIO, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN,
+           tk.HO_TEN AS TEN_KHACH_HANG, tk.SDT, tk.EMAIL,
+           CONCAT("Thuê trang phục (", COALESCE(ic.item_count,0), " món)") AS TEN_DV,
+           NULL AS ID_LICHHEN, ttp.NGAY_NHAN AS THOI_GIAN_BAT_DAU,
+           "rental" AS KIND, ic.item_names AS RENTAL_SUMMARY
+    FROM hoa_don hd
+    JOIN don_thue_trang_phuc ttp ON hd.ID_TTP = ttp.ID_TTP
+    JOIN tai_khoan tk ON ttp.ID_TK = tk.ID_TK
+    LEFT JOIN (
+        SELECT ct.ID_TTP, COUNT(*) AS item_count,
+               GROUP_CONCAT(tp.TEN ORDER BY tp.TEN SEPARATOR ", ") AS item_names
+        FROM don_thue_trang_phuc_ct ct
+        LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+        GROUP BY ct.ID_TTP
+    ) ic ON ic.ID_TTP = ttp.ID_TTP
+    ' . $rentalWhere . '
+) merged
+ORDER BY NGAY_GIO DESC
+LIMIT ? OFFSET ?';
 $dataStmt = $conn->prepare($dataSql);
-$dataTypes = $types . 'ii';
-$dataParams = array_merge($params, [$perPage, $offset]);
+$dataTypes = $baseTypes . $baseTypes . 'ii';
+$dataParams = array_merge($scheduleParams, $rentalParams, [$perPage, $offset]);
 bindParams($dataStmt, $dataTypes, $dataParams);
 $dataStmt->execute();
 $dataResult = $dataStmt->get_result();
@@ -295,7 +353,11 @@ $statsQuery->close();
                             <tr class="hover:bg-slate-50">
                                 <td class="px-6 py-4">
                                     <div class="font-semibold text-indigo-600">#<?= (int)$row['ID_HD'] ?></div>
-                                    <div class="text-xs text-gray-500">Lịch #<?= (int)$row['ID_LICHHEN'] ?></div>
+                                    <?php if ($row['KIND'] === 'schedule'): ?>
+                                        <div class="text-xs text-gray-500">Lịch #<?= (int)($row['ID_LICHHEN'] ?? 0) ?></div>
+                                    <?php else: ?>
+                                        <div class="text-xs text-amber-600">Thuê trang phục</div>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-6 py-4">
                                     <div class="font-semibold text-gray-900"><?= htmlspecialchars($row['TEN_KHACH_HANG'] ?? 'Chưa rõ', ENT_QUOTES, 'UTF-8') ?></div>
@@ -303,6 +365,9 @@ $statsQuery->close();
                                 </td>
                                 <td class="px-6 py-4 text-gray-800">
                                     <?= htmlspecialchars($row['TEN_DV'] ?? 'Chưa rõ', ENT_QUOTES, 'UTF-8') ?>
+                                    <?php if ($row['KIND'] === 'rental' && !empty($row['RENTAL_SUMMARY'])): ?>
+                                        <div class="mt-1 text-[11px] text-gray-500 line-clamp-2"><?= htmlspecialchars($row['RENTAL_SUMMARY'], ENT_QUOTES, 'UTF-8') ?></div>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-6 py-4 text-gray-800">
                                     <?= humanDateTime($row['NGAY_GIO'] ?? '') ?>

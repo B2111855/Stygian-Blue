@@ -3,3 +3,20 @@
 .sb-ai-chat-body { min-height: 0 !important; }
 .sb-ai-panel { min-height: 0 !important; }
 .sb-ai-typing { flex-shrink: 0 !important; }
+
+/* Fix speed dial not blocking content */
+.sb-ai-speed-dial { 
+  pointer-events: none !important; 
+}
+
+.sb-ai-chat-toggle {
+  pointer-events: auto !important;
+}
+
+.sb-ai-speed-dial.is-open .sb-ai-dial-btn {
+  pointer-events: auto !important;
+}
+
+.sb-ai-chat-window {
+  pointer-events: auto !important;
+}

@@ -79,3 +79,13 @@ database/config.php
 app/Pages/components/auth_check.php
 app/Pages/components/config.php
 google_oauth_client.php
+
+# Ignore SQL backup and migration files
+database/*.sql
+database/migrations/*.sql
+
+# Ignore all costume images (if not needed in repo)
+public/images/trangphuc/*
+
+# Ignore test/debug scripts in tmp/
+tmp/

@@ -178,54 +178,29 @@ if ($cats = $conn->query("SELECT ID_LOAI, TEN_LOAI FROM trang_phuc_loai ORDER BY
 }
 
 $sizes = [];
-if ($sz = $conn->query("SELECT DISTINCT SIZE FROM trang_phuc WHERE IS_ACTIVE = 1 AND SIZE IS NOT NULL AND SIZE <> '' ORDER BY SIZE")) {
+if ($sz = $conn->query("SELECT DISTINCT SIZE FROM trang_phuc WHERE SIZE IS NOT NULL AND SIZE <> '' ORDER BY SIZE")) {
   while ($r = $sz->fetch_row()) $sizes[] = $r[0];
   $sz->free();
 }
 
 $colors = [];
-if ($cl = $conn->query("SELECT DISTINCT MAU FROM trang_phuc WHERE IS_ACTIVE = 1 AND MAU IS NOT NULL AND MAU <> '' ORDER BY MAU")) {
+if ($cl = $conn->query("SELECT DISTINCT MAU_SAC FROM trang_phuc WHERE MAU_SAC IS NOT NULL AND MAU_SAC <> '' ORDER BY MAU_SAC")) {
   while ($r = $cl->fetch_row()) $colors[] = $r[0];
   $cl->free();
 }
 
-// ==== Cấu hình lấy đơn giá mới nhất ====
-$priceSelect = "0 AS DON_GIA, NULL AS HIEU_LUC_TU";
-$priceExpr   = '0';
-$priceJoin   = '';
+// ==== New schema: GIA_THUE trực tiếp trong bảng trang_phuc ====
+$priceExpr = 'COALESCE(tp.GIA_THUE, 0)';
 
-$hasPriceView = false;
-if ($check = $conn->query("SHOW FULL TABLES LIKE 'v_trang_phuc_don_gia_moinhat'")) {
-  $hasPriceView = $check->num_rows > 0;
-  $check->free();
-}
+$imageJoin = "LEFT JOIN (\n  SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n  FROM trang_phuc_hinh_anh\n  WHERE IS_ACTIVE = 1\n  GROUP BY ID_TP\n) ha ON ha.ID_TP = tp.ID_TRANG_PHUC";
 
-if ($hasPriceView) {
-  $priceSelect = "COALESCE(gia.DON_GIA, 0) AS DON_GIA, gia.HIEU_LUC_TU";
-  $priceExpr   = 'COALESCE(gia.DON_GIA, 0)';
-  $priceJoin   = "LEFT JOIN v_trang_phuc_don_gia_moinhat gia ON gia.ID_TP = tp.ID_TP";
-} else {
-  $hasPriceTable = false;
-  if ($check = $conn->query("SHOW TABLES LIKE 'don_gia_trang_phuc'")) {
-    $hasPriceTable = $check->num_rows > 0;
-    $check->free();
-  }
-  if ($hasPriceTable) {
-    $priceSelect = "COALESCE(gia.DON_GIA, 0) AS DON_GIA, gia.HIEU_LUC_TU";
-    $priceExpr   = 'COALESCE(gia.DON_GIA, 0)';
-    $priceJoin   = "LEFT JOIN (\n      SELECT x.ID_TP, x.DON_GIA, x.NGAY_GIO AS HIEU_LUC_TU\n      FROM don_gia_trang_phuc x\n      JOIN (\n        SELECT ID_TP, MAX(NGAY_GIO) AS MG\n        FROM don_gia_trang_phuc\n        GROUP BY ID_TP\n      ) m ON m.ID_TP = x.ID_TP AND m.MG = x.NGAY_GIO\n    ) gia ON gia.ID_TP = tp.ID_TP";
-  }
-}
-
-$imageJoin = "LEFT JOIN (\n  SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n  FROM trang_phuc_hinh_anh\n  WHERE IS_ACTIVE = 1\n  GROUP BY ID_TP\n) ha ON ha.ID_TP = tp.ID_TP";
-
-$sql = "SELECT\n  tp.ID_TP,\n  tp.TEN_TP,\n  tp.SIZE,\n  tp.MAU,\n  tp.TINH_TRANG,\n  tp.NGAY_GIAT_CUOI,\n  tp.GHI_CHU,\n  tp.ID_CN,\n  cn.TEN_CN,\n  loai.TEN_LOAI,\n  $priceSelect,\n  ha.URL AS HINH_ANH\nFROM trang_phuc tp\nJOIN CHI_NHANH cn ON cn.ID_CN = tp.ID_CN\nLEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI\n$priceJoin\n$imageJoin\nWHERE tp.IS_ACTIVE = 1";
+$sql = "SELECT\n  tp.ID_TRANG_PHUC AS ID_TP,\n  tp.TEN AS TEN_TP,\n  tp.SIZE,\n  tp.MAU_SAC AS MAU,\n  tp.TRANG_THAI AS TINH_TRANG,\n  tp.GHI_CHU,\n  tp.ID_CN,\n  cn.TEN_CN,\n  COALESCE(tp.GIA_THUE, 0) AS DON_GIA,\n  ha.URL AS HINH_ANH,\n  loai.TEN_LOAI,\n  loai.ID_LOAI\nFROM trang_phuc tp\nJOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\nLEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI\n$imageJoin";
 
 $params = [];
 $types  = '';
 
 if ($kw !== '') {
-  $sql .= " AND tp.TEN_TP LIKE CONCAT('%', ?, '%')";
+  $sql .= " AND tp.TEN LIKE CONCAT('%', ?, '%')";
   $types .= 's';
   $params[] = $kw;
 }
@@ -234,19 +209,14 @@ if ($branch !== '' && ctype_digit($branch)) {
   $types .= 'i';
   $params[] = (int)$branch;
 }
-if ($category !== '' && ctype_digit($category)) {
-  $sql .= " AND tp.ID_LOAI = ?";
-  $types .= 'i';
-  $params[] = (int)$category;
-}
-$sql .= " AND tp.TINH_TRANG = 'san_sang'";
+$sql .= " AND tp.TRANG_THAI = 'available'";
 if ($size !== '') {
   $sql .= " AND tp.SIZE = ?";
   $types .= 's';
   $params[] = $size;
 }
 if ($color !== '') {
-  $sql .= " AND tp.MAU = ?";
+  $sql .= " AND tp.MAU_SAC = ?";
   $types .= 's';
   $params[] = $color;
 }
@@ -263,16 +233,16 @@ if ($maxPrice !== '' && is_numeric($maxPrice)) {
 
 switch ($sort) {
   case 'price_asc':
-    $sql .= " ORDER BY DON_GIA ASC, tp.TEN_TP ASC";
+    $sql .= " ORDER BY DON_GIA ASC, tp.TEN ASC";
     break;
   case 'name_asc':
-    $sql .= " ORDER BY tp.TEN_TP ASC";
+    $sql .= " ORDER BY tp.TEN ASC";
     break;
   case 'name_desc':
-    $sql .= " ORDER BY tp.TEN_TP DESC";
+    $sql .= " ORDER BY tp.TEN DESC";
     break;
   default:
-    $sql .= " ORDER BY DON_GIA DESC, tp.TEN_TP ASC";
+    $sql .= " ORDER BY DON_GIA DESC, tp.TEN ASC";
 }
 
 $errorMessage = null;
@@ -303,64 +273,74 @@ if ($result) {
 }
 
 $statusMap = [
+  'available' => ['Sẵn sàng', 'bg-emerald-100/80 text-emerald-700 border border-emerald-200/70'],
+  'rented' => ['Đang thuê', 'bg-indigo-100/80 text-indigo-700 border border-indigo-200/70'],
+  'maintenance' => ['Bảo trì', 'bg-amber-100/80 text-amber-700 border border-amber-200/70'],
+  // Legacy mappings for backward compatibility
   'san_sang' => ['Sẵn sàng', 'bg-emerald-100/80 text-emerald-700 border border-emerald-200/70'],
   'dang_thue' => ['Đang thuê', 'bg-indigo-100/80 text-indigo-700 border border-indigo-200/70'],
   'bao_tri' => ['Bảo trì', 'bg-amber-100/80 text-amber-700 border border-amber-200/70'],
   'ngung' => ['Ngưng cho thuê', 'bg-rose-100/80 text-rose-700 border border-rose-200/70'],
 ];
 
-$groupedMap = [];
+// Chỉ hiển thị theo LOẠI trang phục (group by ID_LOAI)
+$typeMap = [];
 foreach ($rawRows as $row) {
-  $keyParts = [
-    strtolower(trim((string)($row['TEN_TP'] ?? ''))),
-    strtoupper(trim((string)($row['SIZE'] ?? ''))),
-    strtoupper(trim((string)($row['MAU'] ?? ''))),
-  ];
-  $groupKey = implode('|', $keyParts);
-  if ($groupKey === '||') {
-    $groupKey = 'tp_' . $row['ID_TP'];
-  }
-
-  $branchSnapshot = [
-    'ID_TP' => $row['ID_TP'],
-    'ID_CN' => $row['ID_CN'],
-    'TEN_CN' => $row['TEN_CN'],
-    'DON_GIA' => (int)$row['DON_GIA'],
-    'TINH_TRANG' => $row['TINH_TRANG'],
-    'HIEU_LUC_TU' => $row['HIEU_LUC_TU'],
-  ];
-
-  if (!isset($groupedMap[$groupKey])) {
-    $row['DON_GIA'] = (int)$row['DON_GIA'];
-    $row['BRANCHES'] = [$branchSnapshot];
-    $row['PRIMARY_BRANCH_INDEX'] = 0;
-    $groupedMap[$groupKey] = $row;
+  $idLoai = $row['ID_LOAI'] ?? null;
+  if ($idLoai === null || $idLoai === '') {
+    // Bỏ qua item chưa được gán loại theo yêu cầu chỉ hiển thị loại
     continue;
   }
-
-  $current = &$groupedMap[$groupKey];
-  $current['BRANCHES'][] = $branchSnapshot;
-  $shouldPromote = false;
-
-  if ($branchSnapshot['TINH_TRANG'] === 'san_sang' && $current['TINH_TRANG'] !== 'san_sang') {
-    $shouldPromote = true;
-  } elseif ($branchSnapshot['TINH_TRANG'] === $current['TINH_TRANG'] && $branchSnapshot['DON_GIA'] < (int)$current['DON_GIA']) {
-    $shouldPromote = true;
+  if (!isset($typeMap[$idLoai])) {
+    $typeMap[$idLoai] = [
+      'ID_LOAI' => $idLoai,
+      'TEN_LOAI' => $row['TEN_LOAI'] ?? 'Chưa rõ',
+      'TOTAL_ITEMS' => 0,
+      'AVAILABLE_ITEMS' => 0,
+      'MIN_PRICE_AVAILABLE' => null,
+      'MIN_PRICE_OVERALL' => null,
+      'REP_IMAGE' => $row['HINH_ANH'] ?? '',
+      'REP_ITEM_ID' => $row['ID_TP'] ?? null,
+    ];
   }
-
-  if ($shouldPromote) {
-    foreach (['ID_TP','ID_CN','TEN_CN','TINH_TRANG','DON_GIA','HIEU_LUC_TU'] as $field) {
-      if (array_key_exists($field, $row)) {
-        $current[$field] = $row[$field];
+  $typeMap[$idLoai]['TOTAL_ITEMS']++;
+  $priceInt = (int)$row['DON_GIA'];
+  if ($typeMap[$idLoai]['MIN_PRICE_OVERALL'] === null || $priceInt < $typeMap[$idLoai]['MIN_PRICE_OVERALL']) {
+    $typeMap[$idLoai]['MIN_PRICE_OVERALL'] = $priceInt;
+    // Cập nhật representative item ngay cả khi chưa khả dụng để có ID chi tiết
+    $typeMap[$idLoai]['REP_ITEM_ID'] = $row['ID_TP'] ?? $typeMap[$idLoai]['REP_ITEM_ID'];
+  }
+  $status = $row['TINH_TRANG'] ?? '';
+  $isAvail = in_array($status, ['available','san_sang']);
+  if ($isAvail) {
+    $typeMap[$idLoai]['AVAILABLE_ITEMS']++;
+    if ($typeMap[$idLoai]['MIN_PRICE_AVAILABLE'] === null || $priceInt < $typeMap[$idLoai]['MIN_PRICE_AVAILABLE']) {
+      $typeMap[$idLoai]['MIN_PRICE_AVAILABLE'] = $priceInt;
+      // cập nhật hình đại diện ưu tiên item khả dụng
+      if (!empty($row['HINH_ANH'])) {
+        $typeMap[$idLoai]['REP_IMAGE'] = $row['HINH_ANH'];
       }
+      // Luôn cập nhật representative item id sang item khả dụng rẻ nhất
+      $typeMap[$idLoai]['REP_ITEM_ID'] = $row['ID_TP'] ?? $typeMap[$idLoai]['REP_ITEM_ID'];
     }
-    $current['DON_GIA'] = (int)$current['DON_GIA'];
-    $current['PRIMARY_BRANCH_INDEX'] = count($current['BRANCHES']) - 1;
   }
-  unset($current);
 }
 
-$catalogItems = array_values($groupedMap);
+// Chuyển sang mảng để render
+$catalogItems = [];
+foreach ($typeMap as $g) {
+  // Giá hiển thị: ưu tiên giá thấp nhất của item khả dụng, nếu không dùng giá thấp nhất chung
+  $displayPrice = $g['MIN_PRICE_AVAILABLE'] !== null ? $g['MIN_PRICE_AVAILABLE'] : ($g['MIN_PRICE_OVERALL'] ?? 0);
+  $catalogItems[] = [
+    'ID_LOAI' => $g['ID_LOAI'],
+    'TEN_LOAI' => $g['TEN_LOAI'],
+    'TOTAL_ITEMS' => $g['TOTAL_ITEMS'],
+    'AVAILABLE_ITEMS' => $g['AVAILABLE_ITEMS'],
+    'DON_GIA' => $displayPrice,
+    'HINH_ANH' => $g['REP_IMAGE'],
+    'REP_ITEM_ID' => $g['REP_ITEM_ID'],
+  ];
+}
 $totalFound = count($catalogItems);
 
 $defaultImageResolved = tp_pick_image_path($defaultImagePath, $defaultImagePath);
@@ -417,9 +397,10 @@ $advancedOpen = $size !== '' || $color !== '' || $minPrice !== '' || $maxPrice !
 
 $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
 
+// Số loại có ít nhất một item khả dụng
 $readyCount = 0;
 foreach ($catalogItems as $item) {
-  if (($item['TINH_TRANG'] ?? '') === 'san_sang') {
+  if ((int)$item['AVAILABLE_ITEMS'] > 0) {
     $readyCount++;
   }
 }
@@ -834,94 +815,65 @@ $heroBackgroundUrl = $defaultImageUrl;
           <div class="info-card px-6 py-6 text-center text-rose-600 font-semibold"><?=h($errorMessage)?></div>
         <?php elseif (!empty($catalogItems)): ?>
           <div class="results-grid grid gap-4 lg:gap-5">
-            <?php foreach ($catalogItems as $row):
-              $price = (int)$row['DON_GIA'];
-              $statusKey = $row['TINH_TRANG'] ?? '';
-              $badge = $statusMap[$statusKey] ?? ['Chưa rõ', 'bg-slate-100/90 text-slate-600 border border-slate-200/80'];
-              $image = $row['HINH_ANH'] ?: $defaultImageUrl;
+            <?php foreach ($catalogItems as $type):
+              $price = (int)$type['DON_GIA'];
+              $image = $type['HINH_ANH'] ?: $defaultImageUrl;
+              $avail = (int)$type['AVAILABLE_ITEMS'];
+              $total = (int)$type['TOTAL_ITEMS'];
+              $utilPercent = $total > 0 ? round(($total - $avail) * 100 / $total) : 0; // phần trăm đang dùng
+              $statusKey = $avail > 0 ? 'available' : 'rented';
+              $badge = $statusMap[$statusKey] ?? ['Loại', 'bg-slate-100/90 text-slate-600 border border-slate-200/80'];
+              $typeBookingQuery = http_build_query([
+                'mode' => 'type',
+                'loai' => $type['ID_LOAI'],
+                'from' => $rentFrom,
+                'to'   => $rentTo,
+                'qty'  => $qty,
+              ]);
+              $detailId = $type['REP_ITEM_ID'] ?? null;
+              $detailHref = $detailId ? ('trangphuc_chitiet.php?id=' . urlencode($detailId)) : '#';
             ?>
-              <article class="result-card flex h-full flex-col gap-3">
+              <article class="result-card flex h-full flex-col gap-3 cursor-pointer group" data-detail-id="<?=h($detailId)?>">
                 <div class="relative">
-                  <img src="<?=h($image)?>" alt="<?=h($row['TEN_TP'])?>" class="square-img shadow-sm" loading="lazy" onerror="this.onerror=null;this.src='<?=h($defaultImageUrl)?>';">
+                  <img src="<?=h($image)?>" alt="<?=h($type['TEN_LOAI'])?>" class="square-img shadow-sm" loading="lazy" onerror="this.onerror=null;this.src='<?=h($defaultImageUrl)?>';">
                   <div class="status-badge <?=h($badge[1])?>">
                     <?=h($badge[0])?>
                   </div>
-                </div>
-
-                <?php
-                  $branches = $row['BRANCHES'] ?? [];
-                  $primaryIndex = $row['PRIMARY_BRANCH_INDEX'] ?? 0;
-                  $primaryBranch = $branches[$primaryIndex] ?? ($branches[0] ?? null);
-                  $primaryBranchName = $primaryBranch['TEN_CN'] ?? $row['TEN_CN'];
-                  $extraBranches = max(count($branches) - 1, 0);
-                ?>
-
-                <div class="space-y-2">
-                  <?php if (!empty($row['TEN_LOAI'])): ?>
-                    <p class="text-[11px] font-semibold uppercase tracking-[0.2em] text-indigo-500"><?=h($row['TEN_LOAI'])?></p>
+                  <?php if ($detailId): ?>
+                  <a href="<?=h($detailHref)?>" class="absolute inset-0" aria-label="Xem chi tiết loại trang phục"></a>
                   <?php endif; ?>
+                </div>
+                <div class="space-y-2">
                   <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0 space-y-1">
-                      <h2 class="text-base font-semibold leading-snug text-slate-900 line-clamp-2"><?=h($row['TEN_TP'])?></h2>
-                      <p class="text-xs text-slate-500">
-                        Có tại <span class="font-semibold text-slate-700"><?=h($primaryBranchName)?></span>
-                        <?php if ($extraBranches > 0): ?>
-                          <span class="text-slate-400">+<?= $extraBranches ?> CN khác</span>
-                        <?php endif; ?>
-                      </p>
+                      <h2 class="text-base font-semibold leading-snug text-slate-900 line-clamp-2"><?=h($type['TEN_LOAI'])?></h2>
+                      <p class="text-xs text-slate-500">Còn <span class="font-semibold text-emerald-600"><?=$avail?></span> / <?=$total?> bộ</p>
                     </div>
                     <div class="shrink-0 text-right">
                       <p class="text-xl font-bold text-indigo-700" data-price="<?= (int)$price ?>"><?= number_format($price, 0, ',', '.') ?></p>
-                      <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500">VND/ngày</p>
-                      <?php if (!empty($row['HIEU_LUC_TU'])): ?>
-                        <p class="text-[11px] text-slate-400">Áp dụng <?=h($row['HIEU_LUC_TU'])?></p>
-                      <?php endif; ?>
+                      <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500">VND/ngày từ</p>
+                      <p class="text-[11px] text-slate-400">Đang dùng: <?=$utilPercent?>%</p>
                     </div>
                   </div>
                 </div>
-
-                <div class="card-attributes pt-1">
-                  <?php if (!empty($row['SIZE'])): ?>
-                    <span class="meta-chip">Size <?=h($row['SIZE'])?></span>
-                  <?php endif; ?>
-                  <?php if (!empty($row['MAU'])): ?>
-                    <span class="meta-chip">Màu <?=h($row['MAU'])?></span>
-                  <?php endif; ?>
-                </div>
-
                 <div class="text-xs text-slate-500 space-y-1">
-                  <p>Tạm tính: <span class="estimate-text font-semibold text-emerald-600" data-estimate-for="<?= (int)$row['ID_TP'] ?>">Chọn ngày để tính</span></p>
-                  <p>Giá sẽ chính xác sau khi chọn ngày và số lượng.</p>
+                  <p>Thuê theo loại: <span class="estimate-text font-semibold text-emerald-600" data-estimate-for-type="<?= (int)$type['ID_LOAI'] ?>">Chọn ngày để tính</span></p>
+                  <p>Giá hiển thị là mức thấp nhất hiện khả dụng.</p>
                 </div>
-
                 <div class="card-actions mt-auto">
-                  <a
-                    href="trangphuc_chitiet.php?id=<?= $row['ID_TP'] ?>"
-                    class="inline-flex items-center justify-center rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 transition hover:border-indigo-200 hover:text-indigo-600"
-                    aria-label="Xem chi tiết trang phục <?= h($row['TEN_TP']) ?>"
-                  >
-                    Chi tiết
-                  </a>
-
-                  <?php if ($statusKey === 'san_sang'): ?>
-                    <?php
-                      $bookingQuery = http_build_query([
-                        'id'  => $row['ID_TP'],
-                        'from' => $rentFrom,
-                        'to'   => $rentTo,
-                        'qty'  => $qty,
-                      ]);
-                    ?>
+                  <?php if ($detailId): ?>
+                    <a href="<?=h($detailHref)?>" class="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 bg-white transition hover:border-indigo-300 hover:text-indigo-600">Chi tiết</a>
+                  <?php endif; ?>
+                  <?php if ($avail > 0): ?>
                     <a
-                      href="trangphuc_datthue.php?<?= h($bookingQuery) ?>"
-                      class="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-800"
+                      href="trangphuc_datthue.php?<?= h($typeBookingQuery) ?>"
+                      class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-800"
+                      data-book-btn="true"
                     >
-                      Đặt thuê
+                      Thuê theo loại
                     </a>
                   <?php else: ?>
-                    <span class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Tạm hết
-                    </span>
+                    <span class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tạm hết</span>
                   <?php endif; ?>
                 </div>
               </article>
@@ -989,20 +941,32 @@ $heroBackgroundUrl = $defaultImageUrl;
 
       const days = daysBetween(from, to);
 
-      document.querySelectorAll('[data-estimate-for]').forEach(span => {
+      // Estimate cho từng loại (dựa trên giá thấp nhất khả dụng hiện có)
+      document.querySelectorAll('[data-estimate-for-type]').forEach(span => {
         if (days <= 0) {
           span.textContent = 'Chọn ngày để tính';
           return;
         }
-
-        const priceContainer = span.closest('article');
-        if (!priceContainer) return;
-        const priceText = priceContainer.querySelector('[data-price]');
+        const card = span.closest('article');
+        if (!card) return;
+        const priceText = card.querySelector('[data-price]');
         if (!priceText) return;
         const raw = priceText.dataset.price || priceText.textContent.replace(/[^\d]/g, '');
         const price = parseInt(raw || '0', 10);
         const estimate = price * days * qty;
         span.textContent = new Intl.NumberFormat('vi-VN').format(estimate) + ' VND (' + days + ' ngày x ' + qty + ')';
+      });
+
+      // Click toàn bộ card mở chi tiết (trừ khi nhấn nút đặt thuê hoặc nút chi tiết riêng)
+      document.querySelectorAll('article.result-card[data-detail-id]').forEach(card => {
+        card.addEventListener('click', function(e){
+          const target = e.target;
+          if (target.closest('a')) { return; } // để anchor hoạt động bình thường
+          const detailId = card.getAttribute('data-detail-id');
+            if (detailId) {
+              window.location.href = 'trangphuc_chitiet.php?id=' + encodeURIComponent(detailId);
+            }
+        });
       });
     })();
   </script>

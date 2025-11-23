@@ -16,16 +16,24 @@ class PackageRepository {
         return (int)($row['total'] ?? 0);
     }
 
-    public function searchPackages(string $search='', int $limit=10, int $offset=0): array {
+    public function searchPackages(string $search='', int $limit=10, int $offset=0, ?int $branchScope=null): array {
+        // branchScope: if provided, include global packages + local owned by branch
         $sql = "SELECT g.*, vt.TONG_GIA_GOI
                 FROM goi_dich_vu g
                 LEFT JOIN v_goi_dich_vu_tong_tien vt ON vt.ID_GOI = g.ID_GOI
-                WHERE (g.TEN_GOI LIKE ? OR g.MO_TA LIKE ?)
-                ORDER BY g.ID_GOI DESC
-                LIMIT ? OFFSET ?";
-        $stmt = $this->conn->prepare($sql);
+                WHERE (g.TEN_GOI LIKE ? OR g.MO_TA LIKE ?)";
         $like = '%'.$search.'%';
-        $stmt->bind_param('ssii', $like, $like, $limit, $offset);
+        if ($branchScope !== null) {
+            $sql .= " AND (g.SCOPE_TYPE='global' OR (g.SCOPE_TYPE='local' AND g.ID_CN_OWNER=?))";
+        }
+        $sql .= " ORDER BY g.ID_GOI DESC LIMIT ? OFFSET ?";
+        if ($branchScope !== null) {
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bind_param('ssiii', $like, $like, $branchScope, $limit, $offset);
+        } else {
+            $stmt = $this->conn->prepare($sql);
+            $stmt->bind_param('ssii', $like, $like, $limit, $offset);
+        }
         $stmt->execute();
         $res = $stmt->get_result();
         $rows = [];
@@ -42,9 +50,11 @@ class PackageRepository {
     }
 
     public function create(array $data, ?string $imagePath): int {
-        // 5 placeholders + literal 'nhap'
-        $stmt = $this->conn->prepare("INSERT INTO goi_dich_vu (TEN_GOI, MO_TA, HINH_ANH, HIEU_LUC_TU, HIEU_LUC_DEN, TRANG_THAI) VALUES (?,?,?,?,?, 'nhap')");
-        $stmt->bind_param('sssss', $data['TEN_GOI'], $data['MO_TA'], $imagePath, $data['HIEU_LUC_TU'], $data['HIEU_LUC_DEN']);
+        // expects SCOPE_TYPE + ID_CN_OWNER optionally inside $data
+        $scope = $data['SCOPE_TYPE'] ?? 'global';
+        $owner = $data['ID_CN_OWNER'] ?? null;
+        $stmt = $this->conn->prepare("INSERT INTO goi_dich_vu (TEN_GOI, MO_TA, HINH_ANH, HIEU_LUC_TU, HIEU_LUC_DEN, SCOPE_TYPE, ID_CN_OWNER, TRANG_THAI) VALUES (?,?,?,?,?,?,?, 'nhap')");
+        $stmt->bind_param('ssssssii', $data['TEN_GOI'], $data['MO_TA'], $imagePath, $data['HIEU_LUC_TU'], $data['HIEU_LUC_DEN'], $scope, $owner);
         if (!$stmt->execute()) throw new \RuntimeException('Create package failed: '.$stmt->error);
         return (int)$this->conn->insert_id;
     }
@@ -52,8 +62,15 @@ class PackageRepository {
     public function update(array $data, ?string $imagePath): bool {
         $fields = ['TEN_GOI = ?', 'MO_TA = ?', 'HIEU_LUC_TU = ?', 'HIEU_LUC_DEN = ?'];
         $params = [$data['TEN_GOI'], $data['MO_TA'], $data['HIEU_LUC_TU'], $data['HIEU_LUC_DEN']];
+        if (isset($data['SCOPE_TYPE'])) { $fields[] = 'SCOPE_TYPE = ?'; $params[] = $data['SCOPE_TYPE']; }
+        if (array_key_exists('ID_CN_OWNER', $data)) { $fields[] = 'ID_CN_OWNER = ?'; $params[] = $data['ID_CN_OWNER']; }
         $types = 'ssss';
         if ($imagePath) { $fields[] = 'HINH_ANH = ?'; $params[] = $imagePath; $types .= 's'; }
+        // add types for scope / owner dynamic
+        foreach ($fields as $f) {
+            if (strpos($f, 'SCOPE_TYPE') !== false) { $types .= 's'; }
+            if (strpos($f, 'ID_CN_OWNER') !== false) { $types .= 'i'; }
+        }
         $types .= 'i';
         $params[] = $data['ID_GOI'];
         $sql = 'UPDATE goi_dich_vu SET '.implode(', ', $fields).' WHERE ID_GOI=?';

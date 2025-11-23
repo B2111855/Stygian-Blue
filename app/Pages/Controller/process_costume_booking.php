@@ -84,30 +84,8 @@ if ($days <= 0) {
     tp_redirect($bookingView);
 }
 
-$priceSelect = "0 AS DON_GIA, NULL AS HIEU_LUC_TU";
-$priceJoin   = '';
-$hasPriceView = false;
-if ($check = $conn->query("SHOW FULL TABLES LIKE 'v_trang_phuc_don_gia_moinhat'")) {
-    $hasPriceView = $check->num_rows > 0;
-    $check->free();
-}
-
-if ($hasPriceView) {
-    $priceSelect = "COALESCE(gia.DON_GIA, 0) AS DON_GIA";
-    $priceJoin   = "LEFT JOIN v_trang_phuc_don_gia_moinhat gia ON gia.ID_TP = tp.ID_TP";
-} else {
-    $hasPriceTable = false;
-    if ($check = $conn->query("SHOW TABLES LIKE 'don_gia_trang_phuc'")) {
-        $hasPriceTable = $check->num_rows > 0;
-        $check->free();
-    }
-    if ($hasPriceTable) {
-        $priceSelect = "COALESCE(gia.DON_GIA, 0) AS DON_GIA";
-        $priceJoin   = "LEFT JOIN (\n            SELECT x.ID_TP, x.DON_GIA\n            FROM don_gia_trang_phuc x\n            JOIN (\n                SELECT ID_TP, MAX(NGAY_GIO) AS MG\n                FROM don_gia_trang_phuc\n                GROUP BY ID_TP\n            ) m ON m.ID_TP = x.ID_TP AND m.MG = x.NGAY_GIO\n        ) gia ON gia.ID_TP = tp.ID_TP";
-    }
-}
-
-$costumeSql = "SELECT tp.ID_TP, tp.ID_CN, tp.TEN_TP, tp.TINH_TRANG, $priceSelect FROM trang_phuc tp $priceJoin WHERE tp.ID_TP = ? AND tp.IS_ACTIVE = 1 LIMIT 1";
+// New schema: GIA_THUE directly in trang_phuc table
+$costumeSql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.ID_CN, tp.TEN AS TEN_TP, tp.TRANG_THAI AS TINH_TRANG, COALESCE(tp.GIA_THUE, 0) AS DON_GIA FROM trang_phuc tp WHERE tp.ID_TRANG_PHUC = ? LIMIT 1";
 $costumeData = null;
 if ($stmt = $conn->prepare($costumeSql)) {
     $stmt->bind_param('i', $costumeId);
@@ -132,7 +110,7 @@ if ((string)$costumeData['ID_CN'] !== (string)$branchId) {
     tp_redirect($bookingView);
 }
 
-if ($costumeData['TINH_TRANG'] !== 'san_sang') {
+if ($costumeData['TINH_TRANG'] !== 'available') {
     $_SESSION['message'] = 'Trang phục đang không sẵn sàng để đặt thuê.';
     $_SESSION['message_type'] = 'error';
     tp_redirect($bookingView);
@@ -228,8 +206,15 @@ try {
     tp_redirect($successRedirect);
 } catch (Throwable $e) {
     $conn->rollback();
-    error_log('Costume booking error: ' . $e->getMessage());
-    $_SESSION['message'] = 'Không thể hoàn tất đặt thuê. Vui lòng thử lại hoặc liên hệ hỗ trợ.';
+    $rawMessage = $e->getMessage();
+    error_log('Costume booking error: ' . $rawMessage);
+
+    $userMessage = 'Không thể hoàn tất đặt thuê. Vui lòng thử lại hoặc liên hệ hỗ trợ.';
+    if (stripos($rawMessage, 'đặt/thuê trong khoảng thời gian này') !== false) {
+        $userMessage = 'Trang phục đã có lịch thuê trùng thời gian bạn chọn. Vui lòng chọn khoảng thời gian khác.';
+    }
+
+    $_SESSION['message'] = $userMessage;
     $_SESSION['message_type'] = 'error';
     tp_redirect($bookingView);
 }

@@ -1,6 +1,8 @@
 <?php
 session_start();
 include '../../../database/config.php';
+$cliTestMode = defined('CLI_TEST_MODE') && constant('CLI_TEST_MODE') === true;
+$__processScheduleCliResult = null;
 
 /**
  * process_schedule.php (bản ổn định theo môi trường hiện tại)
@@ -44,12 +46,24 @@ $packageId     = $_POST['package_id']   ?? null;
 $bookingType   = $_POST['booking_type'] ?? 'service';
 $userId        = $_SESSION['ID_TK']     ?? null;
 $selectedDevices = isset($_POST['thiet_bi_id']) ? $_POST['thiet_bi_id'] : [];
+$selectedCostumesRaw = isset($_POST['costume_ids']) && is_array($_POST['costume_ids']) ? $_POST['costume_ids'] : [];
+$selectedCostumes = [];
+foreach ($selectedCostumesRaw as $cid) {
+    if (ctype_digit((string)$cid)) {
+        $selectedCostumes[] = (int)$cid;
+    }
+}
+$selectedCostumes = array_values(array_unique($selectedCostumes));
 
 if (!$userId && isset($_SESSION['user']['ID_TK'])) {
     $userId = $_SESSION['user']['ID_TK'];
 }
 
-$bookingType = $bookingType === 'package' ? 'package' : 'service';
+$bookingType = in_array($bookingType, ['package', 'costume'], true) ? $bookingType : 'service';
+if ($bookingType === 'costume') {
+    $serviceId = null;
+    $packageId = null;
+}
 $locationType = $locationType === 'external' ? 'external' : 'branch';
 $branchId    = $branchId !== null ? (int)$branchId : null;
 $serviceId   = ctype_digit((string)$serviceId) ? (int)$serviceId : null;
@@ -85,6 +99,9 @@ if ($bookingType === 'service' && !$serviceId) {
 if ($bookingType === 'package' && !$packageId) {
     $errors[] = "Thiếu gói dịch vụ.";
 }
+if ($bookingType === 'costume' && empty($selectedCostumes)) {
+    $errors[] = "Chọn ít nhất một trang phục.";
+}
 
 $currentDateTime  = new DateTime('now');
 $selectedDateTime = $startTime
@@ -116,7 +133,13 @@ if (!$selectedDateTime) {
 if (!empty($errors)) {
     $_SESSION['message'] = implode("<br>", $errors);
     $_SESSION['message_type'] = "error";
-    // Bạn có thể đổi 'lienhe.php' thành trang form đặt lịch thực tế
+    if ($cliTestMode) {
+        $__processScheduleCliResult = [
+            'status' => 'error',
+            'messages' => $errors,
+        ];
+        return $__processScheduleCliResult;
+    }
     header("Location: ../Views/lienhe.php");
     exit();
 }
@@ -129,6 +152,10 @@ if ($bookingType === 'package' && $packageId) {
     if ($stmtPackage === false) {
         $_SESSION['message'] = "Không xác định được dịch vụ đại diện cho gói đã chọn.";
         $_SESSION['message_type'] = "error";
+        if ($cliTestMode) {
+            $__processScheduleCliResult = ['status' => 'error', 'messages' => ["Không xác định được dịch vụ đại diện cho gói đã chọn."]];
+            return $__processScheduleCliResult;
+        }
         header("Location: ../Views/lienhe.php");
         exit();
     }
@@ -143,6 +170,10 @@ if ($bookingType === 'package' && $packageId) {
     if (!$serviceId) {
         $_SESSION['message'] = "Gói dịch vụ chưa được cấu hình chi tiết. Vui lòng chọn gói khác.";
         $_SESSION['message_type'] = "error";
+        if ($cliTestMode) {
+            $__processScheduleCliResult = ['status' => 'error', 'messages' => ["Gói dịch vụ chưa được cấu hình chi tiết. Vui lòng chọn gói khác."]];
+            return $__processScheduleCliResult;
+        }
         header("Location: ../Views/lienhe.php");
         exit();
     }
@@ -197,6 +228,14 @@ try {
                 VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?, ?, ?, ?, ?, ?, ?)
             ";
             $stmt = $conn->prepare($sqlInsertLich);
+        } elseif ($bookingType === 'costume') {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH,
+                     LOCATION_TYPE, LOCATION_ADDRESS, LOCATION_LAT, LOCATION_LNG, DISTANCE_KM, TRAVEL_FEE)
+                VALUES (?, ?, ?, NULL, NULL, 'Đang chờ', ?, ?, ?, ?, ?, ?, ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
         } else {
             $sqlInsertLich = "
                 INSERT INTO lich_hen
@@ -212,6 +251,13 @@ try {
                 INSERT INTO lich_hen
                     (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
                 VALUES (?, ?, ?, ?, ?, 'Đang chờ', ?)
+            ";
+            $stmt = $conn->prepare($sqlInsertLich);
+        } elseif ($bookingType === 'costume') {
+            $sqlInsertLich = "
+                INSERT INTO lich_hen
+                    (ID_TK, THOI_GIAN_BAT_DAU, DIA_CHI_HEN, ID_DV, ID_GOI, TRANGTHAI, ID_CHINHANH)
+                VALUES (?, ?, ?, NULL, NULL, 'Đang chờ', ?)
             ";
             $stmt = $conn->prepare($sqlInsertLich);
         } else {
@@ -244,6 +290,12 @@ try {
                 $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId,
                 $locationType, $locAddr, $locLat, $locLng, $distVal, $feeVal
             );
+        } elseif ($bookingType === 'costume') {
+            $stmt->bind_param(
+                "sssissdddi",
+                $userId, $startTimeMySQL, $address, $branchId,
+                $locationType, $locAddr, $locLat, $locLng, $distVal, $feeVal
+            );
         } else {
             $stmt->bind_param(
                 "sssiissdddi",
@@ -254,6 +306,8 @@ try {
     } else {
         if ($bookingType === 'package') {
             $stmt->bind_param("sssiii", $userId, $startTimeMySQL, $address, $serviceId, $packageId, $branchId);
+        } elseif ($bookingType === 'costume') {
+            $stmt->bind_param("sssi", $userId, $startTimeMySQL, $address, $branchId);
         } else {
             $stmt->bind_param("sssii", $userId, $startTimeMySQL, $address, $serviceId, $branchId);
         }
@@ -322,10 +376,124 @@ try {
 
 
     // 3.4 Commit nếu tất cả ok
+    // 3.3.1 Ghi line items khi tính năng trang phục bật
+    $enablePackageCostume = getenv('ENABLE_PACKAGE_COSTUME');
+    $enablePackageCostume = $enablePackageCostume === false ? '1' : $enablePackageCostume;
+
+    if ($enablePackageCostume !== '0') {
+        $tblCheck = $conn->query("SHOW TABLES LIKE 'BOOKING_ITEM'");
+        $hasBookingItem = $tblCheck && $tblCheck->num_rows > 0;
+        if ($tblCheck) { $tblCheck->close(); }
+
+        if ($hasBookingItem && $bookingType === 'package' && $packageId) {
+            // Lấy giá gói
+            $packagePrice = 0;
+            $stmtPkg = $conn->prepare("SELECT TONG_GIA_GOI FROM v_goi_dich_vu_tong_tien WHERE ID_GOI = ? LIMIT 1");
+            if ($stmtPkg) {
+                $stmtPkg->bind_param('i', $packageId);
+                $stmtPkg->execute();
+                $resPkg = $stmtPkg->get_result();
+                $rowPkg = $resPkg ? $resPkg->fetch_assoc() : null;
+                $packagePrice = $rowPkg && isset($rowPkg['TONG_GIA_GOI']) ? (int)$rowPkg['TONG_GIA_GOI'] : 0;
+                $stmtPkg->close();
+            }
+
+            $stmtItem = $conn->prepare("INSERT INTO BOOKING_ITEM (ID_LICHHEN, ITEM_TYPE, REF_ID, DON_GIA, SO_LUONG, DISCOUNT_PERCENT, NOTE) VALUES (?, 'package', ?, ?, 1, 0, 'Gói dịch vụ')");
+            if ($stmtItem) {
+                $stmtItem->bind_param('iii', $lichHenId, $packageId, $packagePrice);
+                $stmtItem->execute();
+                $stmtItem->close();
+            }
+
+            $costumeMap = [];
+            $stmtC = $conn->prepare("SELECT tp.ID_TRANG_PHUC, tp.TEN, tp.GIA_THUE, gtp.DISCOUNT_PERCENT, gtp.BAT_BUOC
+                                       FROM GOI_TRANG_PHUC gtp
+                                       JOIN TRANG_PHUC tp ON tp.ID_TRANG_PHUC = gtp.ID_TRANG_PHUC
+                                       WHERE gtp.ID_GOI = ?");
+            if ($stmtC) {
+                $stmtC->bind_param('i', $packageId);
+                $stmtC->execute();
+                $resC = $stmtC->get_result();
+                while ($r = $resC->fetch_assoc()) {
+                    $costumeMap[(int)$r['ID_TRANG_PHUC']] = $r;
+                }
+                $stmtC->close();
+            }
+
+            $selectedCostumesFiltered = [];
+            foreach ($selectedCostumes as $cid) {
+                if (isset($costumeMap[$cid]) && (int)$costumeMap[$cid]['BAT_BUOC'] === 0) {
+                    $selectedCostumesFiltered[] = $cid;
+                }
+            }
+
+            foreach ($costumeMap as $cid => $info) {
+                $isMandatory = (int)$info['BAT_BUOC'] === 1;
+                if (!$isMandatory) continue;
+                $stmtItem = $conn->prepare("INSERT INTO BOOKING_ITEM (ID_LICHHEN, ITEM_TYPE, REF_ID, DON_GIA, SO_LUONG, DISCOUNT_PERCENT, NOTE) VALUES (?, 'costume', ?, 0, 1, 100, 'Trang phục bao gồm')");
+                if ($stmtItem) {
+                    $stmtItem->bind_param('ii', $lichHenId, $cid);
+                    $stmtItem->execute();
+                    $stmtItem->close();
+                }
+            }
+
+            foreach ($selectedCostumesFiltered as $cid) {
+                $info = $costumeMap[$cid];
+                $base = (int)$info['GIA_THUE'];
+                $discountPercent = (int)$info['DISCOUNT_PERCENT'];
+                $finalPrice = $base;
+                if ($discountPercent > 0) {
+                    $finalPrice = (int)round($base * (1 - $discountPercent / 100));
+                }
+                $stmtItem = $conn->prepare("INSERT INTO BOOKING_ITEM (ID_LICHHEN, ITEM_TYPE, REF_ID, DON_GIA, SO_LUONG, DISCOUNT_PERCENT, NOTE) VALUES (?, 'costume', ?, ?, 1, ?, 'Trang phục tuỳ chọn')");
+                if ($stmtItem) {
+                    $stmtItem->bind_param('iiii', $lichHenId, $cid, $finalPrice, $discountPercent);
+                    $stmtItem->execute();
+                    $stmtItem->close();
+                }
+            }
+        } elseif ($hasBookingItem && $bookingType === 'costume' && !empty($selectedCostumes)) {
+            $placeholders = implode(',', array_fill(0, count($selectedCostumes), '?'));
+            $types = str_repeat('i', count($selectedCostumes));
+            $sqlCostumes = "SELECT ID_TRANG_PHUC, TEN, GIA_THUE FROM TRANG_PHUC WHERE ID_TRANG_PHUC IN ($placeholders)";
+            $stmtCostume = $conn->prepare($sqlCostumes);
+            $costumeRows = [];
+            if ($stmtCostume) {
+                $stmtCostume->bind_param($types, ...$selectedCostumes);
+                $stmtCostume->execute();
+                $res = $stmtCostume->get_result();
+                $costumeRows = $res ? $res->fetch_all(MYSQLI_ASSOC) : [];
+                $stmtCostume->close();
+            }
+
+            foreach ($costumeRows as $row) {
+                $cid = (int)$row['ID_TRANG_PHUC'];
+                $price = (int)$row['GIA_THUE'];
+                $stmtItem = $conn->prepare("INSERT INTO BOOKING_ITEM (ID_LICHHEN, ITEM_TYPE, REF_ID, DON_GIA, SO_LUONG, DISCOUNT_PERCENT, NOTE) VALUES (?, 'costume', ?, ?, 1, 0, 'Thuê trang phục lẻ')");
+                if ($stmtItem) {
+                    $stmtItem->bind_param('iii', $lichHenId, $cid, $price);
+                    $stmtItem->execute();
+                    $stmtItem->close();
+                }
+            }
+        }
+    }
+
     $conn->commit();
 
     $_SESSION['message'] = "Đặt lịch hẹn thành công!";
     $_SESSION['message_type'] = "success";
+
+    if ($cliTestMode) {
+        $__processScheduleCliResult = [
+            'status' => 'success',
+            'booking_id' => $lichHenId,
+            'travel_fee' => $travelFee,
+            'distance_km' => $distanceKm,
+        ];
+        return $__processScheduleCliResult;
+    }
 
     // Điều hướng đến trang xem lịch hẹn (giống file cũ của bạn)
     header("Location: ../../Pages/Views/xemLichhen.php");
@@ -341,6 +509,14 @@ try {
     // Thông báo người dùng
     $_SESSION['message'] = "Đã xảy ra lỗi khi đặt lịch. Vui lòng thử lại.";
     $_SESSION['message_type'] = "error";
+
+    if ($cliTestMode) {
+        $__processScheduleCliResult = [
+            'status' => 'error',
+            'message' => $e->getMessage(),
+        ];
+        return $__processScheduleCliResult;
+    }
 
     // bạn có thể đổi trang này sang form đặt lịch của bạn
     header("Location: ../lienhe.php");

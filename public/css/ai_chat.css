@@ -17,6 +17,7 @@
   flex-direction: column;
   align-items: flex-end;
   gap: 12px;
+  pointer-events: none;
 }
 
 .sb-ai-dial-actions {
@@ -29,12 +30,28 @@
   transition: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
   pointer-events: none;
   align-items: flex-end;
+  /* Prevent hidden actions from expanding the speed dial container */
+  position: absolute;
+  bottom: 80px; /* place action stack above the toggle button */
+  right: 0;
+  /* Avoid large invisible hit box */
+  width: max-content;
 }
 
 .sb-ai-speed-dial.is-open .sb-ai-dial-actions {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Allow clicks on toggle button when speed dial is not open */
+.sb-ai-speed-dial .sb-ai-chat-toggle {
+  pointer-events: auto;
+}
+
+/* Allow clicks on dial buttons when open */
+.sb-ai-speed-dial.is-open .sb-ai-dial-btn {
   pointer-events: auto;
 }
 
@@ -52,6 +69,7 @@
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
+  pointer-events: none;
 }
 
 /* Channel styles to match sample look */
@@ -145,6 +163,7 @@
   box-shadow: 0 8px 24px rgba(99, 102, 241, 0.4);
   transition: all 0.3s ease;
   position: relative;
+  pointer-events: auto;
 }
 
 /* Khi cửa sổ chat đang mở, cho phép click xuyên qua speed dial trừ nút toggle */
@@ -238,6 +257,7 @@
   overflow: hidden;
   z-index: 999;
   animation: slideUp 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  pointer-events: auto;
 }
 
 @keyframes slideUp {

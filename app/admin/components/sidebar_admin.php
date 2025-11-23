@@ -41,9 +41,11 @@ $adminNavGroups = [
     'items' => [
       ['slug' => 'services',    'icon' => 'fas fa-concierge-bell',  'label' => 'Quản lý dịch vụ', 'badge' => null],
       ['slug' => 'packages',    'icon' => 'fas fa-box-open',        'label' => 'Gói dịch vụ', 'badge' => null],
+      ['slug' => 'package_costumes', 'icon' => 'fas fa-palette',  'label' => 'Gói trang phục', 'badge' => null],
       ['slug' => 'branches',    'icon' => 'fas fa-code-branch',     'label' => 'Quản lý chi nhánh', 'badge' => null],
       ['slug' => 'equipment',   'icon' => 'fas fa-cogs',            'label' => 'Quản lý thiết bị', 'badge' => null],
       ['slug' => 'costumes',    'icon' => 'fas fa-tshirt',          'label' => 'Quản lý trang phục', 'badge' => null],
+      ['slug' => 'costume_rentals','icon' => 'fas fa-file-signature','label' => 'Đơn thuê trang phục', 'badge' => null],
     ],
   ],
   [

@@ -108,16 +108,19 @@ function calculateTotalPrice($idLichHen)
 
 
 $stmt = mysqli_prepare($conn, "
-    SELECT hd.ID_HD, hd.NGAY_GIO, hd.TRANGTHAI_THANHTOAN,
-           hd.PHUONGTHUC_THANHTOAN,
-           tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
-           kh.HO_TEN, kh.EMAIL, kh.SDT,
-           dv.TEN_DV, dv.thoi_gian, dgdv.DON_GIA AS GIA_DV, lh.ID_LICHHEN
+    SELECT 
+        hd.ID_HD, hd.NGAY_GIO, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN, hd.TONG_TIEN,
+        tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
+        kh.HO_TEN, kh.EMAIL, kh.SDT,
+        lh.ID_LICHHEN, dv.TEN_DV, dv.thoi_gian, dgdv.DON_GIA AS GIA_DV,
+        ttp.ID_TTP, ttp.NGAY_NHAN, ttp.NGAY_TRA_DK, ttp.NGAY_TRA_TT, ttp.TRANG_THAI AS TTP_TRANGTHAI,
+        ttp.TIEN_COC, ttp.TONG_TIEN_DU_KIEN, ttp.TONG_TIEN_THUC_TE
     FROM hoa_don hd
-    JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
-    JOIN tai_khoan kh ON lh.ID_TK = kh.ID_TK
-    JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
-    JOIN don_gia_dich_vu dgdv ON dv.ID_DV = dgdv.ID_DV
+    LEFT JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
+    LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+    LEFT JOIN don_gia_dich_vu dgdv ON dv.ID_DV = dgdv.ID_DV
+    LEFT JOIN don_thue_trang_phuc ttp ON hd.ID_TTP = ttp.ID_TTP
+    LEFT JOIN tai_khoan kh ON COALESCE(lh.ID_TK, ttp.ID_TK) = kh.ID_TK
     LEFT JOIN (
         SELECT t1.ID_HD,
                t1.TRANG_THAI AS VNPAY_TRANG_THAI,
@@ -182,7 +185,45 @@ if ($gatewayStatus === 'pending') {
     ];
 }
 
-$invoiceTotals = calculateTotalPrice($invoice['ID_LICHHEN']);
+// Xác định loại hóa đơn: lịch hẹn hay thuê trang phục
+$isRental = !empty($invoice['ID_TTP']);
+
+// Lấy line items chuẩn từ chi_tiet_hoa_don (áp dụng cho cả hai loại)
+$lineItems = [];
+$lineStmt = mysqli_prepare($conn, "SELECT MO_TA, SO_LUONG, DON_GIA, THANH_TIEN FROM chi_tiet_hoa_don WHERE ID_HD = ? ORDER BY ID_CTHD ASC");
+if ($lineStmt) {
+    mysqli_stmt_bind_param($lineStmt, 'i', $invoice['ID_HD']);
+    if (mysqli_stmt_execute($lineStmt)) {
+        $resLines = mysqli_stmt_get_result($lineStmt);
+        while ($resLines && $li = mysqli_fetch_assoc($resLines)) {
+            $lineItems[] = $li;
+        }
+    }
+    mysqli_stmt_close($lineStmt);
+}
+
+// Tính tổng theo lịch hẹn (cách cũ) chỉ khi là lịch hẹn
+$invoiceTotals = $isRental ? ['totalDV' => 0, 'totalTB' => 0, 'total' => (float)$invoice['TONG_TIEN']] : calculateTotalPrice($invoice['ID_LICHHEN']);
+
+// Nếu là đơn thuê trang phục: lấy chi tiết trang phục
+$rentalItems = [];
+if ($isRental) {
+    $riStmt = mysqli_prepare($conn, "
+        SELECT ct.SO_LUONG, ct.DON_GIA_AP_DUNG, tp.TEN
+        FROM don_thue_trang_phuc_ct ct
+        JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
+        WHERE ct.ID_TTP = ?");
+    if ($riStmt) {
+        mysqli_stmt_bind_param($riStmt, 'i', $invoice['ID_TTP']);
+        if (mysqli_stmt_execute($riStmt)) {
+            $riRes = mysqli_stmt_get_result($riStmt);
+            while ($riRes && $r = mysqli_fetch_assoc($riRes)) {
+                $rentalItems[] = $r;
+            }
+        }
+        mysqli_stmt_close($riStmt);
+    }
+}
 
 $stmtTB = mysqli_prepare($conn, "
     SELECT tb.TEN_TB, dgtb.DON_GIA, lhtb.SO_LUONG
@@ -277,10 +318,26 @@ if ($stmtTB) {
 
     <!-- Thông tin chính -->
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-gray-700">
-        <p><strong>Mã lịch hẹn:</strong> <?= $invoice['ID_LICHHEN'] ?></p>
-        <p><strong>Ngày lập hóa đơn:</strong> <?= date('d/m/Y H:i', strtotime($invoice['NGAY_GIO'])) ?></p>
-        <p><strong>Dịch vụ:</strong> <?= htmlspecialchars($invoice['TEN_DV']) ?></p>
-        <p><strong>Thời lượng dịch vụ:</strong> <?= $invoice['thoi_gian'] ?> phút</p>
+        <?php if ($isRental): ?>
+            <p><strong>Mã đơn thuê:</strong> <?= (int)$invoice['ID_TTP'] ?></p>
+            <p><strong>Ngày lập hóa đơn:</strong> <?= date('d/m/Y H:i', strtotime($invoice['NGAY_GIO'])) ?></p>
+            <p><strong>Ngày nhận:</strong> <?= htmlspecialchars(date('d/m/Y H:i', strtotime($invoice['NGAY_NHAN']))) ?></p>
+            <p><strong>Trả dự kiến:</strong> <?= htmlspecialchars(date('d/m/Y H:i', strtotime($invoice['NGAY_TRA_DK']))) ?></p>
+            <?php if (!empty($invoice['NGAY_TRA_TT'])): ?>
+                <p><strong>Trả thực tế:</strong> <?= htmlspecialchars(date('d/m/Y H:i', strtotime($invoice['NGAY_TRA_TT']))) ?></p>
+            <?php endif; ?>
+            <p><strong>Trạng thái đơn thuê:</strong> <?= htmlspecialchars($invoice['TTP_TRANGTHAI'] ?? '-') ?></p>
+            <p><strong>Tiền cọc:</strong> <?= number_format((float)$invoice['TIEN_COC'], 0, ',', '.') ?> VND</p>
+            <p><strong>Tổng dự kiến:</strong> <?= number_format((float)$invoice['TONG_TIEN_DU_KIEN'], 0, ',', '.') ?> VND</p>
+            <?php if (!empty($invoice['TONG_TIEN_THUC_TE'])): ?>
+                <p><strong>Tổng thực tế:</strong> <?= number_format((float)$invoice['TONG_TIEN_THUC_TE'], 0, ',', '.') ?> VND</p>
+            <?php endif; ?>
+        <?php else: ?>
+            <p><strong>Mã lịch hẹn:</strong> <?= (int)$invoice['ID_LICHHEN'] ?></p>
+            <p><strong>Ngày lập hóa đơn:</strong> <?= date('d/m/Y H:i', strtotime($invoice['NGAY_GIO'])) ?></p>
+            <p><strong>Dịch vụ:</strong> <?= htmlspecialchars($invoice['TEN_DV']) ?></p>
+            <p><strong>Thời lượng dịch vụ:</strong> <?= (int)$invoice['thoi_gian'] ?> phút</p>
+        <?php endif; ?>
     </div>
 
     <!-- Khách hàng -->
@@ -291,26 +348,58 @@ if ($stmtTB) {
         <p><strong>SĐT:</strong> <?= htmlspecialchars($invoice['SDT']) ?></p>
     </div>
 
-    <!-- Dịch vụ -->
-    <h2 class="text-xl font-bold text-slate-900 mb-2">Dịch vụ sử dụng</h2>
-    <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
-        <thead class="bg-indigo-100">
-            <tr>
-                <th class="p-3 border">Tên dịch vụ</th>
-                <th class="p-3 border">Thời lượng</th>
-                <th class="p-3 border">Đơn giá</th>
-                <th class="p-3 border">Thành tiền</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr class="bg-white">
-                <td class="p-3 border"><?= $invoice['TEN_DV'] ?></td>
-                <td class="p-3 border"><?= $invoice['thoi_gian'] ?> phút</td>
-                <td class="p-3 border"><?= number_format($invoice['GIA_DV'], 0, ',', '.') ?> VND</td>
-                <td class="p-3 border font-semibold text-green-600"><?= number_format($invoiceTotals['totalDV'], 0, ',', '.') ?> VND</td>
-            </tr>
-        </tbody>
-    </table>
+    <?php if ($isRental): ?>
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Trang phục thuê</h2>
+        <?php if (!empty($rentalItems)): ?>
+            <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
+                <thead class="bg-indigo-100">
+                    <tr>
+                        <th class="p-3 border">Tên trang phục</th>
+                        <th class="p-3 border">Số lượng</th>
+                        <th class="p-3 border">Đơn giá áp dụng</th>
+                        <th class="p-3 border">Thành tiền</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php $rentalSubtotal = 0; foreach ($rentalItems as $ri): $sub = $ri['SO_LUONG'] * $ri['DON_GIA_AP_DUNG']; $rentalSubtotal += $sub; ?>
+                        <tr class="bg-white hover:bg-gray-50">
+                            <td class="p-3 border"><?= htmlspecialchars($ri['TEN']) ?></td>
+                            <td class="p-3 border"><?= (int)$ri['SO_LUONG'] ?></td>
+                            <td class="p-3 border"><?= number_format($ri['DON_GIA_AP_DUNG'], 0, ',', '.') ?> VND</td>
+                            <td class="p-3 border"><?= number_format($sub, 0, ',', '.') ?> VND</td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <tr class="font-bold bg-gray-100">
+                        <td colspan="3" class="p-3 border text-right">Tạm tính trang phục</td>
+                        <td class="p-3 border text-indigo-700"><?= number_format($rentalSubtotal, 0, ',', '.') ?> VND</td>
+                    </tr>
+                </tbody>
+            </table>
+        <?php else: ?>
+            <p class="text-sm text-gray-600 mb-4">Không có dữ liệu trang phục chi tiết.</p>
+        <?php endif; ?>
+    <?php else: ?>
+        <!-- Dịch vụ -->
+        <h2 class="text-xl font-bold text-slate-900 mb-2">Dịch vụ sử dụng</h2>
+        <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
+            <thead class="bg-indigo-100">
+                <tr>
+                    <th class="p-3 border">Tên dịch vụ</th>
+                    <th class="p-3 border">Thời lượng</th>
+                    <th class="p-3 border">Đơn giá</th>
+                    <th class="p-3 border">Thành tiền</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr class="bg-white">
+                    <td class="p-3 border"><?= htmlspecialchars($invoice['TEN_DV']) ?></td>
+                    <td class="p-3 border"><?= (int)$invoice['thoi_gian'] ?> phút</td>
+                    <td class="p-3 border"><?= number_format((float)$invoice['GIA_DV'], 0, ',', '.') ?> VND</td>
+                    <td class="p-3 border font-semibold text-green-600"><?= number_format($invoiceTotals['totalDV'], 0, ',', '.') ?> VND</td>
+                </tr>
+            </tbody>
+        </table>
+    <?php endif; ?>
 
     <!-- Thiết bị -->
     <?php if ($equipments && mysqli_num_rows($equipments) > 0): ?>
@@ -341,9 +430,41 @@ if ($stmtTB) {
         </table>
     <?php endif; ?>
 
+    <!-- Invoice line items breakdown (chi_tiet_hoa_don) -->
+    <?php if (!empty($lineItems)): ?>
+        <h2 class="text-xl font-bold text-slate-900 mt-6 mb-2">Các dòng hóa đơn</h2>
+        <table class="w-full border mt-2 rounded-lg overflow-hidden text-sm">
+            <thead class="bg-indigo-100">
+                <tr>
+                    <th class="p-3 border">Mô tả</th>
+                    <th class="p-3 border">SL</th>
+                    <th class="p-3 border">Đơn giá</th>
+                    <th class="p-3 border">Thành tiền</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php $computedTotal = 0; foreach ($lineItems as $li): $computedTotal += (float)$li['THANH_TIEN']; ?>
+                    <tr class="bg-white">
+                        <td class="p-3 border"><?= htmlspecialchars($li['MO_TA']) ?></td>
+                        <td class="p-3 border text-center"><?= (int)$li['SO_LUONG'] ?></td>
+                        <td class="p-3 border"><?= number_format((float)$li['DON_GIA'], 0, ',', '.') ?> VND</td>
+                        <td class="p-3 border font-semibold"><?= number_format((float)$li['THANH_TIEN'], 0, ',', '.') ?> VND</td>
+                    </tr>
+                <?php endforeach; ?>
+                <tr class="bg-gray-100 font-bold">
+                    <td colspan="3" class="p-3 border text-right">Tổng theo dòng</td>
+                    <td class="p-3 border text-indigo-700"><?= number_format($computedTotal, 0, ',', '.') ?> VND</td>
+                </tr>
+            </tbody>
+        </table>
+    <?php endif; ?>
+
     <!-- Tổng cộng -->
     <div class="mt-8 text-right">
-        <h2 class="text-2xl font-bold text-indigo-700">Tổng cộng: <?= number_format($invoiceTotals['total'], 0, ',', '.') ?> VND</h2>
+        <h2 class="text-2xl font-bold text-indigo-700">Tổng cộng hiển thị: <?= number_format((float)$invoice['TONG_TIEN'], 0, ',', '.') ?> VND</h2>
+        <?php if (!$isRental && $invoiceTotals['total'] != (float)$invoice['TONG_TIEN']): ?>
+            <p class="text-xs text-amber-600 mt-1">Lưu ý: Tổng tính toán dịch vụ/thiết bị (<?= number_format($invoiceTotals['total'], 0, ',', '.') ?>) khác với tổng ghi hóa đơn (<?= number_format((float)$invoice['TONG_TIEN'], 0, ',', '.') ?>).</p>
+        <?php endif; ?>
     </div>
 
     <!-- Xác nhận thanh toán hoặc trạng thái -->

@@ -238,7 +238,7 @@ $branchMapNoteText = $hasGoogleKey
                 <span>Gói dịch vụ</span>
               </label>
             </div>
-            <p class="text-xs text-slate-500">Chọn gói dịch vụ để đặt trọn bộ dịch vụ với giá ưu đãi.</p>
+            <p class="text-xs text-slate-500">Tuỳ nhu cầu: chọn dịch vụ lẻ hoặc gói trọn bộ.</p>
           </fieldset>
 
           <div class="space-y-2" data-service-field>
@@ -263,6 +263,9 @@ $branchMapNoteText = $hasGoogleKey
               <?php endforeach; ?>
             </select>
             <p class="text-xs text-slate-500">Giá hiển thị đã bao gồm toàn bộ dịch vụ trong gói.</p>
+          </div>
+          <div class="space-y-2 hidden" data-package-costume-field>
+            <!-- Sẽ được render động danh sách trang phục của gói -->
           </div>
 
           <div id="chon_thiet_bi_div" class="space-y-3 hidden">
@@ -1150,7 +1153,9 @@ $branchMapNoteText = $hasGoogleKey
 
   function currentBookingType() {
     const checked = root.querySelector("input[name='booking_type']:checked");
-    return checked && checked.value === 'package' ? 'package' : 'service';
+    if (!checked) return 'service';
+    if (checked.value === 'package') return 'package';
+    return 'service';
   }
 
   function toggleBookingFields() {
@@ -1603,6 +1608,7 @@ $branchMapNoteText = $hasGoogleKey
     const serviceValue = serviceSelect ? serviceSelect.value : '';
     const serviceId = serviceValue ? parseInt(serviceValue, 10) : 0;
     const packageId = parseInt(packageSelect ? packageSelect.value : '0', 10);
+    const costumeIds = selectedCostumeIds();
     const locationType = currentLocationType();
     const extLat = extLatField ? parseFloat(extLatField.value) : NaN;
     const extLng = extLngField ? parseFloat(extLngField.value) : NaN;
@@ -1634,7 +1640,11 @@ $branchMapNoteText = $hasGoogleKey
     quoteBox.classList.remove('hidden');
     quoteTotal.textContent = 'Đang tính...';
     if (quoteNote) {
-      quoteNote.textContent = defaultQuoteNote;
+      if (type === 'package') {
+        quoteNote.textContent = 'Giá gói đã bao gồm toàn bộ dịch vụ trong gói.';
+      } else {
+        quoteNote.textContent = defaultQuoteNote;
+      }
     }
 
     let travelRow = document.getElementById('travelFeeRow');
@@ -1666,12 +1676,17 @@ $branchMapNoteText = $hasGoogleKey
         branch_id: branchId,
         date,
         time,
+        booking_type: type,
         service_id: type === 'service' ? serviceId : null,
-        device_ids: selectedDeviceIds(),
+        device_ids: type === 'service' ? selectedDeviceIds() : [],
         location_type: locationType,
         ext_lat: Number.isFinite(extLat) ? extLat : null,
         ext_lng: Number.isFinite(extLng) ? extLng : null
       };
+      if (type === 'package') {
+        payload.package_id = packageId;
+        payload.costume_ids = costumeIds;
+      }
 
       const response = await fetch('../controller/quote_preview.php', {
         method: 'POST',
@@ -1679,14 +1694,9 @@ $branchMapNoteText = $hasGoogleKey
         body: JSON.stringify(payload)
       });
       const data = await response.json();
+      const total = data && typeof data.total === 'number' ? data.total : 0;
       const fee = data && typeof data.travel_fee === 'number' ? data.travel_fee : 0;
-      let displayTotal;
-      if (type === 'package') {
-        displayTotal = packagePrice + fee;
-      } else {
-        const total = data && typeof data.total === 'number' ? data.total : 0;
-        displayTotal = total;
-      }
+      const displayTotal = total;
       quoteTotal.textContent = displayTotal.toLocaleString('vi-VN') + '₫';
       // Show travel fee if present
       const feeVal = data && typeof data.travel_fee === 'number' ? data.travel_fee : 0;
@@ -1702,6 +1712,123 @@ $branchMapNoteText = $hasGoogleKey
       }
     }
   }
+
+  function selectedCostumeIds() {
+    return Array.from(root.querySelectorAll('[data-package-costume-field] input[name="costume_ids[]"]:checked'))
+      .map((cb) => parseInt(cb.value, 10))
+      .filter((id) => !Number.isNaN(id));
+  }
+
+  function renderPackageCostumes(packageId) {
+    const wrap = root.querySelector('[data-package-costume-field]');
+    if (!wrap) return;
+    if (!packageId) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      updateQuotePreview();
+      return;
+    }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = '<p class="text-sm text-slate-500">Đang tải trang phục gói...</p>';
+    fetch(`../controller/get_package_costumes.php?package_id=${encodeURIComponent(packageId)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (!data.ok) {
+          wrap.innerHTML = '<p class="text-sm text-rose-600">Không tải được danh sách trang phục.</p>';
+          return;
+        }
+        if (!Array.isArray(data.costumes) || data.costumes.length === 0) {
+          wrap.innerHTML = '<p class="text-sm text-slate-500">Gói này chưa cấu hình trang phục.</p>';
+          updateQuotePreview();
+          return;
+        }
+        const parts = [];
+        parts.push('<div class="space-y-2">');
+        parts.push('<p class="text-sm font-semibold text-slate-800">Trang phục trong gói</p>');
+        parts.push('<div class="grid gap-2 md:grid-cols-2">');
+        data.costumes.forEach(c => {
+          const id = c.ID_TRANG_PHUC;
+          const mandatory = parseInt(c.BAT_BUOC, 10) === 1;
+          const discount = parseInt(c.DISCOUNT_PERCENT, 10);
+          const basePrice = parseInt(c.GIA_THUE, 10);
+          let finalPrice = basePrice;
+          if (mandatory) finalPrice = 0; else if (discount > 0) finalPrice = Math.round(basePrice * (1 - discount/100));
+          const priceLabel = mandatory ? 'Bao gồm' : (discount > 0 ? `${finalPrice.toLocaleString('vi-VN')}₫ (giảm ${discount}%)` : `${finalPrice.toLocaleString('vi-VN')}₫`);
+          parts.push('<label class="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-sm shadow-sm" data-costume-row="'+id+'">');
+          if (mandatory) {
+            parts.push('<input type="checkbox" checked disabled class="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600" />');
+          } else {
+            parts.push(`<input name="costume_ids[]" value="${id}" type="checkbox" class="mt-1 h-4 w-4 rounded border-slate-300 text-sky-600" />`);
+          }
+          parts.push('<span class="flex flex-col">');
+          parts.push(`<span class="font-medium text-slate-700">${c.TEN}</span>`);
+          parts.push(`<span class="text-xs text-slate-500" data-costume-price="${id}">${priceLabel}</span>`);
+          parts.push('</span>');
+          parts.push('</label>');
+        });
+        parts.push('</div></div>');
+        wrap.innerHTML = parts.join('');
+        wrap.querySelectorAll("input[name='costume_ids[]']").forEach(cb => {
+          cb.addEventListener('change', () => updateQuotePreview());
+        });
+        updateQuotePreview();
+        updateCostumeAvailability();
+      })
+      .catch(() => {
+        wrap.innerHTML = '<p class="text-sm text-rose-600">Lỗi tải trang phục.</p>';
+      });
+  }
+
+  if (packageSelect) {
+    packageSelect.addEventListener('change', () => {
+      const pkgId = parseInt(packageSelect.value || '0', 10);
+      renderPackageCostumes(pkgId);
+    });
+  }
+
+  function updateCostumeAvailability() {
+    const date = dateField.value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const branchId = branchField ? parseInt(branchField.value || '0', 10) : 0;
+    if (!branchId) return;
+    const checkboxes = root.querySelectorAll('[data-package-costume-field] input[name="costume_ids[]"]');
+    const seen = new Set();
+    checkboxes.forEach((cb) => {
+      const id = parseInt(cb.value, 10);
+      if (Number.isNaN(id) || seen.has(id)) return;
+      seen.add(id);
+      const url = new URL('../controller/get_costume_availability.php', window.location.href);
+      url.searchParams.set('costume_id', id);
+      url.searchParams.set('date', date);
+      url.searchParams.set('branch_id', branchId);
+      fetch(url)
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.ok) return;
+          if (!data.available) {
+            const relatedCheckboxes = root.querySelectorAll(`input[name="costume_ids[]"][value="${id}"]`);
+            relatedCheckboxes.forEach((input) => {
+              input.checked = false;
+              input.disabled = true;
+            });
+            const spans = root.querySelectorAll(`[data-costume-price="${id}"]`);
+            spans.forEach((span) => {
+              if (span.dataset.unavailable !== 'true') {
+                span.textContent = span.textContent + ' • Hết ngày này';
+                span.classList.remove('text-slate-500');
+                span.classList.add('text-rose-600');
+                span.dataset.unavailable = 'true';
+              }
+            });
+          }
+        })
+        .catch(() => {});
+    });
+  }
+
+  dateField.addEventListener('change', () => {
+    updateCostumeAvailability();
+  });
 
   toggleBookingFields();
   toggleLocationFields();

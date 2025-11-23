@@ -57,7 +57,35 @@ if (!ctype_digit((string)$costumeId)) {
         }
     }
 
-    $sql = "SELECT\n        tp.ID_TP, tp.TEN_TP, tp.SIZE, tp.MAU, tp.TINH_TRANG, tp.NGAY_GIAT_CUOI, tp.GHI_CHU,\n        tp.ID_CN, cn.TEN_CN, cn.DIA_CHI_CN, cn.SDT_CN,\n        loai.TEN_LOAI, loai.MOTA AS MOTA_LOAI,\n        $priceSelect\n    FROM trang_phuc tp\n    JOIN CHI_NHANH cn ON cn.ID_CN = tp.ID_CN\n    LEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI\n    $priceJoin\n    WHERE tp.IS_ACTIVE = 1 AND tp.ID_TP = ?\n    LIMIT 1";
+      // View integrity test fallback
+      if ($hasPriceView) {
+        $test = $conn->query("SELECT 1 FROM v_trang_phuc_don_gia_moinhat LIMIT 1");
+        if (!$test) {
+          $hasPriceView = false;
+          $priceSelect = "0 AS DON_GIA, NULL AS HIEU_LUC_TU";
+          $priceJoin   = '';
+          if ($check = $conn->query("SHOW TABLES LIKE 'don_gia_trang_phuc'")) {
+            if ($check->num_rows > 0) {
+              $priceSelect = "COALESCE(gia.DON_GIA, 0) AS DON_GIA, gia.NGAY_GIO AS HIEU_LUC_TU";
+              $priceJoin   = "LEFT JOIN (\n                        SELECT x.ID_TP, x.DON_GIA, x.NGAY_GIO\n                        FROM don_gia_trang_phuc x\n                        JOIN (\n                            SELECT ID_TP, MAX(NGAY_GIO) AS MG\n                            FROM don_gia_trang_phuc\n                            GROUP BY ID_TP\n                        ) m ON m.ID_TP = x.ID_TP AND m.MG = x.NGAY_GIO\n                    ) gia ON gia.ID_TP = tp.ID_TP";
+            }
+            $check->free();
+          }
+        } else {
+          $test->free();
+        }
+      }
+
+    $sql = "SELECT
+      tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.TRANG_THAI AS TINH_TRANG, tp.GHI_CHU,
+      tp.ID_CN, cn.TEN_CN, cn.DIA_CHI_CN, cn.SDT_CN,
+      COALESCE(tp.GIA_THUE, 0) AS DON_GIA,
+      loai.TEN_LOAI, loai.ID_LOAI, COALESCE(loai.GIA_THUE_CO_SO, 0) AS GIA_LOAI
+    FROM trang_phuc tp
+    JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN
+    LEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI
+    WHERE tp.ID_TRANG_PHUC = ?
+    LIMIT 1";
 
     if ($stmt = $conn->prepare($sql)) {
         $stmt->bind_param('i', $costumeId);
@@ -86,25 +114,10 @@ if (!ctype_digit((string)$costumeId)) {
             $imgStmt->close();
         }
 
-        $recommendSql = "SELECT tp.ID_TP, tp.TEN_TP, tp.SIZE, tp.MAU, tp.ID_CN, cn.TEN_CN, $priceSelect, ha.URL AS HINH_ANH\n        FROM trang_phuc tp\n        JOIN CHI_NHANH cn ON cn.ID_CN = tp.ID_CN\n        $priceJoin\n        LEFT JOIN (\n            SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n            FROM trang_phuc_hinh_anh\n            WHERE IS_ACTIVE = 1\n            GROUP BY ID_TP\n        ) ha ON ha.ID_TP = tp.ID_TP\n        WHERE tp.IS_ACTIVE = 1 AND tp.ID_TP <> ?";
-
-        $params = [$costumeId];
-        $types  = 'i';
-
-        if (!empty($costume['TEN_LOAI'])) {
-            $recommendSql .= ' AND tp.ID_LOAI = (SELECT ID_LOAI FROM trang_phuc WHERE ID_TP = ? LIMIT 1)';
-            $types .= 'i';
-            $params[] = $costumeId;
-        } else {
-            $recommendSql .= ' AND tp.ID_CN = ?';
-            $types .= 'i';
-            $params[] = $costume['ID_CN'];
-        }
-
-        $recommendSql .= ' ORDER BY tp.TINH_TRANG = "san_sang" DESC, tp.TEN_TP ASC LIMIT 4';
+        $recommendSql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.ID_CN, cn.TEN_CN, COALESCE(tp.GIA_THUE, 0) AS DON_GIA, ha.URL AS HINH_ANH\n        FROM trang_phuc tp\n        JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\n        LEFT JOIN (\n            SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n            FROM trang_phuc_hinh_anh\n            WHERE IS_ACTIVE = 1\n            GROUP BY ID_TP\n        ) ha ON ha.ID_TP = tp.ID_TRANG_PHUC\n        WHERE tp.ID_TRANG_PHUC <> ? AND tp.ID_CN = ?\n        ORDER BY tp.TRANG_THAI = 'available' DESC, tp.TEN ASC LIMIT 4";
 
         if ($recStmt = $conn->prepare($recommendSql)) {
-            $recStmt->bind_param($types, ...$params);
+            $recStmt->bind_param('ii', $costumeId, $costume['ID_CN']);
             if ($recStmt->execute()) {
                 if ($recResult = $recStmt->get_result()) {
                     while ($row = $recResult->fetch_assoc()) {
@@ -118,24 +131,57 @@ if (!ctype_digit((string)$costumeId)) {
 }
 
 $statusMap = [
+    'available' => ['Sẵn sàng cho thuê', 'bg-emerald-50 text-emerald-700 border border-emerald-200'],
+    'rented' => ['Đang có lịch thuê', 'bg-indigo-50 text-indigo-700 border border-indigo-200'],
+    'maintenance' => ['Đang bảo trì', 'bg-amber-50 text-amber-700 border border-amber-200'],
+    // Legacy mappings
     'san_sang'  => ['Sẵn sàng cho thuê', 'bg-emerald-50 text-emerald-700 border border-emerald-200'],
     'dang_thue' => ['Đang có lịch thuê', 'bg-indigo-50 text-indigo-700 border border-indigo-200'],
     'bao_tri'   => ['Đang bảo trì', 'bg-amber-50 text-amber-700 border border-amber-200'],
     'ngung'     => ['Ngưng cho thuê', 'bg-rose-50 text-rose-700 border border-rose-200'],
 ];
 
-$coverImage = $gallery[0]['URL'] ?? '../../../public/images/bg01.png';
+// Process image URLs to use absolute paths
+$defaultImagePath = 'public/images/bg01.png';
+$defaultImageUrl = sb_asset_href($defaultImagePath);
+
+// Process gallery images
+foreach ($gallery as &$img) {
+    $img['URL'] = sb_asset_href($img['URL'] ?: $defaultImagePath);
+}
+unset($img);
+
+// Process recommend images  
+foreach ($recommend as &$rec) {
+    $rec['HINH_ANH'] = sb_asset_href($rec['HINH_ANH'] ?: $defaultImagePath);
+}
+unset($rec);
+
+$coverImage = $gallery[0]['URL'] ?? $defaultImageUrl;
 $coverAlt   = $gallery[0]['ALT_TEXT'] ?? ($costume['TEN_TP'] ?? 'Trang phục');
 $statusKey  = $costume['TINH_TRANG'] ?? null;
 $statusInfo = $statusKey && isset($statusMap[$statusKey]) ? $statusMap[$statusKey] : null;
 $priceValue = isset($costume['DON_GIA']) ? (int)$costume['DON_GIA'] : 0;
+$typePriceValue = isset($costume['GIA_LOAI']) ? (int)$costume['GIA_LOAI'] : 0;
+if ($typePriceValue <= 0) { $typePriceValue = $priceValue; }
 
-$prefillQuery = http_build_query([
-    'id'  => $costumeId,
+$itemPrefillQuery = http_build_query([
+  'mode' => 'item',
+  'id'   => $costumeId,
+  'from' => $fromQuery,
+  'to'   => $toQuery,
+  'qty'  => $qtyQuery,
+]);
+$typePrefillQuery = '';
+if (!empty($costume['ID_LOAI'])) {
+  $typePrefillQuery = http_build_query([
+    'mode' => 'type',
+    'loai' => $costume['ID_LOAI'],
     'from' => $fromQuery,
     'to'   => $toQuery,
     'qty'  => $qtyQuery,
-]);
+  ]);
+}
 ?>
 <!DOCTYPE html>
 <html lang="vi">
@@ -274,17 +320,51 @@ $prefillQuery = http_build_query([
               <p class="text-sm text-slate-600">Chọn ngày và hoàn tất đặt thuê trực tuyến. Hệ thống sẽ giữ trang phục cho bạn ngay khi xác nhận.</p>
             </div>
 
-            <div class="rounded-2xl border border-slate-200 p-5 space-y-3 bg-white/90">
-              <p class="text-sm text-slate-500 uppercase tracking-[0.3em]">Ước tính chi phí</p>
-              <p class="text-3xl font-semibold text-indigo-600" id="estimateText">Chọn ngày để xem chi phí</p>
-              <p class="text-xs text-slate-500">Áp dụng cho <?= $qtyQuery ?> bộ. Bạn có thể điều chỉnh lại trong bước đặt thuê.</p>
-              <button
-                type="button"
-                class="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
-                onclick="window.location.href='trangphuc_datthue.php?<?= tp_escape($prefillQuery) ?>'"
-              >
-                Bắt đầu đặt thuê
-              </button>
+            <div class="rounded-2xl border border-slate-200 p-5 space-y-5 bg-white/90">
+              <p class="text-sm text-slate-500 uppercase tracking-[0.3em]">Đặt thuê trực tiếp</p>
+              <div class="grid gap-4">
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-medium text-slate-600">Nhận từ</span>
+                  <input type="datetime-local" id="rent_from" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= tp_escape($fromQuery ? (strpos($fromQuery,'T')!==false?$fromQuery:$fromQuery.'T10:00') : '') ?>">
+                </label>
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-medium text-slate-600">Trả vào</span>
+                  <input type="datetime-local" id="rent_to" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= tp_escape($toQuery ? (strpos($toQuery,'T')!==false?$toQuery:$toQuery.'T10:00') : '') ?>">
+                </label>
+                <label class="flex flex-col gap-1 text-sm">
+                  <span class="font-medium text-slate-600">Số lượng (bộ)</span>
+                  <input type="number" min="1" id="rent_qty" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= (int)$qtyQuery ?>">
+                </label>
+              </div>
+              <div class="space-y-1">
+                <p class="text-xs text-slate-500">Ước tính chi phí</p>
+                <p class="text-3xl font-semibold text-indigo-600" id="estimateText">Chọn thời gian để xem</p>
+                <p class="text-xs text-slate-500" id="estimateNote"></p>
+              </div>
+              <div class="flex flex-col gap-3">
+                <form id="itemBookingForm" method="POST" action="../Controller/process_costume_booking.php" class="space-y-2">
+                  <input type="hidden" name="costume_id" value="<?= (int)$costumeId ?>">
+                  <input type="hidden" name="branch_id" value="<?= (int)($costume['ID_CN'] ?? 0) ?>">
+                  <input type="hidden" name="price_per_day" value="<?= $priceValue ?>">
+                  <input type="hidden" name="return_to" value="trangphuc_chitiet.php?id=<?= (int)$costumeId ?>">
+                  <input type="hidden" name="rent_from" id="rent_from_field_item">
+                  <input type="hidden" name="rent_to" id="rent_to_field_item">
+                  <input type="hidden" name="quantity" id="rent_qty_field_item">
+                  <button type="submit" class="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700">Thuê trang phục này</button>
+                </form>
+                <?php if (!empty($costume['ID_LOAI'])): ?>
+                <form id="typeBookingForm" method="POST" action="../Controller/process_costume_type_booking.php" class="space-y-2">
+                  <input type="hidden" name="type_id" value="<?= (int)$costume['ID_LOAI'] ?>">
+                  <input type="hidden" name="branch_id" value="<?= (int)($costume['ID_CN'] ?? 0) ?>">
+                  <input type="hidden" name="price_per_day" value="<?= $typePriceValue ?>">
+                  <input type="hidden" name="return_to" value="trangphuc_chitiet.php?id=<?= (int)$costumeId ?>">
+                  <input type="hidden" name="rent_from" id="rent_from_field_type">
+                  <input type="hidden" name="rent_to" id="rent_to_field_type">
+                  <input type="hidden" name="quantity" id="rent_qty_field_type">
+                  <button type="submit" class="w-full rounded-xl border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 bg-white transition hover:border-indigo-300 hover:text-indigo-600">Thuê theo loại (nhiều bộ)</button>
+                </form>
+                <?php endif; ?>
+              </div>
             </div>
 
             <div class="space-y-2">
@@ -333,11 +413,13 @@ $prefillQuery = http_build_query([
   <?php if ($priceValue > 0): ?>
   <script>
     (function(){
+      const priceItem = <?= (int)$priceValue ?>;
+      const priceType = <?= (int)$typePriceValue ?>;
       const estimateText = document.getElementById('estimateText');
-      const price = <?= (int)$priceValue ?>;
-      const qty   = <?= (int)$qtyQuery ?>;
-      const from  = <?= json_encode($fromQuery) ?>;
-      const to    = <?= json_encode($toQuery) ?>;
+      const estimateNote = document.getElementById('estimateNote');
+      const fromInput = document.getElementById('rent_from');
+      const toInput = document.getElementById('rent_to');
+      const qtyInput = document.getElementById('rent_qty');
 
       function calcDays(start, end) {
         const a = new Date(start);
@@ -347,15 +429,55 @@ $prefillQuery = http_build_query([
         return Math.max(0, Math.ceil(diff / 86400000));
       }
 
-      const days = calcDays(from, to);
-      if (estimateText) {
-        if (days <= 0) {
-          estimateText.textContent = 'Chọn ngày để xem chi phí';
+      function updateEstimate(){
+        const fromVal = fromInput.value;
+        const toVal = toInput.value;
+        const qtyVal = parseInt(qtyInput.value,10) || 1;
+        const days = calcDays(fromVal, toVal);
+        if(days <= 0){
+          estimateText.textContent = 'Chọn thời gian để xem';
+          estimateNote.textContent = '';
+          return;
+        }
+        const estItem = priceItem * days * qtyVal;
+        const estType = priceType * days * qtyVal;
+        estimateText.textContent = new Intl.NumberFormat('vi-VN').format(estItem) + ' ₫';
+        if (priceType !== priceItem) {
+          estimateNote.textContent = 'Theo loại: ' + new Intl.NumberFormat('vi-VN').format(estType) + ' ₫';
         } else {
-          const estimated = price * days * Math.max(1, qty);
-          estimateText.textContent = new Intl.NumberFormat('vi-VN').format(estimated) + ' ₫';
+          estimateNote.textContent = '';
         }
       }
+
+      ['change','input'].forEach(ev => {
+        fromInput.addEventListener(ev, updateEstimate);
+        toInput.addEventListener(ev, updateEstimate);
+        qtyInput.addEventListener(ev, updateEstimate);
+      });
+      updateEstimate();
+
+      // Sync hidden fields before submit
+      function syncHidden(){
+        const fromVal = fromInput.value;
+        const toVal = toInput.value;
+        const qtyVal = qtyInput.value;
+        const itemFrom = document.getElementById('rent_from_field_item');
+        const itemTo = document.getElementById('rent_to_field_item');
+        const itemQty = document.getElementById('rent_qty_field_item');
+        if(itemFrom) itemFrom.value = fromVal;
+        if(itemTo) itemTo.value = toVal;
+        if(itemQty) itemQty.value = qtyVal;
+        const typeFrom = document.getElementById('rent_from_field_type');
+        const typeTo = document.getElementById('rent_to_field_type');
+        const typeQty = document.getElementById('rent_qty_field_type');
+        if(typeFrom) typeFrom.value = fromVal;
+        if(typeTo) typeTo.value = toVal;
+        if(typeQty) typeQty.value = qtyVal;
+      }
+      const itemForm = document.getElementById('itemBookingForm');
+      const typeForm = document.getElementById('typeBookingForm');
+      if(itemForm){ itemForm.addEventListener('submit', syncHidden); }
+      if(typeForm){ typeForm.addEventListener('submit', syncHidden); }
 
       const thumbs = document.querySelectorAll('[data-thumb]');
       const mainImg = document.getElementById('tp-main-img');

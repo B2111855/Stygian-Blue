@@ -31,13 +31,29 @@ if (empty($_SESSION['ID_TK'])) {
 $invoiceId = (int) $_POST['invoice_id'];
 $userId = $_SESSION['ID_TK'];
 
+// TTL cho giao dịch pending (phút)
+$ttlMinutes = 20;
+// Dọn dẹp các giao dịch pending đã quá hạn trước khi khởi tạo mới
+$expireStmt = $conn->prepare("UPDATE thanh_toan_truc_tuyen SET TRANG_THAI='expired' WHERE TRANG_THAI='pending' AND CREATED_AT < (NOW() - INTERVAL ? MINUTE)");
+if ($expireStmt) { $expireStmt->bind_param('i', $ttlMinutes); $expireStmt->execute(); $expireStmt->close(); }
+
 $invoiceSql = "
-    SELECT h.ID_HD, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN, h.PHUONGTHUC_THANHTOAN,
-           k.HO_TEN, k.EMAIL, k.SDT
+    SELECT 
+        h.ID_HD,
+        h.TONG_TIEN,
+        h.TRANGTHAI_THANHTOAN,
+        h.PHUONGTHUC_THANHTOAN,
+        h.ID_TTP,
+        COALESCE(l.ID_TK, ttp.ID_TK) AS OWNER_ID,
+        k.HO_TEN,
+        k.EMAIL,
+        k.SDT,
+        ttp.TIEN_COC
     FROM hoa_don h
-    JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
-    JOIN khach_hang k ON l.ID_TK = k.ID_TK
-    WHERE h.ID_HD = ? AND l.ID_TK = ?
+    LEFT JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
+    LEFT JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
+    LEFT JOIN khach_hang k ON k.ID_TK = COALESCE(l.ID_TK, ttp.ID_TK)
+    WHERE h.ID_HD = ? AND (l.ID_TK = ? OR ttp.ID_TK = ?)
     LIMIT 1
 ";
 
@@ -49,7 +65,7 @@ if (!$stmt) {
     exit;
 }
 
-$stmt->bind_param('is', $invoiceId, $userId);
+$stmt->bind_param('iss', $invoiceId, $userId, $userId);
 $stmt->execute();
 $result = $stmt->get_result();
 $invoice = $result ? $result->fetch_assoc() : null;
@@ -69,9 +85,16 @@ if ($invoice['TRANGTHAI_THANHTOAN'] === 'Đã thanh toán') {
     exit;
 }
 
-$amount = (float) $invoice['TONG_TIEN'];
+// Luôn cho phép tạo phiên mới; hết hạn mọi phiên pending cũ của hóa đơn này trước khi tạo
+$expireInvoiceStmt = $conn->prepare("UPDATE thanh_toan_truc_tuyen SET TRANG_THAI='expired' WHERE ID_HD=? AND GATEWAY='vnpay' AND TRANG_THAI='pending'");
+if ($expireInvoiceStmt) { $expireInvoiceStmt->bind_param('i', $invoiceId); $expireInvoiceStmt->execute(); $expireInvoiceStmt->close(); }
+
+$isRental = !empty($invoice['ID_TTP']);
+$amount = $isRental ? (float) ($invoice['TIEN_COC'] ?? 0) : (float) $invoice['TONG_TIEN'];
 if ($amount <= 0) {
-    $_SESSION['payment_notice'] = 'Số tiền không hợp lệ để thanh toán.';
+    $_SESSION['payment_notice'] = $isRental
+        ? 'Đơn thuê này hiện không cần thanh toán tiền cọc.'
+        : 'Số tiền không hợp lệ để thanh toán.';
     $_SESSION['payment_notice_type'] = 'error';
     header('Location: ../Views/hoa_don.php');
     exit;
@@ -80,11 +103,11 @@ if ($amount <= 0) {
 $config = VNPayConfig::fromEnvironment(array_merge($_ENV, $_SERVER));
 $service = new VNPayService($config);
 
-$orderId = 'HD' . $invoiceId . '_' . date('YmdHis');
+$orderId = ($isRental ? 'COC_TTP' . $invoice['ID_TTP'] : 'HD' . $invoiceId) . '_' . date('YmdHis');
 $payload = [
     'orderId' => $orderId,
-    'orderDescription' => 'Thanh toan hoa don ' . $invoiceId,
-    'orderType' => 'billpayment',
+    'orderDescription' => $isRental ? ('Thanh toan tien coc don thue #' . $invoice['ID_TTP'] . ' (HD #' . $invoiceId . ')') : ('Thanh toan hoa don ' . $invoiceId),
+    'orderType' => $isRental ? 'deposit' : 'billpayment',
     'amount' => $amount,
     'language' => $config->defaultLocale,
     'ipAddress' => $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1',
@@ -123,5 +146,6 @@ if (!$insertStmt->execute()) {
 $insertStmt->close();
 $conn->close();
 
+// Chuyển hướng sang VNPay ngay để người dùng tiếp tục thanh toán
 header('Location: ' . $paymentUrl);
 exit;

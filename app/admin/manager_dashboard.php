@@ -226,12 +226,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'hoa_don_chi_tiet'  => 'hoa_don_chi_tiet.php',
             'expenses'          => 'manager_expenses.php',
             'costumes'          => 'manage_costumes.php',
+            'costume_rentals'   => 'manage_costume_rentals.php',
             'salaries'          => 'manager_salaries.php',
             'equipment'         => 'equipment_branch.php',     // có thể dùng chung với admin nếu bạn muốn
             'customers'         => 'customers_branch.php',
             'feedback'          => 'manage_feedback.php',      // file này có thể đã tồn tại
             'selfInfo'          => 'manage_selfInfo.php',      // file này có thể đã tồn tại
             'appointment_detail'=> 'appointment_detail.php',
+            'packages'          => 'manage_packages.php',
+            'package_costumes'  => 'manage_costume_packages.php',
           ];
 
           if (isset($map[$page])) {
