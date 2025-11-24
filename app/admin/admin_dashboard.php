@@ -46,6 +46,8 @@ $pageTitle = 'Quản trị hệ thống';
             'services'          => 'manage_services.php',
             'packages'          => 'manage_packages.php',
             'package_costumes'  => 'manage_costume_packages.php',
+            // Trang chỉnh gói trang phục độc lập (không thêm vào sidebar, truy cập qua nút hoặc redirect)
+            'edit_costume_package' => 'edit_costume_package.php',
             'branches'          => 'manage_branches.php',
             'assignments'       => 'manage_assignments.php',
             'equipment'         => 'manage_equipment.php',
