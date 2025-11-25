@@ -1,0 +1,7 @@
+<svg width="400" height="400" xmlns="http://www.w3.org/2000/svg">
+  <rect width="400" height="400" fill="#E5E7EB"/>
+  <text x="50%" y="50%" font-family="Arial, sans-serif" font-size="24" fill="#9CA3AF" text-anchor="middle" dominant-baseline="middle">
+    Dịch vụ
+  </text>
+  <path d="M150 180 L250 180 L250 220 L150 220 Z M170 200 A10 10 0 1 1 170 200.001 M230 200 A10 10 0 1 1 230 200.001" fill="none" stroke="#9CA3AF" stroke-width="3"/>
+</svg>

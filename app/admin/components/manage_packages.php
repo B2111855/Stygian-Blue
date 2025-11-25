@@ -3,6 +3,8 @@ include '../../database/config.php';
 require_once __DIR__ . '/../../repositories/PackageRepository.php';
 require_once __DIR__ . '/../../repositories/ServiceRepository.php';
 require_once __DIR__ . '/../../repositories/PackageCostumeRepository.php';
+require_once __DIR__ . '/../../repositories/PackageSlotRepository.php';
+require_once __DIR__ . '/../../repositories/PromotionRepository.php';
 require_once __DIR__ . '/../../helpers/system_log.php';
 use App\Repositories\PackageRepository; use App\Repositories\ServiceRepository;
 
@@ -23,6 +25,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !pkg_require_csrf()) {
 $pkgRepo = new PackageRepository($conn);
 $svcRepo = new ServiceRepository($conn);
 $pcRepo  = new \App\Repositories\PackageCostumeRepository($conn);
+$slotRepo = new \App\Repositories\PackageSlotRepository($conn);
+$promoRepo = new PromotionRepository($conn);
 
 // Inputs
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
@@ -41,6 +45,29 @@ $isBranchManager = ($role === '2' && $staffType === 'quan_ly' && $branchId > 0);
 // If branch manager: show global + local packages for their branch; admin sees all (pass null)
 $packages = $pkgRepo->searchPackages($search,$limit,$offset,$isBranchManager ? $branchId : null);
 
+// Helpers for new Slots (Yêu cầu trang phục)
+function pkg_table_exists(mysqli $conn, string $table): bool {
+  $tbl = $conn->real_escape_string($table);
+  $res = $conn->query("SHOW TABLES LIKE '".$tbl."'");
+  return $res && $res->num_rows > 0;
+}
+// Active sub-tab inside edit view
+$activeTab = isset($_GET['tab']) && in_array($_GET['tab'], ['services','slots','promotions']) ? $_GET['tab'] : 'services';
+// Load branches for both form and mapping
+$branches = [];
+$resBranches = $conn->query("SELECT ID_CN, TEN_CN FROM chi_nhanh ORDER BY TEN_CN");
+if ($resBranches) { while($r=$resBranches->fetch_assoc()){ $branches[]=$r; } }
+
+// Branch selector for mapping (admin selects, manager fixed)
+$selectedMapBranchId = 0;
+if ($activeTab==='slots') {
+  if ($isBranchManager) {
+    $selectedMapBranchId = $branchId;
+  } else {
+    $selectedMapBranchId = isset($_GET['map_cn']) ? (int)$_GET['map_cn'] : ((count($branches)>0)? (int)$branches[0]['ID_CN'] : 0);
+  }
+}
+
 function uploadPkgImage(string $field): ?string {
     if (!isset($_FILES[$field]) || $_FILES[$field]['error']!==UPLOAD_ERR_OK) return null;
     $allowed = ['image/jpeg'=>'jpg','image/png'=>'png','image/webp'=>'webp'];
@@ -55,29 +82,72 @@ function uploadPkgImage(string $field): ?string {
 }
 
 // Create
-if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['add_package'])) {
-    $payload = [
-        'TEN_GOI'       => trim($_POST['TEN_GOI'] ?? ''),
-        'MO_TA'         => trim($_POST['MO_TA'] ?? ''),
-        'HIEU_LUC_TU'   => $_POST['HIEU_LUC_TU'] ?: null,
-        'HIEU_LUC_DEN'  => $_POST['HIEU_LUC_DEN'] ?: null,
-    'SCOPE_TYPE'    => $isBranchManager ? 'local' : (($_POST['SCOPE_TYPE'] ?? 'global') === 'local' ? 'local' : 'global'),
-    'ID_CN_OWNER'   => $isBranchManager ? $branchId : (($_POST['ID_CN_OWNER'] ?? '') !== '' ? (int)$_POST['ID_CN_OWNER'] : null),
-    ];
-    if ($payload['TEN_GOI']==='' || $payload['MO_TA']==='') {
-        $errorMessage = 'Dữ liệu gói không hợp lệ.';
-    } else {
-        try {
-            $img = uploadPkgImage('HINH_ANH');
-      $newId = $pkgRepo->create($payload,$img);
-      $successMessage = 'Gói đã tạo (ID '.$newId.')';
-      record_system_log($conn,'PACKAGE_CREATE','package:'.$newId,null,[
-        'ID_GOI'=>$newId,
-        'TEN_GOI'=>$payload['TEN_GOI'],
-        'TRANG_THAI'=>'nhap'
-      ]);
-        } catch (\Throwable $e) { $errorMessage = 'Lỗi tạo gói: '.$e->getMessage(); }
+if ($_SERVER['REQUEST_METHOD']==='POST' && (isset($_POST['add_package']) || isset($_POST['add_package_hidden']))) {
+  if (isset($errorMessage)) {
+    error_log('Skip create: pre-existing error -> '.$errorMessage);
+  } else {
+    error_log('Add package form submitted');
+    error_log('POST keys: '.implode(',', array_keys($_POST)));
+    $errors = [];
+    $tenGoi = trim($_POST['TEN_GOI'] ?? '');
+    if ($tenGoi === '') { $errors[] = 'Tên gói là bắt buộc'; }
+    elseif (mb_strlen($tenGoi) < 5) { $errors[] = 'Tên gói phải có ít nhất 5 ký tự'; }
+    elseif (mb_strlen($tenGoi) > 150) { $errors[] = 'Tên gói không quá 150 ký tự'; }
+    $moTa = trim($_POST['MO_TA'] ?? '');
+    if ($moTa === '') { $errors[] = 'Mô tả là bắt buộc'; }
+    elseif (mb_strlen($moTa) < 20) { $errors[] = 'Mô tả phải có ít nhất 20 ký tự để khách hàng hiểu rõ'; }
+    elseif (mb_strlen($moTa) > 500) { $errors[] = 'Mô tả không quá 500 ký tự'; }
+    $scopeType = $isBranchManager ? 'local' : (($_POST['SCOPE_TYPE'] ?? 'global') === 'local' ? 'local' : 'global');
+    $idCnOwner = null;
+    if ($scopeType === 'local') {
+      if ($isBranchManager) { $idCnOwner = $branchId; }
+      else {
+        $idCnOwner = ($_POST['ID_CN_OWNER'] ?? '') !== '' ? (int)$_POST['ID_CN_OWNER'] : null;
+        if (!$idCnOwner) { $errors[] = 'Vui lòng chọn chi nhánh sở hữu cho gói local'; }
+      }
     }
+    $hieuLucTu = $_POST['HIEU_LUC_TU'] ?: null;
+    $hieuLucDen = $_POST['HIEU_LUC_DEN'] ?: null;
+    if ($hieuLucTu && $hieuLucDen) {
+      $tuDate = strtotime($hieuLucTu); $denDate = strtotime($hieuLucDen);
+      if ($tuDate >= $denDate) { $errors[] = 'Ngày kết thúc phải sau ngày bắt đầu'; }
+    }
+    if (!empty($errors)) {
+      $errorMessage = '<strong>Vui lòng sửa các lỗi sau:</strong><ul class="list-disc ml-5 mt-2">';
+      foreach ($errors as $err) { $errorMessage .= '<li>'.htmlspecialchars($err).'</li>'; }
+      $errorMessage .= '</ul>';
+      error_log('Validation errors: '.print_r($errors,true));
+    } else {
+      $payload = [
+        'TEN_GOI' => $tenGoi,
+        'MO_TA' => $moTa,
+        'HIEU_LUC_TU' => $hieuLucTu,
+        'HIEU_LUC_DEN' => $hieuLucDen,
+        'SCOPE_TYPE' => $scopeType,
+        'ID_CN_OWNER' => $idCnOwner,
+      ];
+      try {
+        $img = uploadPkgImage('HINH_ANH');
+        $newId = $pkgRepo->create($payload,$img);
+        if ($newId) {
+          $successMessage = 'Tạo gói dịch vụ thành công! ID: '.$newId;
+          record_system_log($conn,'PACKAGE_CREATE','package:'.$newId,null,[
+            'ID_GOI'=>$newId,'TEN_GOI'=>$payload['TEN_GOI'],'TRANG_THAI'=>'nhap','SCOPE_TYPE'=>$scopeType
+          ]);
+          error_log('Package created successfully: ID='.$newId);
+          $redirectUrl = $_SERVER['PHP_SELF'].'?page=packages&edit='.$newId.'&tab=services&created=1';
+          if (!headers_sent()) { header('Location: '.$redirectUrl); exit; }
+          echo '<script>window.location.href='.json_encode($redirectUrl).';</script>'; exit;
+        } else {
+          $errorMessage = 'Không thể tạo gói. Vui lòng thử lại.';
+          error_log('Package create returned null/false');
+        }
+      } catch (\Throwable $e) {
+        $errorMessage = 'Lỗi khi tạo gói: '.$e->getMessage();
+        error_log('Package create exception: '.$e->getMessage());
+      }
+    }
+  }
 }
 
 // Update package
@@ -119,6 +189,23 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['edit_package'])) {
   }
 }
 
+// Delete package via POST
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['delete_package']) && !isset($errorMessage)) {
+  $id = (int)$_POST['ID_GOI'];
+  $before = $pkgRepo->find($id);
+  if (!$before) {
+    $errorMessage = 'Gói không tồn tại.';
+  } else {
+    if ($pkgRepo->delete($id)) {
+      $successMessage = 'Gói đã xóa vĩnh viễn.';
+      record_system_log($conn,'PACKAGE_DELETE','package:'.$id,$before,null);
+      $showReloadScript = true;
+    } else {
+      $errorMessage = 'Không xóa được gói.';
+    }
+  }
+}
+
 // Change status (publish / retire) via POST
 if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['change_status']) && !isset($errorMessage)) {
   $id = (int)$_POST['ID_GOI'];
@@ -137,9 +224,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['change_status']) && !is
     }
   } elseif ($st==='ban') {
     $before = $pkgRepo->find($id);
-    if ($isBranchManager && $before && ($before['SCOPE_TYPE'] ?? '') === 'global') {
+    // Guard: for local packages, ensure required slot mappings exist for owner branch
+    if ($before && ($before['SCOPE_TYPE'] ?? '') === 'local') {
+      if (pkg_table_exists($conn,'goi_dich_vu_trang_phuc_slot')) {
+        $ownerCn = (int)($before['ID_CN_OWNER'] ?? 0);
+        if ($ownerCn > 0) {
+          $missing = (new \App\Repositories\PackageSlotRepository($conn))->countMissingRequiredMappingsForBranch($id, $ownerCn);
+          if ($missing > 0) {
+            $errorMessage = 'Không thể đăng: còn '.$missing.' yêu cầu trang phục bắt buộc chưa được ánh xạ ở chi nhánh #'.$ownerCn.'.';
+          }
+        }
+      }
+    }
+    if (!isset($errorMessage) && $isBranchManager && $before && ($before['SCOPE_TYPE'] ?? '') === 'global') {
       $errorMessage='Không thể đổi trạng thái gói global.';
-    } elseif ($pkgRepo->changeStatus($id,'ban')) {
+    } elseif (!isset($errorMessage) && $pkgRepo->changeStatus($id,'ban')) {
       $after = $pkgRepo->find($id);
       $successMessage='Gói đã chuyển sang bán.';
       record_system_log($conn,'PACKAGE_PUBLISH','package:'.$id,$before,$after);
@@ -256,6 +355,205 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['bulk_update_services'])
   } else { $errorMessage = 'Dữ liệu bulk không hợp lệ.'; }
 }
 
+// Slots CRUD (Yêu cầu trang phục) via repository
+if ($_SERVER['REQUEST_METHOD']==='POST' && (isset($_POST['slot_create']) || isset($_POST['slot_update']) || isset($_POST['slot_toggle_active']) || isset($_POST['slot_delete']))) {
+  $tableSlots = 'goi_dich_vu_trang_phuc_slot';
+  if (!pkg_table_exists($conn,$tableSlots)) {
+    $errorMessage = 'Chưa chạy migration tạo bảng yêu cầu trang phục.';
+  } else {
+    $idGoi = (int)($_POST['ID_GOI'] ?? 0);
+    // Permission checks for branch manager
+    $pkgMetaTmp = $idGoi ? $pkgRepo->find($idGoi) : null;
+    $deny = false;
+    if ($pkgMetaTmp) {
+      $isGlobal = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'global';
+      $isLocalOwned = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'local' && (int)($pkgMetaTmp['ID_CN_OWNER'] ?? 0) === $branchId;
+      if ($isBranchManager && ($isGlobal || !$isLocalOwned)) $deny = true;
+    }
+    if ($deny) {
+      $errorMessage = 'Bạn không có quyền chỉnh sửa yêu cầu trang phục của gói này.';
+    } else {
+      try {
+        if (isset($_POST['slot_create'])) {
+          $ten = trim($_POST['TEN_SLOT'] ?? '');
+          $nhom = trim($_POST['NHOM'] ?? '');
+          $loai = trim($_POST['LOAI'] ?? '');
+          $size = trim($_POST['SIZE'] ?? '');
+          $soLuong = max(1,(int)($_POST['SO_LUONG'] ?? 1));
+          $batBuoc = isset($_POST['BAT_BUOC']) ? 1 : 0;
+          $active = isset($_POST['ACTIVE']) ? 1 : 1;
+          if ($idGoi && $ten !== '') {
+            $newId = $slotRepo->createSlot([
+              'ID_GOI'=>$idGoi,'TEN_SLOT'=>$ten,'NHOM'=>$nhom,'LOAI'=>$loai,'SIZE'=>$size,
+              'SO_LUONG'=>$soLuong,'BAT_BUOC'=>$batBuoc,'ACTIVE'=>$active
+            ]);
+            if ($newId) {
+              $successMessage = 'Đã tạo yêu cầu trang phục (#'.$newId.').';
+              record_system_log($conn,'SLOT_CREATE','slot:'.$newId,null,[
+                'ID_GOI'=>$idGoi,'TEN_SLOT'=>$ten,'SO_LUONG'=>$soLuong,'BAT_BUOC'=>$batBuoc
+              ]);
+            } else { $errorMessage = 'Không tạo được yêu cầu trang phục.'; }
+          } else { $errorMessage = 'Thiếu dữ liệu yêu cầu trang phục.'; }
+        }
+        if (isset($_POST['slot_update'])) {
+          $idSlot = (int)($_POST['ID_SLOT'] ?? 0);
+          $ten = trim($_POST['TEN_SLOT'] ?? '');
+          $nhom = trim($_POST['NHOM'] ?? '');
+          $loai = trim($_POST['LOAI'] ?? '');
+          $size = trim($_POST['SIZE'] ?? '');
+          $soLuong = max(1,(int)($_POST['SO_LUONG'] ?? 1));
+          $batBuoc = isset($_POST['BAT_BUOC']) ? 1 : 0;
+          $active = isset($_POST['ACTIVE']) ? 1 : 0;
+          if ($idGoi && $idSlot && $ten !== '') {
+            if ($slotRepo->updateSlot([
+              'ID_GOI'=>$idGoi,'ID_SLOT'=>$idSlot,'TEN_SLOT'=>$ten,'NHOM'=>$nhom,'LOAI'=>$loai,'SIZE'=>$size,
+              'SO_LUONG'=>$soLuong,'BAT_BUOC'=>$batBuoc,'ACTIVE'=>$active
+            ])) {
+              $successMessage = 'Đã cập nhật yêu cầu trang phục.';
+              record_system_log($conn,'SLOT_UPDATE','slot:'.$idSlot,null,[
+                'ID_GOI'=>$idGoi,'TEN_SLOT'=>$ten,'SO_LUONG'=>$soLuong,'BAT_BUOC'=>$batBuoc,'ACTIVE'=>$active
+              ]);
+            } else { $errorMessage = 'Không cập nhật được yêu cầu trang phục.'; }
+          } else { $errorMessage = 'Dữ liệu cập nhật slot không hợp lệ.'; }
+        }
+        if (isset($_POST['slot_toggle_active'])) {
+          $idSlot = (int)($_POST['ID_SLOT'] ?? 0);
+          $active = isset($_POST['ACTIVE']) ? 1 : 0;
+          if ($idGoi && $idSlot) {
+            if ($slotRepo->toggleSlotActive($idSlot, $idGoi, (bool)$active)) {
+              $successMessage = 'Đã đổi trạng thái yêu cầu trang phục.';
+              record_system_log($conn,'SLOT_TOGGLE_ACTIVE','slot:'.$idSlot,null,['ACTIVE'=>$active]);
+            } else { $errorMessage = 'Không đổi được trạng thái.'; }
+          }
+        }
+        if (isset($_POST['slot_delete'])) {
+          $idSlot = (int)($_POST['ID_SLOT'] ?? 0);
+          if ($idGoi && $idSlot) {
+            if ($slotRepo->deleteSlot($idSlot, $idGoi)) {
+              $successMessage = 'Đã xóa yêu cầu trang phục.';
+              record_system_log($conn,'SLOT_DELETE','slot:'.$idSlot,null,null);
+            } else { $errorMessage = 'Không xóa được (có thể đang được ánh xạ).'; }
+          }
+        }
+      } catch (\Throwable $e) { $errorMessage = 'Lỗi slot: '.$e->getMessage(); }
+    }
+  }
+  if (!empty($idGoi)) { $_GET['edit'] = (string)$idGoi; $isEditing = true; }
+}
+
+// Slot mappings handler
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['slot_set_mappings'])) {
+  $tableMap = 'goi_dich_vu_slot_branch_trang_phuc';
+  if (!pkg_table_exists($conn,$tableMap)) {
+    $errorMessage = 'Chưa chạy migration tạo bảng ánh xạ yêu cầu trang phục.';
+  } else {
+    $idGoi = (int)($_POST['ID_GOI'] ?? 0);
+    $idSlot = (int)($_POST['ID_SLOT'] ?? 0);
+    $mapCn  = (int)($_POST['MAP_CN'] ?? 0);
+    $payloadJson = $_POST['mapping_payload'] ?? '[]';
+    $items = json_decode($payloadJson, true);
+    // Permission: manager only their branch; cannot map global package slots they don't own
+    $pkgMetaTmp = $idGoi ? $pkgRepo->find($idGoi) : null;
+    $deny = false;
+    if ($pkgMetaTmp) {
+      $isGlobal = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'global';
+      $isLocalOwned = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'local' && (int)($pkgMetaTmp['ID_CN_OWNER'] ?? 0) === $branchId;
+      if ($isBranchManager && ($mapCn !== $branchId || $isGlobal || !$isLocalOwned)) $deny = true;
+    }
+    if ($deny) {
+      $errorMessage = 'Bạn không có quyền cấu hình ánh xạ cho chi nhánh này.';
+    } elseif (!$idGoi || !$idSlot || !$mapCn || !is_array($items)) {
+      $errorMessage = 'Dữ liệu ánh xạ không hợp lệ.';
+    } else {
+      try {
+        if ($slotRepo->setMappings($idSlot, $mapCn, $items)) {
+          $successMessage = 'Đã lưu ánh xạ yêu cầu trang phục.';
+          record_system_log($conn,'SLOT_MAP_SET','slot_map:'.$idSlot.':cn:'.$mapCn,null,['count'=>count($items)]);
+          $_GET['edit'] = (string)$idGoi; $_GET['tab'] = 'slots'; $isEditing=true;
+        } else { $errorMessage = 'Không lưu được ánh xạ.'; }
+      } catch (\Throwable $e) { $errorMessage = 'Lỗi ánh xạ: '.$e->getMessage(); }
+    }
+  }
+}
+
+// Promotion handlers
+if ($_SERVER['REQUEST_METHOD']==='POST' && (isset($_POST['promo_create']) || isset($_POST['promo_update']) || isset($_POST['promo_toggle_active']) || isset($_POST['promo_delete']))) {
+  $tablePromo = 'goi_dich_vu_khuyen_mai';
+  if (!pkg_table_exists($conn,$tablePromo)) {
+    $errorMessage = 'Chưa chạy migration tạo bảng khuyến mãi.';
+  } else {
+    $idGoi = (int)($_POST['ID_GOI'] ?? 0);
+    $pkgMetaTmp = $idGoi ? $pkgRepo->find($idGoi) : null;
+    // Permission check: manager only local packages they own
+    $deny = false;
+    if ($pkgMetaTmp && $isBranchManager) {
+      $isGlobalPkg = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'global';
+      $isLocalOwnedPkg = ($pkgMetaTmp['SCOPE_TYPE'] ?? '') === 'local' && (int)($pkgMetaTmp['ID_CN_OWNER'] ?? 0) === $branchId;
+      if ($isGlobalPkg || !$isLocalOwnedPkg) $deny = true;
+    }
+    if ($deny) {
+      $errorMessage = 'Bạn không có quyền chỉnh khuyến mãi cho gói này.';
+    } else {
+      try {
+        if (isset($_POST['promo_create'])) {
+          $data = [
+            'ID_GOI' => $idGoi,
+            'TEN_CHUONG_TRINH' => trim($_POST['TEN_CHUONG_TRINH'] ?? ''),
+            'MO_TA' => trim($_POST['MO_TA'] ?? ''),
+            'LOAI_GIAM' => $_POST['LOAI_GIAM'] ?? 'phan_tram',
+            'GIA_TRI_GIAM' => (float)($_POST['GIA_TRI_GIAM'] ?? 0),
+            'GIAM_TOI_DA' => !empty($_POST['GIAM_TOI_DA']) ? (float)$_POST['GIAM_TOI_DA'] : null,
+            'TU_NGAY' => $_POST['TU_NGAY'] ?? date('Y-m-d H:i:s'),
+            'DEN_NGAY' => $_POST['DEN_NGAY'] ?? date('Y-m-d H:i:s', strtotime('+1 month')),
+            'ACTIVE' => isset($_POST['ACTIVE_PROMO']) ? 1 : 0
+          ];
+          $newId = $promoRepo->createPromotion($data);
+          if ($newId) {
+            $successMessage = 'Đã tạo khuyến mãi mới.';
+            record_system_log($conn,'PROMO_CREATE','promo:'.$newId,null,['package'=>$idGoi]);
+            $_GET['edit'] = (string)$idGoi; $_GET['tab'] = 'promotions'; $isEditing=true;
+          } else { $errorMessage = 'Không tạo được khuyến mãi.'; }
+        }
+        if (isset($_POST['promo_update'])) {
+          $idPromo = (int)($_POST['ID_PROMO'] ?? 0);
+          $data = [
+            'TEN_CHUONG_TRINH' => trim($_POST['TEN_CHUONG_TRINH'] ?? ''),
+            'MO_TA' => trim($_POST['MO_TA'] ?? ''),
+            'LOAI_GIAM' => $_POST['LOAI_GIAM'] ?? 'phan_tram',
+            'GIA_TRI_GIAM' => (float)($_POST['GIA_TRI_GIAM'] ?? 0),
+            'GIAM_TOI_DA' => !empty($_POST['GIAM_TOI_DA']) ? (float)$_POST['GIAM_TOI_DA'] : null,
+            'TU_NGAY' => $_POST['TU_NGAY'] ?? date('Y-m-d H:i:s'),
+            'DEN_NGAY' => $_POST['DEN_NGAY'] ?? date('Y-m-d H:i:s'),
+            'ACTIVE' => isset($_POST['ACTIVE_PROMO']) ? 1 : 0
+          ];
+          if ($promoRepo->updatePromotion($idPromo, $data)) {
+            $successMessage = 'Đã cập nhật khuyến mãi.';
+            record_system_log($conn,'PROMO_UPDATE','promo:'.$idPromo,null,null);
+            $_GET['edit'] = (string)$idGoi; $_GET['tab'] = 'promotions'; $isEditing=true;
+          } else { $errorMessage = 'Không cập nhật được khuyến mãi.'; }
+        }
+        if (isset($_POST['promo_toggle_active'])) {
+          $idPromo = (int)($_POST['ID_PROMO'] ?? 0);
+          $newActive = (int)($_POST['ACTIVE_VAL'] ?? 0);
+          if ($promoRepo->toggleActive($idPromo, $newActive)) {
+            $successMessage = 'Đã thay đổi trạng thái khuyến mãi.';
+            record_system_log($conn,'PROMO_TOGGLE','promo:'.$idPromo,null,['active'=>$newActive]);
+            $_GET['edit'] = (string)$idGoi; $_GET['tab'] = 'promotions'; $isEditing=true;
+          } else { $errorMessage = 'Không thay đổi được trạng thái.'; }
+        }
+        if (isset($_POST['promo_delete'])) {
+          $idPromo = (int)($_POST['ID_PROMO'] ?? 0);
+          if ($promoRepo->deletePromotion($idPromo)) {
+            $successMessage = 'Đã xóa khuyến mãi.';
+            record_system_log($conn,'PROMO_DELETE','promo:'.$idPromo,null,null);
+            $_GET['edit'] = (string)$idGoi; $_GET['tab'] = 'promotions'; $isEditing=true;
+          } else { $errorMessage = 'Không xóa được khuyến mãi.'; }
+        }
+      } catch (\Throwable $e) { $errorMessage = 'Lỗi khuyến mãi: '.$e->getMessage(); }
+    }
+  }
+}
+
 if ($isEditing) {
     $editPackage = $pkgRepo->find((int)$_GET['edit']);
     if ($editPackage) { $editServices = $pkgRepo->listServices((int)$editPackage['ID_GOI']); }
@@ -273,6 +571,48 @@ if ($isEditing) {
       if ($allCostumesRes) { while($r=$allCostumesRes->fetch_assoc()){ $allCostumes[]=$r; } }
       $existingCostumeIds = array_column($editCostumes,'ID_TRANG_PHUC');
   } else { $allCostumes=[]; $existingCostumeIds=[]; }
+  // Load slots
+  $slotsTableExists = pkg_table_exists($conn,'goi_dich_vu_trang_phuc_slot');
+  $slots = [];
+  $canEditSlots = false;
+  if ($editPackage) {
+    $isGlobalPkg = ($editPackage['SCOPE_TYPE'] ?? '') === 'global';
+    $isLocalOwnedPkg = ($editPackage['SCOPE_TYPE'] ?? '') === 'local' && (int)($editPackage['ID_CN_OWNER'] ?? 0) === $branchId;
+    $canEditSlots = $isBranchManager ? (!$isGlobalPkg && $isLocalOwnedPkg) : true;
+  }
+  if ($slotsTableExists && $editPackage) {
+    $slots = $slotRepo->listSlots((int)$editPackage['ID_GOI']);
+  }
+  // Load promotions
+  $promotions = [];
+  $promotionsTableExists = pkg_table_exists($conn,'goi_dich_vu_khuyen_mai');
+  $canEditPromotions = false;
+  if ($editPackage) {
+    $isGlobalPkg = ($editPackage['SCOPE_TYPE'] ?? '') === 'global';
+    $isLocalOwnedPkg = ($editPackage['SCOPE_TYPE'] ?? '') === 'local' && (int)($editPackage['ID_CN_OWNER'] ?? 0) === $branchId;
+    $canEditPromotions = $isBranchManager ? (!$isGlobalPkg && $isLocalOwnedPkg) : true;
+  }
+  if ($promotionsTableExists && $editPackage) {
+    $promotions = $promoRepo->listPromotions((int)$editPackage['ID_GOI']);
+  }
+  // Mapping data
+  $existingMappingsBySlot = [];
+  $missingRequiredCount = 0;
+  if ($slotsTableExists && $editPackage && $selectedMapBranchId>0) {
+    $pkgIdTmp = (int)$editPackage['ID_GOI'];
+    $rowsMap = $slotRepo->listMappingsForBranch($pkgIdTmp, $selectedMapBranchId);
+    foreach ($rowsMap as $rm) {
+      $sid = (int)$rm['ID_SLOT'];
+      if (!isset($existingMappingsBySlot[$sid])) { $existingMappingsBySlot[$sid] = []; }
+      if (!empty($rm['ID_TRANG_PHUC'])) {
+        $existingMappingsBySlot[$sid][(int)$rm['ID_TRANG_PHUC']] = [
+          'PRICE_ADJUSTMENT' => $rm['PRICE_ADJUSTMENT'],
+          'ACTIVE' => (int)($rm['MAP_ACTIVE'] ?? 1)
+        ];
+      }
+    }
+    $missingRequiredCount = $slotRepo->countMissingRequiredMappingsForBranch($pkgIdTmp, $selectedMapBranchId);
+  }
   // Price history inside package edit
   $priceHistory = [];
   $historyService = null;
@@ -300,9 +640,53 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
 ?>
 <body class="bg-gray-50 p-6">
   <div class="max-w-7xl mx-auto">
-    <h1 class="text-3xl font-bold text-indigo-700 mb-6 text-center">Quản lý gói dịch vụ</h1>
-    <?php if(isset($successMessage)): ?><div class="bg-green-100 text-green-700 p-3 rounded mb-4"><?= $successMessage ?></div><?php endif; ?>
-    <?php if(isset($errorMessage)): ?><div class="bg-red-100 text-red-700 p-3 rounded mb-4"><?= $errorMessage ?></div><?php endif; ?>
+    <!-- Breadcrumb -->
+    <nav class="mb-4 text-sm">
+      <span class="text-gray-500">Admin</span>
+      <span class="mx-2 text-gray-400">›</span>
+      <?php if($isEditing): ?>
+        <a href="?page=packages" class="text-indigo-600 hover:underline">Quản lý gói dịch vụ</a>
+        <span class="mx-2 text-gray-400">›</span>
+        <span class="text-gray-700 font-medium"><?= htmlspecialchars($editPackage['TEN_GOI'] ?? 'Chỉnh sửa') ?></span>
+      <?php else: ?>
+        <span class="text-gray-700 font-medium">Quản lý gói dịch vụ</span>
+      <?php endif; ?>
+    </nav>
+
+    <div class="flex items-center justify-between mb-6">
+      <h1 class="text-3xl font-bold text-indigo-700">
+        <?php if($isEditing): ?>
+          <a href="?page=packages" class="text-gray-400 hover:text-indigo-600 mr-2" title="Quay lại danh sách">‹</a>
+        <?php endif; ?>
+        Quản lý gói dịch vụ
+      </h1>
+    </div>
+
+    <!-- Alerts (compact) -->
+    <?php if(isset($successMessage)): ?>
+      <div class="success-alert bg-green-50 border border-green-400 text-green-700 px-3 py-2 rounded mb-3 flex items-center gap-2 text-sm" role="alert">
+        <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>
+        <span class="flex-1 leading-tight"><?= $successMessage ?></span>
+        <button onclick="this.parentElement.remove()" class="text-green-600 hover:text-green-800 font-semibold text-base">×</button>
+      </div>
+    <?php endif; ?>
+    <?php if(isset($_GET['created']) && $_GET['created']==='1'): ?>
+      <div class="bg-blue-50 border border-blue-400 text-blue-700 px-3 py-2 rounded mb-3 flex items-start gap-2 text-sm" role="alert">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+        <div class="flex-1 leading-tight">
+          <strong>Đã tạo gói!</strong>
+          <p class="mt-0.5">Thêm dịch vụ ở tab "Dịch vụ" bên dưới.</p>
+        </div>
+        <button onclick="this.parentElement.remove()" class="text-blue-600 hover:text-blue-800 font-semibold text-base">×</button>
+      </div>
+    <?php endif; ?>
+    <?php if(isset($errorMessage)): ?>
+      <div class="bg-red-50 border border-red-400 text-red-700 px-3 py-2 rounded mb-3 flex items-start gap-2 text-sm" role="alert">
+        <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293z" clip-rule="evenodd"/></svg>
+        <div class="flex-1 leading-tight"><?= $errorMessage ?></div>
+        <button onclick="this.parentElement.remove()" class="text-red-600 hover:text-red-800 font-semibold text-base">×</button>
+      </div>
+    <?php endif; ?>
 
     <div class="flex flex-wrap justify-between items-center mb-4 gap-2">
       <form method="GET" class="flex items-center gap-2">
@@ -314,31 +698,196 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
     </div>
 
     <?php if(isset($_GET['add']) && $_GET['add']==='true' && !$isEditing): ?>
-      <form method="POST" enctype="multipart/form-data" class="bg-white p-6 rounded shadow mb-6">
+      <form method="POST" action="admin_dashboard.php?page=packages&add=true" enctype="multipart/form-data" class="bg-white rounded-lg shadow-lg mb-6" onsubmit="return validatePackageForm(this)">
         <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
-        <h2 class="text-xl font-semibold text-indigo-600 mb-4">Thêm gói dịch vụ</h2>
-        <div class="grid md:grid-cols-2 gap-4">
-          <input name="TEN_GOI" placeholder="Tên gói" class="p-2 border rounded" required />
-          <input type="datetime-local" name="HIEU_LUC_TU" class="p-2 border rounded" />
-          <input type="datetime-local" name="HIEU_LUC_DEN" class="p-2 border rounded" />
-          <input type="file" name="HINH_ANH" class="p-2 border rounded" />
-          <textarea name="MO_TA" placeholder="Mô tả" class="p-2 border rounded md:col-span-2" required></textarea>
-          <?php if(!$isBranchManager): ?>
-            <div class="md:col-span-2 flex items-center gap-3">
-              <label class="text-sm text-gray-600">Scope:</label>
-              <select name="SCOPE_TYPE" class="p-2 border rounded">
-                <option value="global">Global</option>
-                <option value="local">Local (chi nhánh)</option>
-              </select>
-              <input type="number" name="ID_CN_OWNER" placeholder="ID chi nhánh (nếu local)" class="p-2 border rounded w-48" />
+        <input type="hidden" name="add_package_hidden" value="1" />
+        
+        <!-- Form Header -->
+        <div class="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white p-6 rounded-t-lg">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-2xl font-bold mb-1">Tạo gói dịch vụ mới</h2>
+              <p class="text-indigo-100 text-sm">Điền thông tin cơ bản để tạo gói, sau đó thêm dịch vụ và trang phục</p>
             </div>
-          <?php endif; ?>
+            <a href="?page=packages" class="text-white hover:text-indigo-200 text-3xl leading-none" title="Đóng">&times;</a>
+          </div>
         </div>
-        <div class="mt-4 flex justify-end gap-2">
-          <button type="submit" name="add_package" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">Lưu</button>
-          <a href="?page=packages" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">Hủy</a>
+
+        <!-- Progress Steps -->
+        <div class="px-6 py-4 bg-gray-50 border-b">
+          <div class="flex items-center justify-center gap-3 text-sm">
+            <div class="flex items-center gap-2">
+              <span class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold">1</span>
+              <span class="font-medium text-indigo-600">Thông tin cơ bản</span>
+            </div>
+            <span class="text-gray-300">→</span>
+            <div class="flex items-center gap-2 opacity-50">
+              <span class="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center font-bold">2</span>
+              <span class="text-gray-500">Thêm dịch vụ</span>
+            </div>
+            <span class="text-gray-300">→</span>
+            <div class="flex items-center gap-2 opacity-50">
+              <span class="w-8 h-8 rounded-full bg-gray-300 text-gray-600 flex items-center justify-center font-bold">3</span>
+              <span class="text-gray-500">Cấu hình trang phục</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form Body -->
+        <div class="p-6">
+          <div class="space-y-6">
+            <!-- Thông tin chính -->
+            <div class="border-b pb-4">
+              <h3 class="text-lg font-semibold text-gray-800 mb-4">Thông tin chính</h3>
+              <div class="grid md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Tên gói dịch vụ <span class="text-red-500">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    name="TEN_GOI" 
+                    placeholder="Ví dụ: Gói chụp ảnh cưới trọn gói" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
+                    required 
+                    minlength="5"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">Tên ngắn gọn, dễ hiểu, từ 5-150 ký tự</p>
+                </div>
+                
+                <div class="md:col-span-2">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Mô tả chi tiết <span class="text-red-500">*</span>
+                  </label>
+                  <textarea 
+                    name="MO_TA" 
+                    rows="4" 
+                    placeholder="Mô tả đầy đủ về gói: bao gồm dịch vụ gì, phù hợp cho đối tượng nào, ưu điểm nổi bật..." 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" 
+                    required
+                    minlength="20"
+                  ></textarea>
+                  <p class="text-xs text-gray-500 mt-1">Mô tả từ 20-500 ký tự giúp khách hàng hiểu rõ gói dịch vụ</p>
+                </div>
+
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Hình ảnh đại diện</label>
+                  <input 
+                    type="file" 
+                    name="HINH_ANH" 
+                    accept="image/jpeg,image/png,image/webp" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                    onchange="previewImage(this)"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">JPG, PNG hoặc WebP, tối đa 2MB</p>
+                  <div id="imagePreview" class="mt-2 hidden">
+                    <img id="previewImg" class="h-32 rounded border" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Thời gian hiệu lực -->
+            <div class="border-b pb-4">
+              <h3 class="text-lg font-semibold text-gray-800 mb-4">Thời gian hiệu lực</h3>
+              <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Có hiệu lực từ ngày</label>
+                  <input 
+                    type="datetime-local" 
+                    name="HIEU_LUC_TU" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" 
+                    value="<?= date('Y-m-d\TH:i') ?>" 
+                  />
+                  <p class="text-xs text-gray-500 mt-1">Từ thời điểm nào gói bắt đầu có thể sử dụng</p>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Đến hết ngày</label>
+                  <input 
+                    type="datetime-local" 
+                    name="HIEU_LUC_DEN" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" 
+                    value="<?= date('Y-m-d\TH:i', strtotime('+1 year')) ?>" 
+                  />
+                  <p class="text-xs text-gray-500 mt-1">Hết hiệu lực khi nào (mặc định 1 năm)</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Phạm vi áp dụng -->
+            <?php if(!$isBranchManager): ?>
+            <div>
+              <h3 class="text-lg font-semibold text-gray-800 mb-4">Phạm vi áp dụng</h3>
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">Loại gói</label>
+                  <select 
+                    name="SCOPE_TYPE" 
+                    id="scopeTypeSelect"
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    onchange="toggleBranchSelector()"
+                  >
+                    <option value="global">Toàn hệ thống (Global) - Áp dụng cho tất cả chi nhánh</option>
+                    <option value="local">Chi nhánh cụ thể (Local) - Chỉ cho một chi nhánh</option>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">Global: dùng chung, Local: riêng từng chi nhánh</p>
+                </div>
+                
+                <div id="branchSelectorDiv" class="hidden">
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Chi nhánh sở hữu <span class="text-red-500">*</span>
+                  </label>
+                  <select 
+                    name="ID_CN_OWNER" 
+                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">-- Chọn chi nhánh --</option>
+                    <?php foreach($branches as $br): ?>
+                      <option value="<?= $br['ID_CN'] ?>"><?= htmlspecialchars($br['TEN_CN']) ?> (ID: <?= $br['ID_CN'] ?>)</option>
+                    <?php endforeach; ?>
+                  </select>
+                  <p class="text-xs text-gray-500 mt-1">Gói local chỉ quản lý bởi chi nhánh này</p>
+                </div>
+
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p class="text-sm text-blue-800">
+                    <strong>Lưu ý:</strong> Gói toàn hệ thống có thể được mọi chi nhánh sử dụng. 
+                    Gói chi nhánh chỉ hiển thị và quản lý bởi chi nhánh sở hữu.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <?php else: ?>
+              <input type="hidden" name="SCOPE_TYPE" value="local" />
+              <input type="hidden" name="ID_CN_OWNER" value="<?= $branchId ?>" />
+              <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <p class="text-sm text-gray-700">
+                  Gói sẽ được tạo cho chi nhánh của bạn (ID: <?= $branchId ?>)
+                </p>
+              </div>
+            <?php endif; ?>
+          </div>
+        </div>
+
+        <!-- Form Footer -->
+        <div class="bg-gray-50 px-6 py-4 rounded-b-lg border-t flex items-center justify-between">
+          <p class="text-sm text-gray-600">
+            Sau khi tạo, bạn sẽ chuyển đến trang chỉnh sửa để thêm dịch vụ và cấu hình trang phục
+          </p>
+          <div class="flex gap-3">
+            <a href="?page=packages" class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors">Hủy bỏ</a>
+            <button 
+              type="submit" 
+              name="add_package"
+              id="submitPackageBtn"
+              class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Tạo gói dịch vụ
+            </button>
+          </div>
         </div>
       </form>
+    </div>
     <?php endif; ?>
 
     <?php if($isEditing && $editPackage): ?>
@@ -372,6 +921,14 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
         </div>
       </form>
 
+      <!-- Sub-tabs for edit view -->
+      <div class="flex items-center gap-2 mb-4 bg-white p-2 rounded-lg shadow-sm sticky top-0 z-10">
+        <a href="?page=packages&edit=<?= $editPackage['ID_GOI'] ?>&tab=services" class="px-3 py-1 rounded <?= $activeTab==='services'?'bg-indigo-600 text-white':'bg-indigo-50 text-indigo-700' ?>">Dịch vụ</a>
+        <a href="?page=packages&edit=<?= $editPackage['ID_GOI'] ?>&tab=slots" class="px-3 py-1 rounded <?= $activeTab==='slots'?'bg-indigo-600 text-white':'bg-indigo-50 text-indigo-700' ?>">Yêu cầu trang phục</a>
+        <a href="?page=packages&edit=<?= $editPackage['ID_GOI'] ?>&tab=promotions" class="px-3 py-1 rounded <?= $activeTab==='promotions'?'bg-indigo-600 text-white':'bg-indigo-50 text-indigo-700' ?>">Khuyến mãi</a>
+      </div>
+
+      <?php if($activeTab==='services'): ?>
       <!-- Dual pane drag & drop -->
       <div class="grid md:grid-cols-2 gap-6 mb-6">
         <div class="bg-white p-4 rounded shadow">
@@ -441,72 +998,308 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
           </form>
         </div>
       </div>
-      <!-- Costumes pivot management -->
+      <?php endif; ?>
+
+      <?php if($activeTab==='slots'): ?>
+      <!-- Slots (Yêu cầu trang phục) management -->
       <div class="grid md:grid-cols-2 gap-6 mb-6">
         <div class="bg-white p-4 rounded shadow">
-          <h3 class="text-lg font-semibold text-indigo-700 mb-4">Trang phục khả dụng</h3>
-          <div class="h-72 overflow-y-auto border rounded text-xs">
-            <?php foreach($allCostumes as $c): ?>
-              <form method="POST" class="flex items-center justify-between px-3 py-1 border-b <?= in_array($c['ID_TRANG_PHUC'],$existingCostumeIds)?'bg-gray-100 opacity-60':''; ?>">
-                <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
-                <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
-                <input type="hidden" name="ID_TRANG_PHUC" value="<?= $c['ID_TRANG_PHUC'] ?>" />
-                <span class="truncate w-40" title="<?= htmlspecialchars($c['TEN']) ?>"><?= htmlspecialchars($c['TEN']) ?></span>
-                <span class="text-[10px] text-gray-500 mr-2"><?= number_format((int)$c['GIA_THUE'],0,',','.') ?></span>
-                <?php if(!in_array($c['ID_TRANG_PHUC'],$existingCostumeIds)): ?>
-                  <input type="number" min="1" name="SO_LUONG" value="1" class="w-14 px-1 py-0.5 border rounded mr-2" />
-                  <button type="submit" name="add_costume_to_package" class="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded">Thêm</button>
-                <?php else: ?>
-                  <span class="text-[10px] text-gray-400">Đã có</span>
-                <?php endif; ?>
-              </form>
-            <?php endforeach; ?>
-            <?php if(empty($allCostumes)): ?><div class="p-2 text-gray-500">Không có trang phục.</div><?php endif; ?>
-          </div>
-        </div>
-        <div class="bg-white p-4 rounded shadow">
-          <h3 class="text-lg font-semibold text-indigo-700 mb-4">Trang phục trong gói</h3>
-          <form method="POST" class="mb-2 flex items-center gap-2 text-xs">
+          <h3 class="text-lg font-semibold text-indigo-700 mb-4">Thêm yêu cầu trang phục</h3>
+          <?php if(!$slotsTableExists): ?>
+            <div class="bg-amber-100 text-amber-800 p-3 rounded text-sm">Chưa phát hiện bảng yêu cầu trang phục. Hãy chạy migration trước.</div>
+          <?php else: ?>
+          <?php if($selectedMapBranchId>0 && $missingRequiredCount>0): ?>
+            <div class="bg-amber-100 text-amber-800 p-3 rounded text-sm mb-3">Chi nhánh #<?= (int)$selectedMapBranchId ?> thiếu <?= (int)$missingRequiredCount ?> yêu cầu bắt buộc chưa được ánh xạ.</div>
+          <?php endif; ?>
+          <form method="POST" class="text-sm grid grid-cols-2 gap-3">
             <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
             <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
-            <input type="hidden" id="costumeOrderPayload" name="order_payload" />
-            <button type="submit" name="reorder_costumes" id="saveCostumeOrderBtn" class="bg-green-600 text-white px-3 py-1 rounded disabled:opacity-40" disabled>Lưu thứ tự</button>
-            <span id="costumeCountMeta" class="text-[11px] text-gray-500"></span>
+            <input name="TEN_SLOT" placeholder="Tên yêu cầu (VD: Váy dạ hội)" class="p-2 border rounded col-span-2" <?= $canEditSlots? 'required':''; ?> <?= $canEditSlots? '':'disabled'; ?> />
+            <input name="NHOM" placeholder="Nhóm (VD: Váy)" class="p-2 border rounded" <?= $canEditSlots? '':'disabled'; ?> />
+            <input name="LOAI" placeholder="Loại (VD: Dạ hội)" class="p-2 border rounded" <?= $canEditSlots? '':'disabled'; ?> />
+            <input name="SIZE" placeholder="Size (VD: M)" class="p-2 border rounded" <?= $canEditSlots? '':'disabled'; ?> />
+            <input type="number" min="1" name="SO_LUONG" value="1" placeholder="Số lượng" class="p-2 border rounded" <?= $canEditSlots? 'required':''; ?> <?= $canEditSlots? '':'disabled'; ?> />
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" name="BAT_BUOC" <?= $canEditSlots? '':'disabled'; ?> /> Bắt buộc</label>
+            <label class="flex items-center gap-2 text-xs"><input type="checkbox" name="ACTIVE" checked <?= $canEditSlots? '':'disabled'; ?> /> Kích hoạt</label>
+            <div class="col-span-2 flex justify-end">
+              <button type="submit" name="slot_create" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-40" <?= $canEditSlots? '':'disabled'; ?>>Thêm</button>
+            </div>
           </form>
-          <table class="min-w-full text-xs" id="packageCostumesTable">
+          <?php endif; ?>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+          <h3 class="text-lg font-semibold text-indigo-700 mb-4">Yêu cầu hiện có</h3>
+          <?php if(!$slotsTableExists): ?>
+            <div class="text-sm text-gray-600">—</div>
+          <?php else: ?>
+          <table class="min-w-full text-xs">
             <thead class="bg-indigo-100 text-indigo-700">
               <tr>
                 <th class="p-2">Tên</th>
+                <th class="p-2">Nhóm</th>
+                <th class="p-2">Loại</th>
+                <th class="p-2">Size</th>
                 <th class="p-2">SL</th>
-                <th class="p-2">Thứ tự</th>
+                <th class="p-2">Bắt buộc</th>
                 <th class="p-2">Trạng thái</th>
-                <th class="p-2">Xóa</th>
+                <th class="p-2">Hành động</th>
               </tr>
             </thead>
-            <tbody id="costumeBody">
-              <?php foreach($editCostumes as $row): ?>
-                <tr class="border-b" data-id-tp="<?= $row['ID_TRANG_PHUC'] ?>" draggable="true">
-                  <td class="p-2 truncate" title="<?= htmlspecialchars($row['TEN']) ?>"><?= htmlspecialchars($row['TEN']) ?></td>
-                  <td class="p-2"><input type="number" value="<?= $row['SO_LUONG'] ?>" min="1" class="w-14 px-1 py-0.5 border rounded qty-costume-input" /></td>
-                  <td class="p-2 order-handle cursor-move"></td>
-                  <td class="p-2 text-[10px]">
-                    <span class="px-2 py-0.5 rounded <?= ($row['TRANG_THAI'] ?? '')==='maintenance'?'bg-amber-100 text-amber-700':(($row['TRANG_THAI'] ?? '')==='rented'?'bg-blue-100 text-blue-700':'bg-emerald-100 text-emerald-700') ?>"><?= htmlspecialchars($row['TRANG_THAI']) ?></span>
-                  </td>
-                  <td class="p-2">
-                    <form method="POST" onsubmit="return confirm('Xóa trang phục khỏi gói?')">
-                      <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
-                      <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
-                      <input type="hidden" name="ID_TRANG_PHUC" value="<?= $row['ID_TRANG_PHUC'] ?>" />
-                      <button type="submit" name="remove_costume_from_package" class="text-red-600">Xóa</button>
-                    </form>
-                  </td>
+            <tbody class="divide-y">
+              <?php foreach($slots as $s): ?>
+                <tr>
+                    <td class="p-2"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" name="TEN_SLOT" value="<?= htmlspecialchars($s['TEN_SLOT'] ?? '') ?>" class="p-1 border rounded w-40" <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" name="NHOM" value="<?= htmlspecialchars($s['NHOM'] ?? '') ?>" class="p-1 border rounded w-28" <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" name="LOAI" value="<?= htmlspecialchars($s['LOAI'] ?? '') ?>" class="p-1 border rounded w-28" <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" name="SIZE" value="<?= htmlspecialchars($s['SIZE'] ?? '') ?>" class="p-1 border rounded w-16" <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" type="number" min="1" name="SO_LUONG" value="<?= (int)($s['SO_LUONG'] ?? 1) ?>" class="p-1 border rounded w-16" <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2 text-center"><input form="slotForm_<?= (int)$s['ID_SLOT'] ?>" type="checkbox" name="BAT_BUOC" <?= !empty($s['BAT_BUOC'])?'checked':''; ?> <?= $canEditSlots? '':'disabled'; ?> /></td>
+                    <td class="p-2 text-center">
+                      <span class="px-2 py-1 rounded text-xs <?= !empty($s['ACTIVE'])?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-700' ?>"><?= !empty($s['ACTIVE'])?'Đang bật':'Đang tắt' ?></span>
+                    </td>
+                    <td class="p-2 flex gap-2">
+                      <form id="slotForm_<?= (int)$s['ID_SLOT'] ?>" method="POST" class="inline">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+                        <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
+                        <input type="hidden" name="ID_SLOT" value="<?= (int)$s['ID_SLOT'] ?>" />
+                        <input type="hidden" name="ACTIVE" value="<?= (int)(empty($s['ACTIVE'])?1:0) ?>" />
+                        <button type="submit" name="slot_update" class="px-2 py-1 rounded bg-blue-600 text-white text-xs disabled:opacity-40" <?= $canEditSlots? '':'disabled'; ?>>Lưu</button>
+                        <button type="submit" name="slot_toggle_active" class="px-2 py-1 rounded bg-gray-600 text-white text-xs disabled:opacity-40" <?= $canEditSlots? '':'disabled'; ?>><?= !empty($s['ACTIVE'])?'Tắt':'Bật' ?></button>
+                        <button type="submit" name="slot_delete" class="px-2 py-1 rounded bg-red-600 text-white text-xs disabled:opacity-40" <?= $canEditSlots? '':'disabled'; ?> onclick="return confirm('⚠️ Xóa yêu cầu trang phục này?\n\nCác ánh xạ liên quan sẽ bị xóa theo.')">Xóa</button>
+                      </form>
+                    </td>
                 </tr>
               <?php endforeach; ?>
+              <?php if(empty($slots)): ?>
+                <tr><td colspan="8" class="p-3 text-gray-500">Chưa có yêu cầu trang phục.</td></tr>
+              <?php endif; ?>
             </tbody>
           </table>
-          <?php if(empty($editCostumes)): ?><div class="p-3 text-gray-500 text-xs">Chưa có trang phục.</div><?php endif; ?>
+          <p class="text-[11px] text-gray-500 mt-2">Ánh xạ theo chi nhánh sẽ được cấu hình ở bước tiếp theo.</p>
+          <?php endif; ?>
         </div>
       </div>
+
+      <!-- Branch mapping UI -->
+      <div class="bg-white p-4 rounded shadow mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold text-indigo-700">Ánh xạ theo chi nhánh</h3>
+          <div class="text-sm">
+            <?php if($isBranchManager): ?>
+              <span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700">Chi nhánh #<?= (int)$branchId ?></span>
+            <?php else: ?>
+              <form method="GET" class="inline-flex items-center gap-2">
+                <input type="hidden" name="page" value="packages" />
+                <input type="hidden" name="edit" value="<?= $editPackage['ID_GOI'] ?>" />
+                <input type="hidden" name="tab" value="slots" />
+                <label class="text-xs text-gray-600">Chi nhánh:</label>
+                <select name="map_cn" class="p-2 border rounded" onchange="this.form.submit()">
+                  <?php foreach($branches as $b): ?>
+                    <option value="<?= (int)$b['ID_CN'] ?>" <?= (int)$b['ID_CN']===$selectedMapBranchId?'selected':''; ?>>#<?= (int)$b['ID_CN'] ?> - <?= htmlspecialchars($b['TEN_CN']) ?></option>
+                  <?php endforeach; ?>
+                </select>
+              </form>
+            <?php endif; ?>
+          </div>
+        </div>
+        <?php if($slotsTableExists && $selectedMapBranchId>0): ?>
+          <?php
+            // Costumes for selected branch
+            $branchCostumes = [];
+            $csSql = "SELECT ID_TRANG_PHUC, TEN, GIA_THUE, TRANG_THAI FROM trang_phuc WHERE TRANG_THAI <> 'retired' AND ID_CN=".(int)$selectedMapBranchId." ORDER BY TEN LIMIT 300";
+            $csRes = $conn->query($csSql);
+            if ($csRes) { while($r=$csRes->fetch_assoc()){ $branchCostumes[]=$r; } }
+          ?>
+          <?php foreach($slots as $s): $sid=(int)$s['ID_SLOT']; $maps = $existingMappingsBySlot[$sid] ?? []; ?>
+            <form method="POST" class="slot-map-form border-t py-3">
+              <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+              <input type="hidden" name="ID_GOI" value="<?= (int)$editPackage['ID_GOI'] ?>" />
+              <input type="hidden" name="ID_SLOT" value="<?= $sid ?>" />
+              <input type="hidden" name="MAP_CN" value="<?= (int)$selectedMapBranchId ?>" />
+              <input type="hidden" name="mapping_payload" class="mapping-payload" />
+              <div class="flex items-start gap-3">
+                <div class="w-64">
+                  <div class="font-semibold text-sm"><?= htmlspecialchars($s['TEN_SLOT']) ?></div>
+                  <div class="text-xs text-gray-500">SL yêu cầu: <?= (int)$s['SO_LUONG'] ?> <?= !empty($s['BAT_BUOC'])? '(bắt buộc)':''; ?></div>
+                </div>
+                <div class="flex-1 grid md:grid-cols-2 gap-2">
+                  <?php foreach($branchCostumes as $c): $cid=(int)$c['ID_TRANG_PHUC']; $checked = isset($maps[$cid]); $adj = $checked ? (int)($maps[$cid]['PRICE_ADJUSTMENT'] ?? 0) : ''; ?>
+                    <label class="flex items-center gap-2 text-xs border rounded p-2">
+                      <input type="checkbox" class="map-check" data-id-tp="<?= $cid ?>" <?= $checked?'checked':''; ?> />
+                      <span class="truncate" title="<?= htmlspecialchars($c['TEN']) ?>"><?= htmlspecialchars($c['TEN']) ?></span>
+                      <span class="ml-auto text-[10px] text-gray-500"><?= number_format((int)$c['GIA_THUE'],0,',','.') ?></span>
+                      <input type="number" class="map-adj w-20 px-1 py-0.5 border rounded" placeholder="±VNĐ" value="<?= $adj ?>" data-id-tp="<?= $cid ?>" />
+                    </label>
+                  <?php endforeach; ?>
+                  <?php if(empty($branchCostumes)): ?><div class="text-xs text-gray-500">Chi nhánh không có trang phục khả dụng.</div><?php endif; ?>
+                </div>
+                <div class="w-40 text-right">
+                  <button type="submit" name="slot_set_mappings" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-xs">Lưu ánh xạ</button>
+                </div>
+              </div>
+            </form>
+          <?php endforeach; ?>
+        <?php else: ?>
+          <div class="text-sm text-gray-600">Chọn chi nhánh để cấu hình ánh xạ.</div>
+        <?php endif; ?>
+      </div>
+      <?php endif; ?>
+
+      <?php if($activeTab==='promotions'): ?>
+      <!-- Promotion management tab -->
+      <div class="bg-white p-4 rounded shadow mb-6">
+        <h3 class="text-lg font-semibold text-indigo-700 mb-4">Tạo khuyến mãi mới</h3>
+        <?php if(!$promotionsTableExists): ?>
+          <p class="text-red-600 text-sm">Chưa chạy migration tạo bảng khuyến mãi. Vui lòng chạy <code>2025_11_26_000002_add_goi_dich_vu_khuyen_mai.sql</code></p>
+        <?php elseif(!$canEditPromotions): ?>
+          <p class="text-amber-600 text-sm">Bạn không có quyền chỉnh sửa khuyến mãi cho gói này (chỉ quản lý gói local thuộc chi nhánh).</p>
+        <?php else: ?>
+        <form method="POST" class="grid md:grid-cols-2 gap-4">
+          <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+          <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
+          
+          <div>
+            <label class="block text-sm font-medium mb-1">Tên chương trình *</label>
+            <input type="text" name="TEN_CHUONG_TRINH" required class="w-full px-3 py-2 border rounded" placeholder="VD: Khuyến mãi tết 2025" />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium mb-1">Loại giảm *</label>
+            <select name="LOAI_GIAM" id="loaiGiamSelect" class="w-full px-3 py-2 border rounded">
+              <option value="phan_tram">Phần trăm (%)</option>
+              <option value="so_tien">Số tiền cố định (VNĐ)</option>
+            </select>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium mb-1">Giá trị giảm *</label>
+            <input type="number" step="0.01" name="GIA_TRI_GIAM" required class="w-full px-3 py-2 border rounded" placeholder="VD: 15 (nếu %), hoặc 500000 (nếu VNĐ)" />
+          </div>
+          
+          <div id="giamToiDaDiv">
+            <label class="block text-sm font-medium mb-1">Giảm tối đa (VNĐ)</label>
+            <input type="number" step="1" name="GIAM_TOI_DA" class="w-full px-3 py-2 border rounded" placeholder="VD: 5000000 (chỉ dùng cho %)" />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium mb-1">Từ ngày *</label>
+            <input type="datetime-local" name="TU_NGAY" required class="w-full px-3 py-2 border rounded" value="<?= date('Y-m-d\TH:i') ?>" />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium mb-1">Đến ngày *</label>
+            <input type="datetime-local" name="DEN_NGAY" required class="w-full px-3 py-2 border rounded" value="<?= date('Y-m-d\TH:i', strtotime('+1 month')) ?>" />
+          </div>
+          
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium mb-1">Mô tả</label>
+            <textarea name="MO_TA" rows="2" class="w-full px-3 py-2 border rounded" placeholder="Mô tả chi tiết chương trình khuyến mãi"></textarea>
+          </div>
+          
+          <div class="md:col-span-2 flex items-center gap-2">
+            <input type="checkbox" name="ACTIVE_PROMO" id="activePromoCheck" checked class="w-4 h-4" />
+            <label for="activePromoCheck" class="text-sm">Kích hoạt ngay</label>
+          </div>
+          
+          <div class="md:col-span-2 flex justify-end">
+            <button type="submit" name="promo_create" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded disabled:opacity-50" onclick="this.disabled=true; this.innerHTML='<span class=\'animate-spin\'>⏳</span> Đang tạo...'; this.form.submit();">Tạo khuyến mãi</button>
+          </div>
+        </form>
+        <?php endif; ?>
+      </div>
+
+      <?php if($promotionsTableExists): ?>
+      <div class="bg-white p-4 rounded shadow">
+        <h3 class="text-lg font-semibold text-indigo-700 mb-4">Danh sách khuyến mãi</h3>
+        <?php if(empty($promotions)): ?>
+          <p class="text-gray-500 text-sm">Chưa có khuyến mãi nào.</p>
+        <?php else: ?>
+        <table class="min-w-full text-xs">
+          <thead class="bg-indigo-100 text-indigo-700">
+            <tr>
+              <th class="p-2">ID</th>
+              <th class="p-2">Tên chương trình</th>
+              <th class="p-2">Loại</th>
+              <th class="p-2">Giá trị</th>
+              <th class="p-2">Giảm tối đa</th>
+              <th class="p-2">Từ ngày</th>
+              <th class="p-2">Đến ngày</th>
+              <th class="p-2">Trạng thái</th>
+              <th class="p-2">Hành động</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach($promotions as $promo): ?>
+            <tr class="border-b hover:bg-gray-50 <?= $promo['IS_CURRENT'] ? 'bg-green-50' : '' ?>">
+              <form method="POST">
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+                <input type="hidden" name="ID_GOI" value="<?= $editPackage['ID_GOI'] ?>" />
+                <input type="hidden" name="ID_PROMO" value="<?= $promo['ID_KM'] ?>" />
+                
+                <td class="p-2"><?= $promo['ID_KM'] ?></td>
+                <td class="p-2">
+                  <input type="text" name="TEN_CHUONG_TRINH" value="<?= htmlspecialchars($promo['TEN_CHUONG_TRINH']) ?>" class="w-full px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?> />
+                </td>
+                <td class="p-2">
+                  <select name="LOAI_GIAM" class="px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?>>
+                    <option value="phan_tram" <?= $promo['LOAI_GIAM']==='phan_tram'?'selected':'' ?>>%</option>
+                    <option value="so_tien" <?= $promo['LOAI_GIAM']==='so_tien'?'selected':'' ?>>VNĐ</option>
+                  </select>
+                </td>
+                <td class="p-2">
+                  <input type="number" step="0.01" name="GIA_TRI_GIAM" value="<?= $promo['GIA_TRI_GIAM'] ?>" class="w-20 px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?> />
+                </td>
+                <td class="p-2">
+                  <input type="number" step="1" name="GIAM_TOI_DA" value="<?= $promo['GIAM_TOI_DA'] ?? '' ?>" class="w-20 px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?> />
+                </td>
+                <td class="p-2">
+                  <input type="datetime-local" name="TU_NGAY" value="<?= date('Y-m-d\TH:i', strtotime($promo['TU_NGAY'])) ?>" class="px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?> />
+                </td>
+                <td class="p-2">
+                  <input type="datetime-local" name="DEN_NGAY" value="<?= date('Y-m-d\TH:i', strtotime($promo['DEN_NGAY'])) ?>" class="px-1 py-0.5 border rounded text-xs" <?= $canEditPromotions?'':'disabled' ?> />
+                </td>
+                <td class="p-2">
+                  <input type="hidden" name="ACTIVE_VAL" value="<?= $promo['ACTIVE'] ? 0 : 1 ?>" />
+                  <button type="submit" name="promo_toggle_active" class="px-2 py-1 rounded text-xs <?= $promo['ACTIVE'] ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600' ?>" <?= $canEditPromotions?'':'disabled' ?>>
+                    <?= $promo['ACTIVE'] ? 'ON' : 'OFF' ?>
+                  </button>
+                  <?php if($promo['IS_CURRENT']): ?><span class="ml-1 text-[10px] text-green-600">●</span><?php endif; ?>
+                </td>
+                <td class="p-2 flex gap-1">
+                  <button type="submit" name="promo_update" class="px-2 py-1 rounded bg-blue-600 text-white text-xs" <?= $canEditPromotions?'':'disabled' ?>>Lưu</button>
+                  <button type="submit" name="promo_delete" class="px-2 py-1 rounded bg-red-600 text-white text-xs" <?= $canEditPromotions?'':'disabled' ?> onclick="return confirm('⚠️ Xóa khuyến mãi vĩnh viễn?\n\nHành động này không thể hoàn tác.')">Xóa</button>
+                </td>
+              </form>
+            </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+        <?php endif; ?>
+      </div>
+      <?php endif; ?>
+      <?php endif; ?>
+    <?php endif; ?>
+
+    <!-- Quick stats -->
+    <?php if(!$isEditing): ?>
+    <div class="grid md:grid-cols-4 gap-4 mb-6">
+      <div class="bg-gradient-to-br from-blue-500 to-blue-600 text-white p-4 rounded-lg shadow">
+        <div class="text-2xl font-bold"><?= count(array_filter($packages, fn($p)=>$p['TRANG_THAI']==='ban')) ?></div>
+        <div class="text-sm opacity-90">Đang bán</div>
+      </div>
+      <div class="bg-gradient-to-br from-yellow-500 to-yellow-600 text-white p-4 rounded-lg shadow">
+        <div class="text-2xl font-bold"><?= count(array_filter($packages, fn($p)=>$p['TRANG_THAI']==='nhap')) ?></div>
+        <div class="text-sm opacity-90">Nháp</div>
+      </div>
+      <div class="bg-gradient-to-br from-green-500 to-green-600 text-white p-4 rounded-lg shadow">
+        <div class="text-2xl font-bold"><?= count(array_filter($packages, fn($p)=>!empty($p['ID_KM']))) ?></div>
+        <div class="text-sm opacity-90">Có khuyến mãi</div>
+      </div>
+      <div class="bg-gradient-to-br from-purple-500 to-purple-600 text-white p-4 rounded-lg shadow">
+        <div class="text-2xl font-bold"><?= count($packages) ?></div>
+        <div class="text-sm opacity-90">Tổng gói</div>
+      </div>
+    </div>
     <?php endif; ?>
 
     <!-- Package list -->
@@ -536,28 +1329,81 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
               </td>
               <td class="p-3">
                 <?php $st=$pkg['TRANG_THAI']; ?>
-                <span class="px-2 py-1 rounded text-xs font-semibold <?php echo $st==='ban'?'bg-green-100 text-green-800':($st==='nhap'?'bg-yellow-100 text-yellow-800':'bg-gray-300 text-gray-700'); ?>"><?= htmlspecialchars($st) ?></span>
+                <?php 
+                  $stDisplay = match($st) {
+                    'ban' => 'Hoạt động',
+                    'nhap' => 'Chỉnh sửa',
+                    'ngung' => 'Tạm ngừng',
+                    default => $st
+                  };
+                  $stClass = match($st) {
+                    'ban' => 'bg-green-100 text-green-800',
+                    'nhap' => 'bg-yellow-100 text-yellow-800',
+                    'ngung' => 'bg-gray-300 text-gray-700',
+                    default => 'bg-gray-300 text-gray-700'
+                  };
+                ?>
+                <span class="px-2 py-1 rounded text-xs font-semibold <?= $stClass ?>"><?= htmlspecialchars($stDisplay) ?></span>
               </td>
-              <td class="p-3"><?= $pkg['TONG_GIA_GOI']? number_format($pkg['TONG_GIA_GOI'],0,',','.') : '—' ?></td>
+              <td class="p-3">
+                <?php 
+                  $giaGoc = $pkg['TONG_GIA_GOI'] ?? 0;
+                  $giaSauGiam = $pkg['GIA_SAU_GIAM'] ?? null;
+                  $soTienGiam = $pkg['SO_TIEN_GIAM'] ?? null;
+                  $tenKM = $pkg['TEN_CHUONG_TRINH'] ?? null;
+                ?>
+                <?php if ($giaSauGiam && $soTienGiam > 0): ?>
+                  <div class="text-xs">
+                    <span class="line-through text-gray-400"><?= number_format($giaGoc,0,',','.') ?></span>
+                    <span class="block font-semibold text-green-600"><?= number_format($giaSauGiam,0,',','.') ?></span>
+                    <span class="text-[10px] text-green-600" title="<?= htmlspecialchars($tenKM) ?>">-<?= number_format($soTienGiam,0,',','.') ?></span>
+                  </div>
+                <?php else: ?>
+                  <?= $giaGoc ? number_format($giaGoc,0,',','.') : '—' ?>
+                <?php endif; ?>
+              </td>
               <td class="p-3 text-xs"><?= htmlspecialchars($pkg['SCOPE_TYPE'] ?? '') ?><?php if(($pkg['SCOPE_TYPE'] ?? '')==='local'): ?>#<?= (int)($pkg['ID_CN_OWNER'] ?? 0) ?><?php endif; ?></td>
-              <td class="p-3 flex justify-center gap-2 text-xs">
-                <a href="?page=packages&edit=<?= $pkg['ID_GOI'] ?>" class="bg-yellow-500 hover:bg-yellow-600 text-white px-2 py-1 rounded">Sửa</a>
-                <?php if($st!=='ban'): ?>
-                  <form method="POST" class="inline">
-                    <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
-                    <input type="hidden" name="ID_GOI" value="<?= $pkg['ID_GOI'] ?>" />
-                    <input type="hidden" name="STATUS" value="ban" />
-                    <button type="submit" name="change_status" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded">Đăng</button>
-                  </form>
-                <?php endif; ?>
-                <?php if($st!=='ngung'): ?>
-                  <form method="POST" class="inline" onsubmit="return confirm('Ngừng gói?')">
-                    <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
-                    <input type="hidden" name="ID_GOI" value="<?= $pkg['ID_GOI'] ?>" />
-                    <input type="hidden" name="STATUS" value="ngung" />
-                    <button type="submit" name="change_status" class="bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded">Ngừng</button>
-                  </form>
-                <?php endif; ?>
+              <td class="p-3">
+                <div class="relative inline-block">
+                  <button class="menu-btn bg-gray-600 hover:bg-gray-700 text-white px-3 py-1 rounded text-sm font-semibold" data-pkg="<?= $pkg['ID_GOI'] ?>">⋯</button>
+                  <div class="menu-dropdown absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded shadow-lg hidden z-20">
+                    <a href="?page=packages&edit=<?= $pkg['ID_GOI'] ?>" class="block px-4 py-2 text-left text-gray-700 hover:bg-yellow-50 border-b">Chỉnh sửa</a>
+                    <?php if($st!=='ban'): ?>
+                      <?php
+                        $publishDisabled = false; $publishTitle = '';
+                        if (($pkg['SCOPE_TYPE'] ?? '')==='local' && pkg_table_exists($conn,'goi_dich_vu_trang_phuc_slot')) {
+                          $ownerCn = (int)($pkg['ID_CN_OWNER'] ?? 0);
+                          if ($ownerCn>0) {
+                            try { $miss = $slotRepo->countMissingRequiredMappingsForBranch((int)$pkg['ID_GOI'], $ownerCn); } catch (\Throwable $e) { $miss = 0; }
+                            if ($miss>0) { $publishDisabled = true; $publishTitle = 'Thiếu '.$miss.' yêu cầu trang phục bắt buộc tại chi nhánh #'.$ownerCn; }
+                          }
+                        }
+                      ?>
+                      <form method="POST" class="contents">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+                        <input type="hidden" name="ID_GOI" value="<?= $pkg['ID_GOI'] ?>" />
+                        <input type="hidden" name="STATUS" value="ban" />
+                        <button type="submit" name="change_status" class="block w-full text-left px-4 py-2 text-gray-700 hover:bg-blue-50 border-b disabled:opacity-50 disabled:cursor-not-allowed" title="<?= htmlspecialchars($publishTitle) ?>" <?= $publishDisabled?'disabled':''; ?>>Xuất bản</button>
+                      </form>
+                      <?php if(($pkg['SCOPE_TYPE'] ?? '')==='local' && !empty($publishDisabled)): ?>
+                        <a href="?page=packages&edit=<?= $pkg['ID_GOI'] ?>&tab=slots&map_cn=<?= (int)($pkg['ID_CN_OWNER'] ?? 0) ?>" class="block px-4 py-2 text-gray-700 hover:bg-indigo-50 border-b" title="Tới cấu hình yêu cầu trang phục">Thiết lập</a>
+                      <?php endif; ?>
+                    <?php endif; ?>
+                    <?php if($st!=='ngung'): ?>
+                      <form method="POST" class="contents" onsubmit="return confirm('Tạm ngừng gói dịch vụ?\n\nGói sẽ không hiển thị cho khách hàng.')">
+                        <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+                        <input type="hidden" name="ID_GOI" value="<?= $pkg['ID_GOI'] ?>" />
+                        <input type="hidden" name="STATUS" value="ngung" />
+                        <button type="submit" name="change_status" class="block w-full text-left px-4 py-2 text-gray-700 hover:bg-orange-50 border-b">Tạm ngừng</button>
+                      </form>
+                    <?php endif; ?>
+                    <form method="POST" class="contents" onsubmit="return confirm('Xóa vĩnh viễn gói này?\n\nHành động không thể hoàn tác. Đảm bảo gói không được sử dụng trong lịch hẹn nào.')">
+                      <input type="hidden" name="csrf" value="<?= htmlspecialchars(pkg_csrf_token()) ?>" />
+                      <input type="hidden" name="ID_GOI" value="<?= $pkg['ID_GOI'] ?>" />
+                      <button type="submit" name="delete_package" class="block w-full text-left px-4 py-2 text-red-700 hover:bg-red-50 font-semibold">Xóa</button>
+                    </form>
+                  </div>
+                </div>
               </td>
             </tr>
           <?php endforeach; ?>
@@ -573,6 +1419,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
         <?php endfor; ?>
       </div>
     <?php endif; ?>
+        
   </div>
     <?php if(isset($historyService) && $historyService): ?>
     <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onclick="if(event.target===this) window.location='?page=packages&edit=<?= $editPackage['ID_GOI'] ?>';">
@@ -601,6 +1448,26 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
     </div>
     <?php endif; ?>
     <script>
+      // Build mapping payloads for slot mapping forms
+      (function(){
+        const forms = document.querySelectorAll('.slot-map-form');
+        forms.forEach(form => {
+          form.addEventListener('submit', function(e){
+            const payloadEl = form.querySelector('.mapping-payload');
+            const items = [];
+            const checks = form.querySelectorAll('.map-check');
+            checks.forEach(ch => {
+              const id = parseInt(ch.getAttribute('data-id-tp'), 10);
+              const adjEl = form.querySelector('.map-adj[data-id-tp="'+id+'"]');
+              const adjVal = adjEl ? adjEl.value.trim() : '';
+              if (ch.checked) {
+                items.push({ ID_TRANG_PHUC: id, PRICE_ADJUSTMENT: adjVal!=='' ? parseInt(adjVal, 10) : null, ACTIVE: 1 });
+              }
+            });
+            payloadEl.value = JSON.stringify(items);
+          });
+        });
+      })();
       (function(){
         const avail = document.getElementById('availableServices');
         const body = document.getElementById('packageServicesBody');
@@ -725,5 +1592,287 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['reorder_services'])) {
         body.addEventListener('dragover',e=>{ e.preventDefault(); const target=e.target.closest('tr'); if(!dragEl||!target||dragEl===target) return; const rect=target.getBoundingClientRect(); const before=(e.clientY-rect.top)<rect.height/2; if(before) target.parentNode.insertBefore(dragEl,target); else target.parentNode.insertBefore(dragEl,target.nextSibling); });
         updateOrder();
       })();
+
+      // Toggle GIAM_TOI_DA field visibility based on LOAI_GIAM
+      (function(){
+        const selectEl = document.getElementById('loaiGiamSelect');
+        const divEl = document.getElementById('giamToiDaDiv');
+        if (!selectEl || !divEl) return;
+        function toggle() {
+          if (selectEl.value === 'phan_tram') {
+            divEl.style.display = 'block';
+          } else {
+            divEl.style.display = 'none';
+          }
+        }
+        selectEl.addEventListener('change', toggle);
+        toggle();
+      })();
+
+      // Client-side validation for package form
+      // Client-side validation for package form
+      function validatePackageForm(form) {
+        console.log('validatePackageForm called');
+        
+        const errors = [];
+        const submitBtn = form.querySelector('#submitPackageBtn');
+        
+        // Remove previous error highlights
+        form.querySelectorAll('.border-red-500').forEach(el => {
+          el.classList.remove('border-red-500');
+          el.classList.add('border-gray-300');
+        });
+        
+        const tenGoi = form.querySelector('[name="TEN_GOI"]');
+        const moTa = form.querySelector('[name="MO_TA"]');
+        const scopeType = form.querySelector('[name="SCOPE_TYPE"]');
+        const idCnOwner = form.querySelector('[name="ID_CN_OWNER"]');
+        const hieuLucTu = form.querySelector('[name="HIEU_LUC_TU"]');
+        const hieuLucDen = form.querySelector('[name="HIEU_LUC_DEN"]');
+        
+        // Kiểm tra tên gói
+        if (!tenGoi || !tenGoi.value.trim()) {
+          errors.push({field: tenGoi, message: 'Tên gói là bắt buộc'});
+        } else if (tenGoi.value.trim().length < 5) {
+          errors.push({field: tenGoi, message: 'Tên gói phải có ít nhất 5 ký tự (hiện tại: ' + tenGoi.value.trim().length + ')'});
+        } else if (tenGoi.value.trim().length > 150) {
+          errors.push({field: tenGoi, message: 'Tên gói không quá 150 ký tự (hiện tại: ' + tenGoi.value.trim().length + ')'});
+        }
+        
+        // Kiểm tra mô tả
+        if (!moTa || !moTa.value.trim()) {
+          errors.push({field: moTa, message: 'Mô tả là bắt buộc'});
+        } else if (moTa.value.trim().length < 20) {
+          errors.push({field: moTa, message: 'Mô tả phải có ít nhất 20 ký tự (hiện tại: ' + moTa.value.trim().length + ')'});
+        } else if (moTa.value.trim().length > 500) {
+          errors.push({field: moTa, message: 'Mô tả không quá 500 ký tự (hiện tại: ' + moTa.value.trim().length + ')'});
+        }
+        
+        // Kiểm tra chi nhánh nếu là local
+        if (scopeType && scopeType.value === 'local') {
+          if (idCnOwner && !idCnOwner.value) {
+            errors.push({field: idCnOwner, message: 'Vui lòng chọn chi nhánh sở hữu cho gói local'});
+          }
+        }
+        
+        // Kiểm tra ngày hiệu lực
+        if (hieuLucTu && hieuLucDen && hieuLucTu.value && hieuLucDen.value) {
+          const tuDate = new Date(hieuLucTu.value);
+          const denDate = new Date(hieuLucDen.value);
+          if (tuDate >= denDate) {
+            errors.push({field: hieuLucDen, message: 'Ngày kết thúc phải sau ngày bắt đầu'});
+          }
+        }
+        
+        if (errors.length > 0) {
+          console.log('Validation failed:', errors);
+          
+          // Highlight các field lỗi
+          errors.forEach(err => {
+            if (err.field) {
+              err.field.classList.remove('border-gray-300');
+              err.field.classList.add('border-red-500');
+            }
+          });
+          
+          // Hiển thị thông báo lỗi
+          let errorMsg = '⚠️ Vui lòng sửa các lỗi sau:\n\n';
+          errors.forEach((err, idx) => {
+            errorMsg += (idx + 1) + '. ' + err.message + '\n';
+          });
+          alert(errorMsg);
+          
+          // Focus vào field lỗi đầu tiên
+          if (errors[0].field) {
+            errors[0].field.focus();
+            errors[0].field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          
+          return false;
+        }
+        
+        // Validation pass - hiển thị loading state
+        console.log('Validation passed, submitting...');
+        console.log('Form data:', {
+          TEN_GOI: tenGoi.value,
+          MO_TA: moTa.value.substring(0, 50) + '...',
+          SCOPE_TYPE: scopeType ? scopeType.value : 'N/A',
+          ID_CN_OWNER: idCnOwner ? idCnOwner.value : 'N/A'
+        });
+        
+        // Disable button và hiển thị loading
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> Đang tạo gói...';
+        }
+        
+        return true;
+      }
+
+      // Auto-dismiss success messages after 5 seconds
+      (function() {
+        const successAlerts = document.querySelectorAll('.success-alert');
+        successAlerts.forEach(alert => {
+          setTimeout(() => {
+            alert.style.transition = 'opacity 0.5s';
+            alert.style.opacity = '0';
+            setTimeout(() => alert.remove(), 500);
+          }, 5000);
+        });
+      })();
+      
+      // Auto-reload page after delete success
+      <?php if(isset($showReloadScript) && $showReloadScript): ?>
+      (function() {
+        setTimeout(() => {
+          window.location.href = '?page=packages';
+        }, 1500);
+      })();
+      <?php endif; ?>
+
+      // Smooth scroll to errors
+      (function() {
+        const errorAlert = document.querySelector('.bg-red-100');
+        if (errorAlert) {
+          errorAlert.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      })();
+
+      // Add keyboard shortcuts hint
+      (function() {
+        document.addEventListener('keydown', e => {
+          // Ctrl/Cmd + K to focus search
+          if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            const searchInput = document.querySelector('input[name="search"]');
+            if (searchInput) {
+              searchInput.focus();
+              searchInput.select();
+            }
+          }
+          // ESC to close modals/forms
+          if (e.key === 'Escape') {
+            const closeBtn = document.querySelector('a[title="Đóng"]');
+            if (closeBtn && window.location.href.includes('add=true')) {
+              window.location.href = '?page=packages';
+            }
+          }
+        });
+      })();
+
+      // Format number inputs with thousand separators (visual only)
+      (function() {
+        const priceInputs = document.querySelectorAll('.map-adj, input[name="GIA_TRI_GIAM"], input[name="GIAM_TOI_DA"]');
+        priceInputs.forEach(input => {
+          input.addEventListener('blur', function() {
+            if (this.value) {
+              const val = parseFloat(this.value.replace(/,/g, ''));
+              if (!isNaN(val)) {
+                this.dataset.rawValue = val;
+                this.value = val.toLocaleString('vi-VN');
+              }
+            }
+          });
+          input.addEventListener('focus', function() {
+            if (this.dataset.rawValue) {
+              this.value = this.dataset.rawValue;
+            }
+          });
+        });
+      })();
+
+      // Prevent double-submit on all forms
+      (function() {
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => {
+          let submitted = false;
+          form.addEventListener('submit', function(e) {
+            if (submitted) {
+              e.preventDefault();
+              return false;
+            }
+            submitted = true;
+            setTimeout(() => { submitted = false; }, 3000);
+          });
+        });
+      })();
+
+      // Image preview
+      function previewImage(input) {
+        const preview = document.getElementById('imagePreview');
+        const previewImg = document.getElementById('previewImg');
+        if (input.files && input.files[0]) {
+          const reader = new FileReader();
+          reader.onload = function(e) {
+            previewImg.src = e.target.result;
+            preview.classList.remove('hidden');
+          };
+          reader.readAsDataURL(input.files[0]);
+        }
+      }
+
+      // Toggle branch selector based on scope type
+      function toggleBranchSelector() {
+        const scopeSelect = document.getElementById('scopeTypeSelect');
+        const branchDiv = document.getElementById('branchSelectorDiv');
+        const branchSelect = branchDiv?.querySelector('select');
+        
+        if (scopeSelect && branchDiv) {
+          if (scopeSelect.value === 'local') {
+            branchDiv.classList.remove('hidden');
+            if (branchSelect) branchSelect.required = true;
+          } else {
+            branchDiv.classList.add('hidden');
+            if (branchSelect) {
+              branchSelect.required = false;
+              branchSelect.value = '';
+            }
+          }
+        }
+      }
+
+      // Initialize on page load
+      document.addEventListener('DOMContentLoaded', function() {
+        toggleBranchSelector();
+        
+        // Dropdown menu handler
+        const menuBtns = document.querySelectorAll('.menu-btn');
+        menuBtns.forEach(btn => {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const dropdown = this.nextElementSibling;
+            const isHidden = dropdown.classList.contains('hidden');
+            
+            // Close all other dropdowns
+            document.querySelectorAll('.menu-dropdown').forEach(d => d.classList.add('hidden'));
+            
+            // Toggle current dropdown
+            if (isHidden) {
+              dropdown.classList.remove('hidden');
+            } else {
+              dropdown.classList.add('hidden');
+            }
+          });
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+          if (!e.target.closest('.menu-btn') && !e.target.closest('.menu-dropdown')) {
+            document.querySelectorAll('.menu-dropdown').forEach(d => d.classList.add('hidden'));
+          }
+        });
+      });
+
+      // Add loading spinner CSS animation
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        .transition-all { transition: all 0.2s ease; }
+        .transition-colors { transition: color 0.2s, background-color 0.2s; }
+      `;
+      document.head.appendChild(style);
     </script>
 </body>

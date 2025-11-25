@@ -15,7 +15,7 @@ $staffType = (string)($_SESSION['STAFF_TYPE'] ?? '');
 $branchId = isset($_SESSION['branch_id']) ? (int)$_SESSION['branch_id'] : 0;
 $isBranchManager = ($role === '2' && $staffType === 'quan_ly' && $branchId > 0);
 
-// Gói trang phục: chỉ dùng các bảng liên quan trang phục (goi_trang_phuc, goi_trang_phuc_chi_tiet, trang_phuc)
+// Repositories: sử dụng goi_trang_phuc_master (local packages) và goi_trang_phuc_chi_tiet (details)
 $pivotRepo = new PackageCostumeRepository($conn);
 $masterRepo = new CostumePackageMasterRepository($conn);
 
@@ -23,7 +23,7 @@ $search = trim($_GET['search'] ?? '');
 $filterBranchId = isset($_GET['filter_branch']) ? (int)$_GET['filter_branch'] : 0;
 $filterStatus = isset($_GET['filter_status']) ? $_GET['filter_status'] : '';
 
-// Khởi tạo gói trang phục local (chỉ admin). Tạo record master và chuyển sang trang chỉnh.
+// Create local costume package
 $newCostumePackageId = null;
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   $action = $_POST['action'] ?? '';
@@ -36,11 +36,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       $ownerBranch = (int)($_POST['ID_CN_OWNER'] ?? 0);
       $discountPercent = isset($_POST['DISCOUNT_PERCENT']) ? (int)$_POST['DISCOUNT_PERCENT'] : 0;
       $discountPercent = max(0, min(100, $discountPercent));
+      
       if ($pkgName === '') {
         $createError = 'Tên gói không được trống.';
       } elseif ($ownerBranch <= 0) {
         $createError = 'Phải chọn chi nhánh sở hữu.';
-      } elseif ($role !== '1') { // giả sử role 1 = admin
+      } elseif ($role !== '1') {
         $createError = 'Chỉ admin được tạo gói trang phục.';
       } else {
         $id = $masterRepo->create($pkgName, $pkgDesc !== '' ? $pkgDesc : null, $ownerBranch, $discountPercent);
@@ -62,14 +63,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $redirectAfterToggle = true;
       }
     }
+  } elseif ($action === 'delete_costume_package' && $role === '1') {
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+      $createError = 'CSRF token không hợp lệ';
+    } else {
+      $goiId = (int)($_POST['ID_GOI'] ?? 0);
+      if ($goiId > 0) {
+        if ($masterRepo->delete($goiId)) {
+          $deleteSuccess = true;
+        } else {
+          $createError = 'Không xóa được gói.';
+        }
+      }
+    }
   }
 }
 
 $page = max(1, (int)($_GET['p'] ?? 1));
 $limit = 12;
 $offset = ($page - 1) * $limit;
-
-// Listing dựa trên master table (local packages). Branch manager chỉ thấy gói của chi nhánh mình.
 
 // Determine branch filter
 $filterBranch = null;
@@ -85,19 +97,19 @@ if ($filterStatus === 'active' || $filterStatus === 'inactive') {
   $statusFilterSql = $filterStatus;
 }
 
-// Count and list with filters
+// Count and list from master table
 $totalRows = $masterRepo->countAll($filterBranch, $search !== '' ? $search : null, $statusFilterSql !== '' ? $statusFilterSql : null);
 $totalPages = max(1, (int)ceil($totalRows / $limit));
 $packages = $masterRepo->listAll($filterBranch, $search !== '' ? $search : null, $limit, $offset, $statusFilterSql !== '' ? $statusFilterSql : null);
 
-// Gắn chi tiết trang phục cho mỗi gói
+// Load details for each package from goi_trang_phuc_chi_tiet
 $costumesByPackage = [];
 foreach ($packages as $pkg) {
     $pkgId = (int)$pkg['ID_GOI'];
     $costumesByPackage[$pkgId] = $pivotRepo->listCostumes($pkgId);
 }
 
-// Lấy mapping tên chi nhánh để hiển thị
+// Load branch names
 $branchNames = [];
 $branchQuery = $conn->query("SELECT ID_CN, TEN_CN FROM chi_nhanh");
 while ($b = $branchQuery->fetch_assoc()) {
@@ -111,7 +123,7 @@ function renderCostumeBadge(array $row): string {
 $baseUrl = '?page=package_costumes';
 $searchParams = $search !== '' ? '&search=' . urlencode($search) : '';
 
-// CSRF token cho form tạo gói mới
+// CSRF token
 if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }

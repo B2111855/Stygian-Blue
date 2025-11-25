@@ -1,6 +1,7 @@
 <?php
 // KHÔNG cần session_start ở đây nếu require_* đã tự start; nếu chưa, vẫn ok.
 require_once '../../middlewares/require_admin.php';
+
 include './components/head.php';
 
 

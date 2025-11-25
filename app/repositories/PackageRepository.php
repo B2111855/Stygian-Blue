@@ -18,10 +18,29 @@ class PackageRepository {
 
     public function searchPackages(string $search='', int $limit=10, int $offset=0, ?int $branchScope=null): array {
         // branchScope: if provided, include global packages + local owned by branch
-        $sql = "SELECT g.*, vt.TONG_GIA_GOI
-                FROM goi_dich_vu g
-                LEFT JOIN v_goi_dich_vu_tong_tien vt ON vt.ID_GOI = g.ID_GOI
-                WHERE (g.TEN_GOI LIKE ? OR g.MO_TA LIKE ?)";
+        // Join with promotion view if it exists
+        $hasPromoView = false;
+        $checkView = $this->conn->query("SHOW TABLES LIKE 'v_goi_dich_vu_gia_khuyen_mai'");
+        if ($checkView && $checkView->num_rows > 0) { $hasPromoView = true; }
+        
+        if ($hasPromoView) {
+            $sql = "SELECT g.*, 
+                    vt.TONG_GIA_GOI,
+                    vkm.ID_KM,
+                    vkm.TEN_CHUONG_TRINH,
+                    vkm.SO_TIEN_GIAM,
+                    vkm.GIA_SAU_GIAM
+                    FROM goi_dich_vu g
+                    LEFT JOIN v_goi_dich_vu_tong_tien vt ON vt.ID_GOI = g.ID_GOI
+                    LEFT JOIN v_goi_dich_vu_gia_khuyen_mai vkm ON vkm.ID_GOI = g.ID_GOI
+                    WHERE (g.TEN_GOI LIKE ? OR g.MO_TA LIKE ?)";
+        } else {
+            $sql = "SELECT g.*, vt.TONG_GIA_GOI
+                    FROM goi_dich_vu g
+                    LEFT JOIN v_goi_dich_vu_tong_tien vt ON vt.ID_GOI = g.ID_GOI
+                    WHERE (g.TEN_GOI LIKE ? OR g.MO_TA LIKE ?)";
+        }
+        
         $like = '%'.$search.'%';
         if ($branchScope !== null) {
             $sql .= " AND (g.SCOPE_TYPE='global' OR (g.SCOPE_TYPE='local' AND g.ID_CN_OWNER=?))";
@@ -54,7 +73,8 @@ class PackageRepository {
         $scope = $data['SCOPE_TYPE'] ?? 'global';
         $owner = $data['ID_CN_OWNER'] ?? null;
         $stmt = $this->conn->prepare("INSERT INTO goi_dich_vu (TEN_GOI, MO_TA, HINH_ANH, HIEU_LUC_TU, HIEU_LUC_DEN, SCOPE_TYPE, ID_CN_OWNER, TRANG_THAI) VALUES (?,?,?,?,?,?,?, 'nhap')");
-        $stmt->bind_param('ssssssii', $data['TEN_GOI'], $data['MO_TA'], $imagePath, $data['HIEU_LUC_TU'], $data['HIEU_LUC_DEN'], $scope, $owner);
+        // 7 placeholders -> 7 types: 6 strings + 1 int (nullable OK)
+        $stmt->bind_param('ssssssi', $data['TEN_GOI'], $data['MO_TA'], $imagePath, $data['HIEU_LUC_TU'], $data['HIEU_LUC_DEN'], $scope, $owner);
         if (!$stmt->execute()) throw new \RuntimeException('Create package failed: '.$stmt->error);
         return (int)$this->conn->insert_id;
     }
@@ -152,6 +172,12 @@ class PackageRepository {
     }
 
     public function retire(int $idGoi): bool { return $this->changeStatus($idGoi,'ngung'); }
+
+    public function delete(int $idGoi): bool {
+        $stmt = $this->conn->prepare("DELETE FROM goi_dich_vu WHERE ID_GOI=?");
+        $stmt->bind_param('i', $idGoi);
+        return $stmt->execute();
+    }
 
     /**
      * Bulk replace all services of a package. Items format:

@@ -15,8 +15,10 @@ class ServiceRepository {
         ?string $status = null,
         ?int $minPrice = null,
         ?int $maxPrice = null,
-        ?int $minDuration = null,
-        ?int $maxDuration = null
+        ?int $categoryId = null,
+        ?int $tagId = null,
+        string $sortBy = 'ID_DV',
+        string $sortOrder = 'DESC'
     ): array {
         $clauses = [];
         $params = [];
@@ -29,10 +31,25 @@ class ServiceRepository {
             $clauses[] = 'dv.TRANG_THAI = ?';
             $params[] = $status; $types .= 's';
         }
-        if ($minDuration !== null) { $clauses[] = 'dv.THOI_GIAN >= ?'; $params[] = $minDuration; $types .= 'i'; }
-        if ($maxDuration !== null) { $clauses[] = 'dv.THOI_GIAN <= ?'; $params[] = $maxDuration; $types .= 'i'; }
         if ($minPrice !== null) { $clauses[] = 'COALESCE(dgdv.DON_GIA,0) >= ?'; $params[] = $minPrice; $types .= 'i'; }
         if ($maxPrice !== null) { $clauses[] = 'COALESCE(dgdv.DON_GIA,0) <= ?'; $params[] = $maxPrice; $types .= 'i'; }
+        if ($categoryId !== null && $categoryId > 0) {
+            $clauses[] = 'dv.ID_DANH_MUC = ?';
+            $params[] = $categoryId; $types .= 'i';
+        }
+        if ($tagId !== null && $tagId > 0) {
+            $clauses[] = 'EXISTS (SELECT 1 FROM dich_vu_the dvt WHERE dvt.ID_DV = dv.ID_DV AND dvt.ID_THE = ?)';
+            $params[] = $tagId; $types .= 'i';
+        }
+        
+        // Validate sort parameters
+        $allowedSortFields = ['ID_DV', 'TEN_DV', 'THOI_GIAN', 'DON_GIA', 'TRANG_THAI'];
+        $sortBy = in_array($sortBy, $allowedSortFields) ? $sortBy : 'ID_DV';
+        $sortOrder = strtoupper($sortOrder) === 'ASC' ? 'ASC' : 'DESC';
+        
+        // Handle DON_GIA sort
+        $orderByField = $sortBy === 'DON_GIA' ? 'dgdv.DON_GIA' : 'dv.' . $sortBy;
+        
         $params[] = $limit; $types .= 'i';
         $params[] = $offset; $types .= 'i';
         $where = implode(' AND ', $clauses);
@@ -48,7 +65,7 @@ class ServiceRepository {
                    ) d2 ON d1.ID_DV = d2.ID_DV AND d1.NGAY_GIO = d2.MAX_DATE
                 ) dgdv ON dv.ID_DV = dgdv.ID_DV
                 WHERE $where
-                ORDER BY dv.ID_DV DESC
+                ORDER BY $orderByField $sortOrder
                 LIMIT ? OFFSET ?";
         $stmt = $this->conn->prepare($sql);
         $stmt->bind_param($types, ...$params);
@@ -64,8 +81,8 @@ class ServiceRepository {
         ?string $status = null,
         ?int $minPrice = null,
         ?int $maxPrice = null,
-        ?int $minDuration = null,
-        ?int $maxDuration = null
+        ?int $categoryId = null,
+        ?int $tagId = null
     ): int {
         $clauses = [];
         $params = [];
@@ -78,13 +95,33 @@ class ServiceRepository {
             $clauses[] = 'dv.TRANG_THAI = ?';
             $params[] = $status; $types .= 's';
         }
-        if ($minDuration !== null) { $clauses[] = 'dv.THOI_GIAN >= ?'; $params[] = $minDuration; $types .= 'i'; }
-        if ($maxDuration !== null) { $clauses[] = 'dv.THOI_GIAN <= ?'; $params[] = $maxDuration; $types .= 'i'; }
-        if ($minPrice !== null) { $clauses[] = 'COALESCE((SELECT d3.DON_GIA FROM don_gia_dich_vu d3 INNER JOIN (SELECT MAX(NGAY_GIO) m FROM don_gia_dich_vu d4 WHERE d4.ID_DV=dv.ID_DV) mx ON d3.ID_DV=dv.ID_DV AND d3.NGAY_GIO=mx.m),0) >= ?'; $params[] = $minPrice; $types .= 'i'; }
-        if ($maxPrice !== null) { $clauses[] = 'COALESCE((SELECT d5.DON_GIA FROM don_gia_dich_vu d5 INNER JOIN (SELECT MAX(NGAY_GIO) m2 FROM don_gia_dich_vu d6 WHERE d6.ID_DV=dv.ID_DV) mx2 ON d5.ID_DV=dv.ID_DV AND d5.NGAY_GIO=mx2.m2),0) <= ?'; $params[] = $maxPrice; $types .= 'i'; }
+        if ($minPrice !== null) { $clauses[] = 'COALESCE(dgdv.DON_GIA,0) >= ?'; $params[] = $minPrice; $types .= 'i'; }
+        if ($maxPrice !== null) { $clauses[] = 'COALESCE(dgdv.DON_GIA,0) <= ?'; $params[] = $maxPrice; $types .= 'i'; }
+        if ($categoryId !== null && $categoryId > 0) {
+            $clauses[] = 'dv.ID_DANH_MUC = ?';
+            $params[] = $categoryId; $types .= 'i';
+        }
+        if ($tagId !== null && $tagId > 0) {
+            $clauses[] = 'EXISTS (SELECT 1 FROM dich_vu_the dvt WHERE dvt.ID_DV = dv.ID_DV AND dvt.ID_THE = ?)';
+            $params[] = $tagId; $types .= 'i';
+        }
         $where = implode(' AND ', $clauses);
-        $sql = "SELECT COUNT(*) AS total FROM dich_vu dv WHERE $where";
+        $sql = "SELECT COUNT(*) AS total
+            FROM dich_vu dv
+            LEFT JOIN (
+               SELECT d1.ID_DV, d1.DON_GIA
+               FROM don_gia_dich_vu d1
+               INNER JOIN (
+                 SELECT ID_DV, MAX(NGAY_GIO) AS MAX_DATE
+                 FROM don_gia_dich_vu
+                 GROUP BY ID_DV
+               ) d2 ON d1.ID_DV = d2.ID_DV AND d1.NGAY_GIO = d2.MAX_DATE
+            ) dgdv ON dv.ID_DV = dgdv.ID_DV
+            WHERE $where";
         $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            throw new \RuntimeException('Prepare countServices failed: ' . $this->conn->error);
+        }
         $stmt->bind_param($types, ...$params);
         $stmt->execute();
         $res = $stmt->get_result()->fetch_assoc();
@@ -100,9 +137,9 @@ class ServiceRepository {
     }
 
     public function create(array $data, ?string $imagePath): array {
-        $stmt = $this->conn->prepare("INSERT INTO dich_vu (TEN_DV, MOTA_DV, IMAGE, THOI_GIAN, TRANG_THAI) VALUES (?,?,?,?, 'active')");
-        // 4 placeholders => 4 params (TEN_DV, MOTA_DV, IMAGE, THOI_GIAN)
-        $stmt->bind_param('sssi', $data['TEN_DV'], $data['MOTA_DV'], $imagePath, $data['THOI_GIAN']);
+        $categoryId = isset($data['ID_DANH_MUC']) && $data['ID_DANH_MUC'] > 0 ? $data['ID_DANH_MUC'] : null;
+        $stmt = $this->conn->prepare("INSERT INTO dich_vu (TEN_DV, MOTA_DV, IMAGE, THOI_GIAN, TRANG_THAI, ID_DANH_MUC) VALUES (?,?,?,?, 'active', ?)");
+        $stmt->bind_param('sssii', $data['TEN_DV'], $data['MOTA_DV'], $imagePath, $data['THOI_GIAN'], $categoryId);
         if (!$stmt->execute()) { throw new \RuntimeException('Insert service failed: ' . $stmt->error); }
         $id = $this->conn->insert_id;
         if (isset($data['GIA']) && is_numeric($data['GIA']) && $data['GIA'] > 0) {
@@ -120,6 +157,12 @@ class ServiceRepository {
         $params = [ $data['TEN_DV'], $data['MOTA_DV'], $data['THOI_GIAN'] ];
         $types = 'ssi';
         if ($imagePath) { $fields[] = 'IMAGE = ?'; $params[] = $imagePath; $types .= 's'; }
+        if (isset($data['ID_DANH_MUC'])) {
+            $fields[] = 'ID_DANH_MUC = ?';
+            $categoryId = $data['ID_DANH_MUC'] > 0 ? $data['ID_DANH_MUC'] : null;
+            $params[] = $categoryId;
+            $types .= 'i';
+        }
         $types .= 'i';
         $params[] = $data['ID_DV'];
         $sql = 'UPDATE dich_vu SET ' . implode(', ', $fields) . ' WHERE ID_DV = ?';
