@@ -26,12 +26,13 @@ class ImageHelper {
         $ext = self::$allowedMimeTypes[$mime];
         $filename = bin2hex(random_bytes(8)) . '.' . $ext;
         
-        // Create directory if not exists
-        $fullTargetDir = $_SERVER['DOCUMENT_ROOT'] . '/' . rtrim($targetDir, '/') . '/';
+        // Create directory under project root (not plain docroot) so URLs like /StygianBlue/public/... map correctly
+        $projectRoot = str_replace('\\', '/', dirname(__DIR__, 2));
+        $fullTargetDir = rtrim($projectRoot, '/'). '/' . rtrim($targetDir, '/') . '/';
         if (!is_dir($fullTargetDir)) {
             mkdir($fullTargetDir, 0777, true);
         }
-        
+
         $filepath = $fullTargetDir . $filename;
         $relativePath = rtrim($targetDir, '/') . '/' . $filename;
         

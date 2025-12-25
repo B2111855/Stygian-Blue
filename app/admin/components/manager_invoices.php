@@ -60,9 +60,11 @@ $statusOptions = ['Chưa thanh toán', 'Đã thanh toán', 'Đã hủy', 'Hoàn 
 $methodOptions = ['VNPay', 'Chuyển khoản', 'Tiền mặt'];
 
 $filters = [
+    'invoice_id' => isset($_GET['invoice_id']) && $_GET['invoice_id'] !== '' ? (int)$_GET['invoice_id'] : null,
     'customer'   => trim($_GET['customer'] ?? ''),
     'status'     => trim($_GET['status'] ?? ''),
     'method'     => trim($_GET['method'] ?? ''),
+    'gateway'    => trim($_GET['gateway'] ?? ''),
     'date_from'  => normalizeDateFilter($_GET['date_from'] ?? ''),
     'date_to'    => normalizeDateFilter($_GET['date_to'] ?? ''),
     'min_amount' => isset($_GET['min_amount']) && $_GET['min_amount'] !== '' ? (float)$_GET['min_amount'] : null,
@@ -84,6 +86,13 @@ $scheduleParams = [$branchId];
 $rentalParams   = [$branchId];
 
 // Helper to append condition to both sets (field names differ only for customer)
+if ($filters['invoice_id'] !== null && $filters['invoice_id'] > 0) {
+    $scheduleConds[] = 'hd.ID_HD = ?';
+    $rentalConds[]   = 'hd.ID_HD = ?';
+    $baseTypes      .= 'i';
+    $scheduleParams[] = $filters['invoice_id'];
+    $rentalParams[]   = $filters['invoice_id'];
+}
 if ($filters['customer'] !== '') {
     $scheduleConds[] = 'tk.HO_TEN LIKE ?';
     $rentalConds[]   = 'tk.HO_TEN LIKE ?';
@@ -104,6 +113,13 @@ if ($filters['method'] !== '') {
     $baseTypes      .= 's';
     $scheduleParams[] = $filters['method'];
     $rentalParams[]   = $filters['method'];
+}
+if ($filters['gateway'] !== '') {
+    if ($filters['gateway'] === 'pending_confirm') {
+        // VNPay đang xử lý và chưa thanh toán
+        $scheduleConds[] = 'hd.TRANGTHAI_THANHTOAN != "Đã thanh toán" AND COALESCE(tt.VNPAY_TRANG_THAI, "") = "pending"';
+        $rentalConds[]   = 'hd.TRANGTHAI_THANHTOAN != "Đã thanh toán" AND COALESCE(tt.VNPAY_TRANG_THAI, "") = "pending"';
+    }
 }
 if ($filters['date_from']) {
     $scheduleConds[] = 'DATE(hd.NGAY_GIO) >= ?';
@@ -137,6 +153,24 @@ if ($filters['max_amount'] !== null) {
 $scheduleWhere = 'WHERE ' . implode(' AND ', $scheduleConds);
 $rentalWhere   = 'WHERE ' . implode(' AND ', $rentalConds);
 
+// JOIN để lấy thông tin VNPay
+$latestVnpayJoin = "
+  LEFT JOIN (
+      SELECT t1.ID_HD,
+             t1.TRANG_THAI AS VNPAY_TRANG_THAI,
+             t1.MA_THAM_CHIEU AS VNPAY_MA_THAM_CHIEU,
+             t1.CREATED_AT AS VNPAY_UPDATED_AT
+      FROM thanh_toan_truc_tuyen t1
+      JOIN (
+          SELECT ID_HD, MAX(CREATED_AT) AS latest_created
+          FROM thanh_toan_truc_tuyen
+          WHERE GATEWAY = 'vnpay'
+          GROUP BY ID_HD
+      ) latest ON latest.ID_HD = t1.ID_HD AND latest.latest_created = t1.CREATED_AT
+      WHERE t1.GATEWAY = 'vnpay'
+  ) tt ON tt.ID_HD = hd.ID_HD
+";
+
 // COUNT with UNION
 $countSql = 'SELECT COUNT(*) FROM (
     SELECT hd.ID_HD
@@ -144,6 +178,7 @@ $countSql = 'SELECT COUNT(*) FROM (
     JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
     JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK
     LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+    ' . $latestVnpayJoin . '
     ' . $scheduleWhere . '
     UNION ALL
     SELECT hd.ID_HD
@@ -156,6 +191,7 @@ $countSql = 'SELECT COUNT(*) FROM (
         LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
         GROUP BY ct.ID_TTP
     ) ic ON ic.ID_TTP = ttp.ID_TTP
+    ' . $latestVnpayJoin . '
     ' . $rentalWhere . '
 ) merged';
 $countStmt = $conn->prepare($countSql);
@@ -174,18 +210,25 @@ $dataSql = 'SELECT * FROM (
     SELECT hd.ID_HD, hd.NGAY_GIO, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN,
            tk.HO_TEN AS TEN_KHACH_HANG, tk.SDT, tk.EMAIL,
            dv.TEN_DV AS TEN_DV, lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU,
-           "schedule" AS KIND, NULL AS RENTAL_SUMMARY
+           "schedule" AS KIND, NULL AS RENTAL_SUMMARY,
+           COALESCE(tt.VNPAY_TRANG_THAI, "") AS VNPAY_TRANG_THAI,
+           COALESCE(tt.VNPAY_MA_THAM_CHIEU, "") AS VNPAY_MA_THAM_CHIEU,
+           COALESCE(tt.VNPAY_UPDATED_AT, "") AS VNPAY_UPDATED_AT
     FROM hoa_don hd
     JOIN lich_hen lh ON hd.ID_LICHHEN = lh.ID_LICHHEN
     JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK
     LEFT JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV
+    ' . $latestVnpayJoin . '
     ' . $scheduleWhere . '
     UNION ALL
     SELECT hd.ID_HD, hd.NGAY_GIO, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.PHUONGTHUC_THANHTOAN,
            tk.HO_TEN AS TEN_KHACH_HANG, tk.SDT, tk.EMAIL,
            CONCAT("Thuê trang phục (", COALESCE(ic.item_count,0), " món)") AS TEN_DV,
            NULL AS ID_LICHHEN, ttp.NGAY_NHAN AS THOI_GIAN_BAT_DAU,
-           "rental" AS KIND, ic.item_names AS RENTAL_SUMMARY
+           "rental" AS KIND, ic.item_names AS RENTAL_SUMMARY,
+           COALESCE(tt.VNPAY_TRANG_THAI, "") AS VNPAY_TRANG_THAI,
+           COALESCE(tt.VNPAY_MA_THAM_CHIEU, "") AS VNPAY_MA_THAM_CHIEU,
+           COALESCE(tt.VNPAY_UPDATED_AT, "") AS VNPAY_UPDATED_AT
     FROM hoa_don hd
     JOIN don_thue_trang_phuc ttp ON hd.ID_TTP = ttp.ID_TTP
     JOIN tai_khoan tk ON ttp.ID_TK = tk.ID_TK
@@ -196,6 +239,7 @@ $dataSql = 'SELECT * FROM (
         LEFT JOIN trang_phuc tp ON ct.ID_TP = tp.ID_TRANG_PHUC
         GROUP BY ct.ID_TTP
     ) ic ON ic.ID_TTP = ttp.ID_TTP
+    ' . $latestVnpayJoin . '
     ' . $rentalWhere . '
 ) merged
 ORDER BY NGAY_GIO DESC
@@ -265,66 +309,70 @@ $statsQuery->close();
     </section>
 
     <!-- Filters -->
-    <form method="GET" class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+    <form method="GET" class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <input type="hidden" name="page" value="invoices">
-        <div class="mb-4 flex items-center justify-between">
-            <h2 class="text-xl font-semibold text-gray-900">Bộ lọc hóa đơn</h2>
+        <div class="mb-3 flex items-center justify-between">
+            <h2 class="text-lg font-semibold text-gray-900">Bộ lọc</h2>
             <a href="?page=invoices" class="text-sm text-indigo-600 hover:underline">Đặt lại</a>
         </div>
-        <div class="grid gap-4 md:grid-cols-3">
-            <label class="text-sm font-medium text-gray-700">
-                Tên khách hàng
-                <input type="text" name="customer" value="<?= htmlspecialchars($filters['customer'], ENT_QUOTES, 'UTF-8') ?>" 
-                       class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Nhập tên khách hàng">
+        <div class="grid gap-3 md:grid-cols-5 lg:grid-cols-6">
+            <label class="text-xs font-medium text-gray-600">
+                <input type="number" name="invoice_id" value="<?= $filters['invoice_id'] !== null ? $filters['invoice_id'] : '' ?>" 
+                       class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" placeholder="Mã HĐ">
             </label>
-            <label class="text-sm font-medium text-gray-700">
-                Trạng thái
-                <select name="status" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                    <option value="">Tất cả</option>
+            <label class="text-xs font-medium text-gray-600">
+                <input type="text" name="customer" value="<?= htmlspecialchars($filters['customer'], ENT_QUOTES, 'UTF-8') ?>" 
+                       class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm" placeholder="Khách hàng">
+            </label>
+            <label class="text-xs font-medium text-gray-600">
+                <select name="status" class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                    <option value="">Trạng thái</option>
                     <?php foreach ($statusOptions as $status): ?>
                         <option value="<?= $status ?>" <?= $filters['status'] === $status ? 'selected' : '' ?>><?= $status ?></option>
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label class="text-sm font-medium text-gray-700">
-                Phương thức
-                <select name="method" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                    <option value="">Tất cả</option>
+            <label class="text-xs font-medium text-gray-600">
+                <select name="method" class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+                    <option value="">Phương thức</option>
                     <?php foreach ($methodOptions as $method): ?>
                         <option value="<?= $method ?>" <?= $filters['method'] === $method ? 'selected' : '' ?>><?= $method ?></option>
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label class="text-sm font-medium text-gray-700">
-                Từ ngày
+            <label class="text-xs font-medium text-gray-600">
                 <input type="date" name="date_from" value="<?= htmlspecialchars($filters['date_from'] ?? '', ENT_QUOTES, 'UTF-8') ?>" 
-                       class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                       class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
             </label>
-            <label class="text-sm font-medium text-gray-700">
-                Đến ngày
+            <label class="text-xs font-medium text-gray-600">
                 <input type="date" name="date_to" value="<?= htmlspecialchars($filters['date_to'] ?? '', ENT_QUOTES, 'UTF-8') ?>" 
-                       class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-                Số tiền tối thiểu
-                <input type="number" name="min_amount" value="<?= $filters['min_amount'] !== null ? $filters['min_amount'] : '' ?>" 
-                       class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="VNĐ">
-            </label>
-            <label class="text-sm font-medium text-gray-700">
-                Số tiền tối đa
-                <input type="number" name="max_amount" value="<?= $filters['max_amount'] !== null ? $filters['max_amount'] : '' ?>" 
-                       class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="VNĐ">
+                       class="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
             </label>
         </div>
-        <div class="mt-4 flex justify-end">
-            <button type="submit" class="rounded-lg bg-slate-900 px-6 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-                <i class="fas fa-filter mr-2"></i>Áp dụng
+        <div class="mt-3 flex justify-end gap-2">
+            <button type="submit" class="rounded-lg bg-slate-900 px-4 py-1.5 text-sm font-semibold text-white hover:bg-slate-800">
+                <i class="fas fa-filter mr-1"></i>Áp dụng
             </button>
         </div>
     </form>
 
     <!-- Invoice List -->
     <section class="rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <!-- Bulk Actions Toolbar -->
+        <div id="invoiceBulkToolbar" class="hidden mb-4 border-b border-slate-200 bg-indigo-50 px-6 py-3">
+            <div class="flex items-center justify-between">
+                <span class="text-sm font-semibold text-indigo-700">Chọn <span id="selectedCount">0</span> hóa đơn</span>
+                <div class="flex gap-2">
+                    <button type="button" onclick="bulkConfirmInvoices()" class="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                        ✓ Xác nhận thanh toán
+                    </button>
+                    <button type="button" onclick="clearInvoiceSelection()" class="rounded-lg bg-gray-400 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-500">
+                        ✕ Bỏ chọn
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <div class="flex items-center justify-between border-b border-slate-100 px-6 py-4">
             <div>
                 <h2 class="text-xl font-semibold text-gray-900">Danh sách hóa đơn</h2>
@@ -339,6 +387,9 @@ $statsQuery->close();
                 <table class="min-w-full table-auto text-left text-sm">
                     <thead class="bg-slate-50 text-xs font-semibold uppercase text-slate-500">
                         <tr>
+                            <th class="px-4 py-3 w-12">
+                                <input type="checkbox" id="selectAllInvoices" onchange="toggleSelectAllInvoices()" class="w-4 h-4">
+                            </th>
                             <th class="px-6 py-3">Mã HĐ</th>
                             <th class="px-6 py-3">Khách hàng</th>
                             <th class="px-6 py-3">Dịch vụ</th>
@@ -349,8 +400,16 @@ $statsQuery->close();
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
-                        <?php foreach ($invoices as $row): ?>
-                            <tr class="hover:bg-slate-50">
+                        <?php foreach ($invoices as $row): 
+                            $isPaid = $row['TRANGTHAI_THANHTOAN'] === 'Đã thanh toán';
+                            $gatewayStatus = $row['VNPAY_TRANG_THAI'] ?? null;
+                            $isGatewayPending = !$isPaid && $gatewayStatus === 'pending';
+                            $rowClass = $isGatewayPending ? 'bg-amber-50 border-l-4 border-amber-400' : '';
+                        ?>
+                            <tr class="hover:bg-slate-50 <?= $rowClass ?>">
+                                <td class="px-4 py-4">
+                                    <input type="checkbox" value="<?= (int)$row['ID_HD'] ?>" class="invoice-checkbox w-4 h-4" onchange="updateInvoiceBulkToolbar()">
+                                </td>
                                 <td class="px-6 py-4">
                                     <div class="font-semibold text-indigo-600">#<?= (int)$row['ID_HD'] ?></div>
                                     <?php if ($row['KIND'] === 'schedule'): ?>
@@ -385,12 +444,32 @@ $statsQuery->close();
                                         default => 'bg-slate-100 text-slate-700'
                                     };
                                     ?>
-                                    <span class="rounded-full px-3 py-1 text-xs font-semibold <?= $statusClass ?>">
-                                        <?= htmlspecialchars($row['TRANGTHAI_THANHTOAN'] ?? 'Không rõ', ENT_QUOTES, 'UTF-8') ?>
-                                    </span>
+                                    <div class="mb-2">
+                                        <span class="rounded-full px-3 py-1 text-xs font-semibold <?= $statusClass ?>">
+                                            <?= htmlspecialchars($row['TRANGTHAI_THANHTOAN'] ?? 'Không rõ', ENT_QUOTES, 'UTF-8') ?>
+                                        </span>
+                                    </div>
+                                    
+                                    <?php if ($row['PHUONGTHUC_THANHTOAN']): ?>
+                                        <div class="text-xs text-gray-600 mb-1">Phương thức: <strong><?= htmlspecialchars($row['PHUONGTHUC_THANHTOAN'], ENT_QUOTES, 'UTF-8') ?></strong></div>
+                                    <?php endif; ?>
+                                    
+                                    <?php if ($gatewayStatus): ?>
+                                        <?php
+                                            $gatewayMap = [
+                                                'pending' => ['label' => 'VNPay đang xử lý', 'class' => 'bg-amber-100 text-amber-700'],
+                                                'success' => ['label' => 'VNPay đã xác nhận', 'class' => 'bg-emerald-100 text-emerald-700'],
+                                                'failed'  => ['label' => 'VNPay lỗi', 'class' => 'bg-rose-100 text-rose-700'],
+                                            ];
+                                            $gwCfg = $gatewayMap[$gatewayStatus] ?? ['label' => 'VNPay: ' . strtoupper($gatewayStatus), 'class' => 'bg-slate-100 text-slate-700'];
+                                        ?>
+                                        <span class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold <?= $gwCfg['class'] ?>">
+                                            <?= htmlspecialchars($gwCfg['label'], ENT_QUOTES, 'UTF-8') ?>
+                                        </span>
+                                    <?php endif; ?>
                                 </td>
                                 <td class="px-6 py-4 text-center">
-                                    <a href="?page=hoa_don_chi_tiet&id_hd=<?= (int)$row['ID_HD'] ?>&source=manager" 
+                                    <a href="/StygianBlue/app/admin/hoa_don_chi_tiet.php?id_hd=<?= (int)$row['ID_HD'] ?>&source=manager" 
                                        class="inline-flex items-center gap-2 rounded-lg border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-600 hover:bg-indigo-50">
                                         <i class="fas fa-eye"></i> Xem
                                     </a>
@@ -430,3 +509,90 @@ $statsQuery->close();
         transform: translateY(0);
     }
 </style>
+
+<!-- JavaScript cho Bulk Actions -->
+<script src="/StygianBlue/public/assets/js/invoice-client.js"></script>
+<script>
+  // Initialize bulk actions on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    updateInvoiceBulkToolbar();
+  });
+
+  // Toggle Select All
+  function toggleSelectAllInvoices() {
+    const selectAllCheckbox = document.getElementById('selectAllInvoices');
+    const invoiceCheckboxes = document.querySelectorAll('.invoice-checkbox');
+    invoiceCheckboxes.forEach(checkbox => {
+      checkbox.checked = selectAllCheckbox.checked;
+    });
+    updateInvoiceBulkToolbar();
+  }
+
+  // Update Bulk Toolbar Visibility and Count
+  function updateInvoiceBulkToolbar() {
+    const invoiceCheckboxes = document.querySelectorAll('.invoice-checkbox');
+    const selectedCheckboxes = document.querySelectorAll('.invoice-checkbox:checked');
+    const bulkToolbar = document.getElementById('invoiceBulkToolbar');
+    const selectedCount = document.getElementById('selectedCount');
+    
+    selectedCount.textContent = selectedCheckboxes.length;
+    
+    if (selectedCheckboxes.length > 0) {
+      bulkToolbar.classList.remove('hidden');
+    } else {
+      bulkToolbar.classList.add('hidden');
+      document.getElementById('selectAllInvoices').checked = false;
+    }
+  }
+
+  // Clear All Selection
+  function clearInvoiceSelection() {
+    document.querySelectorAll('.invoice-checkbox').forEach(checkbox => {
+      checkbox.checked = false;
+    });
+    document.getElementById('selectAllInvoices').checked = false;
+    updateInvoiceBulkToolbar();
+  }
+
+  // Bulk Confirm All Selected Invoices
+  async function bulkConfirmInvoices() {
+    const selectedCheckboxes = document.querySelectorAll('.invoice-checkbox:checked');
+    if (selectedCheckboxes.length === 0) {
+      alert('Vui lòng chọn ít nhất một hóa đơn');
+      return;
+    }
+
+    if (!confirm(`Xác nhận thanh toán ${selectedCheckboxes.length} hóa đơn?`)) {
+      return;
+    }
+
+    const invoiceIds = Array.from(selectedCheckboxes).map(cb => parseInt(cb.value));
+    let successCount = 0;
+
+    try {
+      const client = new InvoiceClient();
+      
+      for (const invoiceId of invoiceIds) {
+        try {
+          const result = await client.confirmPayment(invoiceId);
+          if (result.success) {
+            successCount++;
+          }
+        } catch (error) {
+          console.error(`Lỗi khi xác nhận hóa đơn ${invoiceId}:`, error);
+        }
+      }
+
+      if (successCount === invoiceIds.length) {
+        alert(`Đã xác nhận ${successCount} hóa đơn thành công`);
+        location.reload();
+      } else {
+        alert(`Xác nhận ${successCount}/${invoiceIds.length} hóa đơn. Vui lòng kiểm tra lại.`);
+        location.reload();
+      }
+    } catch (error) {
+      console.error('Lỗi xác nhận hàng loạt:', error);
+      alert('Có lỗi xảy ra khi xác nhận hóa đơn');
+    }
+  }
+</script>

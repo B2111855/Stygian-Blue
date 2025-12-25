@@ -89,3 +89,24 @@ public/images/trangphuc/*
 
 # Ignore test/debug scripts in tmp/
 tmp/
+
+# ==========================
+# Bổ sung từ git status
+# ==========================
+# Ignore additional image directories
+public/images/dichvu/
+public/images/combo/
+public/images/thietbi/
+public/images/albums/
+
+# Ignore database temp
+database/temp/
+
+# Ignore test files in admin/components
+app/admin/components/test_*.php
+
+# Ignore test files in Pages/components
+app/Pages/components/test_*.php
+
+# Ignore cache in albums
+public/images/albums/*/.cache/

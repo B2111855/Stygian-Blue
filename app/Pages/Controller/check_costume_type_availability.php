@@ -46,7 +46,22 @@ if ($toTs <= $fromTs) {
     respond(['error' => 'Thời gian trả phải sau thời gian nhận'], 400);
 }
 
+// Rule: Không cho chọn ngày quá khứ
+$now = time();
+if ($fromTs < $now) {
+    respond(['error' => 'Không thể đặt thuê vào thời gian quá khứ'], 400);
+}
+
+// Rule: Giờ nhận phải trong giờ làm việc (8h-21h)
+$fromHour = (int)date('G', $fromTs);
+if ($fromHour < 8 || $fromHour >= 21) {
+    respond(['error' => 'Giờ nhận phải trong khoảng 8:00 - 21:00 (giờ làm việc)'], 400);
+}
+
+$cleaningBufferDays = 1; // Thời gian vệ sinh sau khi trả
+
 // Prepared query computing totals & available count
+// Check overlap including cleaning buffer: NGAY_NHAN <= to AND (NGAY_TRA_DK + buffer) >= from
 $sql = "SELECT COUNT(tp.ID_TRANG_PHUC) AS total_instances,
         SUM(CASE WHEN EXISTS (
               SELECT 1
@@ -55,17 +70,18 @@ $sql = "SELECT COUNT(tp.ID_TRANG_PHUC) AS total_instances,
               WHERE ct.ID_TP = tp.ID_TRANG_PHUC
                 AND d.TRANG_THAI IN ('cho_duyet','da_duyet','dang_thue')
                 AND d.NGAY_NHAN <= ?
-                AND d.NGAY_TRA_DK >= ?
+                AND DATE_ADD(d.NGAY_TRA_DK, INTERVAL ? DAY) >= ?
             ) THEN 0 ELSE 1 END) AS available_count
         FROM trang_phuc tp
         WHERE tp.ID_LOAI = ?
           AND tp.ID_CN = ?
-          AND tp.TRANG_THAI = 'available'";
+          AND tp.TRANG_THAI = 'available'
+          AND tp.DELETED_AT IS NULL";
 
 $totalInstances = 0; $availableCount = 0;
 if ($stmt = $conn->prepare($sql)) {
-    // Overlap condition: existing.NGAY_NHAN <= to AND existing.NGAY_TRA_DK >= from
-    $stmt->bind_param('ssii', $toNorm, $fromNorm, $idLoai, $branchId);
+    // Overlap with cleaning buffer: existing.NGAY_NHAN <= to AND (existing.NGAY_TRA_DK + buffer) >= from
+    $stmt->bind_param('sisii', $toNorm, $cleaningBufferDays, $fromNorm, $idLoai, $branchId);
     if ($stmt->execute()) {
         $res = $stmt->get_result();
         if ($res) {

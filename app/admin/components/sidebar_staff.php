@@ -33,9 +33,10 @@ $staffSidebarSections = [
             'label'   => 'Lịch làm việc',
             'icon'    => 'fa-clipboard-check',
             'href'    => '?page=staff',
-            'targets' => ['staff', 'schedule', 'staff_assignments'],
+            'targets' => ['staff', 'staff_assignments'],
             'badge'   => 'new_assignments', // Hiển thị số lịch hẹn mới được phân công
         ],
+      
     ],
     'Hiệu suất & chất lượng' => [
         [
@@ -53,15 +54,7 @@ $staffSidebarSections = [
             'badge'   => null,
         ],
     ],
-    'Tài khoản cá nhân' => [
-        [
-            'label'   => 'Thông tin cá nhân',
-            'icon'    => 'fa-user-circle',
-            'href'    => '?page=selfInfo',
-            'targets' => ['selfInfo'],
-            'badge'   => null,
-        ],
-    ],
+
 ];
 ?>
 <aside class="w-64 bg-gradient-to-b from-gray-900 to-indigo-900 text-white flex flex-col shadow-2xl sticky top-0 h-screen">
@@ -188,6 +181,12 @@ $staffSidebarSections = [
 .section-icon.collapsed {
   transform: rotate(-90deg);
 }
+
+body.sidebar-initializing .section-toggle,
+body.sidebar-initializing .section-content,
+body.sidebar-initializing .section-icon {
+  transition: none !important;
+}
 </style>
 
 <script>
@@ -216,16 +215,44 @@ function toggleStaffSection(sectionId) {
 
 // Restore collapsed state on page load
 document.addEventListener('DOMContentLoaded', function() {
+  document.body.classList.add('sidebar-initializing');
   const collapsedSections = JSON.parse(localStorage.getItem('staff-collapsed-sections') || '[]');
-  
-  collapsedSections.forEach(sectionId => {
-    const section = document.querySelector(`[data-section-id="${sectionId}"]`);
-    if (section) {
+  const sidebar = document.querySelector('nav[data-persist-scroll="staff-sidebar"]');
+
+  if (sidebar) {
+    sidebar.querySelectorAll('[data-section-id]').forEach(section => {
+      const sectionId = section.getAttribute('data-section-id');
       const content = section.querySelector('.section-content');
       const icon = section.querySelector('.section-icon');
-      content.classList.add('collapsed');
-      icon.classList.add('collapsed');
+
+      if (!sectionId || !content || !icon) {
+        return;
+      }
+
+      const shouldCollapse = collapsedSections.includes(sectionId);
+      content.classList.toggle('collapsed', shouldCollapse);
+      icon.classList.toggle('collapsed', shouldCollapse);
+    });
+  }
+
+  document.querySelectorAll('[data-persist-scroll]').forEach(container => {
+    const key = 'scroll-pos-' + container.getAttribute('data-persist-scroll');
+    const savedPosition = localStorage.getItem(key);
+
+    if (savedPosition !== null) {
+      const numericPosition = parseInt(savedPosition, 10);
+      if (!Number.isNaN(numericPosition)) {
+        container.scrollTop = numericPosition;
+      }
     }
+
+    container.addEventListener('scroll', () => {
+      localStorage.setItem(key, String(container.scrollTop));
+    });
+  });
+
+  requestAnimationFrame(() => {
+    document.body.classList.remove('sidebar-initializing');
   });
 });
 </script>

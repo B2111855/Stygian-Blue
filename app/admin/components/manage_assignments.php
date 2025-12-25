@@ -62,18 +62,38 @@ function getAssignmentStatusMeta($startTime, $endTime, $appointmentStatus = '')
     $isCompleted = strpos($normalizedStatus, 'hoàn') !== false || strpos($normalizedStatus, 'done') !== false;
 
     if ($now < $start) {
-        return ['label' => 'Sắp diễn ra', 'class' => 'bg-blue-100 text-blue-700'];
+        return [
+            'label' => 'Sắp diễn ra',
+            'class' => 'bg-blue-100 text-blue-700',
+            'canEdit' => true,
+            'canDelete' => true
+        ];
     }
 
     if ($now >= $start && $now <= $end) {
-        return ['label' => 'Đang thực hiện', 'class' => 'bg-amber-100 text-amber-700'];
+        return [
+            'label' => 'Đang thực hiện',
+            'class' => 'bg-amber-100 text-amber-700',
+            'canEdit' => true,
+            'canDelete' => true
+        ];
     }
 
     if ($isCompleted) {
-        return ['label' => 'Đã hoàn tất', 'class' => 'bg-emerald-100 text-emerald-700'];
+        return [
+            'label' => 'Đã hoàn tất',
+            'class' => 'bg-emerald-100 text-emerald-700',
+            'canEdit' => false,
+            'canDelete' => false
+        ];
     }
 
-    return ['label' => 'Quá hạn', 'class' => 'bg-rose-100 text-rose-700'];
+    return [
+        'label' => 'Quá hạn',
+        'class' => 'bg-rose-100 text-rose-700',
+        'canEdit' => false,
+        'canDelete' => false
+    ];
 }
 
 function formatDateTime($value)
@@ -181,7 +201,7 @@ $overdueUnassignedCount = 0;
 $unassignedListArr = [];
 $overdueUnassignedListArr = [];
 $unassignedQuery = mysqli_query($conn, "
-    SELECT lh.ID_LICHHEN, lh.DIA_CHI_HEN, lh.THOI_GIAN_BAT_DAU
+    SELECT lh.ID_LICHHEN, lh.DIA_CHI_HEN, lh.THOI_GIAN_BAT_DAU, lh.ID_CHINHANH
     FROM lich_hen lh
     WHERE lh.TRANGTHAI = 'Đã xác nhận'
     AND NOT EXISTS (
@@ -440,11 +460,14 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                         </td>
                                         <td class="px-3 py-3 text-center">
                                             <div class="flex flex-wrap justify-center gap-2">
-                                                <a href="./components/edit_assignment.php?id=<?= $row['ID_LICHHEN'] ?>&employee_id=<?= $row['ID_TK'] ?>"
-                                                   class="px-3 py-1 rounded-lg bg-indigo-600 text-white text-xs font-semibold shadow hover:bg-indigo-700">Sửa</a>
-                                                <a href="./components/delete_assignment.php?id=<?= $row['ID_LICHHEN'] ?>&employee_id=<?= $row['ID_TK'] ?>"
-                                                   class="px-3 py-1 rounded-lg bg-rose-600 text-white text-xs font-semibold shadow hover:bg-rose-700"
-                                                   onclick="return confirm('Bạn chắc chắn muốn xóa phân công này?');">Xóa</a>
+                                                <a href="<?= $statusMeta['canEdit'] ? './components/edit_assignment.php?id=' . $row['ID_LICHHEN'] . '&employee_id=' . $row['ID_TK'] : '#' ?>"
+                                                   class="px-3 py-1 rounded-lg text-xs font-semibold shadow transition-colors <?= $statusMeta['canEdit'] ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer' : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60' ?>"
+                                                   onclick="<?= !$statusMeta['canEdit'] ? "event.preventDefault(); alert('Không thể sửa phân công cho lịch hẹn đã hoàn tất hoặc quá hạn'); return false;" : '' ?>"
+                                                   title="<?= !$statusMeta['canEdit'] ? 'Không thể sửa phân công cho lịch hẹn đã hoàn tất hoặc quá hạn' : '' ?>">Sửa</a>
+                                                <a href="<?= $statusMeta['canDelete'] ? './components/delete_assignment.php?id=' . $row['ID_LICHHEN'] . '&employee_id=' . $row['ID_TK'] : '#' ?>"
+                                                   class="px-3 py-1 rounded-lg text-xs font-semibold shadow transition-colors <?= $statusMeta['canDelete'] ? 'bg-rose-600 text-white hover:bg-rose-700 cursor-pointer' : 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-60' ?>"
+                                                   onclick="<?= !$statusMeta['canDelete'] ? "event.preventDefault(); alert('Không thể xóa phân công cho lịch hẹn đã hoàn tất hoặc quá hạn'); return false;" : "return confirm('Bạn chắc chắn muốn xóa phân công này?');" ?>"
+                                                   title="<?= !$statusMeta['canDelete'] ? 'Không thể xóa phân công cho lịch hẹn đã hoàn tất hoặc quá hạn' : '' ?>">Xóa</a>
                                             </div>
                                         </td>
                                     </tr>
@@ -496,7 +519,7 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                         <p class="text-xs text-gray-500"><?= formatDateTime($item['THOI_GIAN_BAT_DAU']) ?></p>
                                         <p class="text-xs text-gray-500 truncate max-w-[200px]" title="<?= htmlEscape($item['DIA_CHI_HEN']) ?>"><?= htmlEscape($item['DIA_CHI_HEN']) ?></p>
                                     </div>
-                                    <a href="./components/add_assignment.php?scheduleId=<?= $item['ID_LICHHEN'] ?>" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Phân công</a>
+                                    <a href="./components/add_assignment.php?scheduleId=<?= $item['ID_LICHHEN'] ?>&branchId=<?= $item['ID_CHINHANH'] ?>" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800">Phân công</a>
                                 </li>
                             <?php endforeach; ?>
                         </ul>
@@ -522,7 +545,7 @@ $visibleCount = $totalRows > $offset ? min($limit, $totalRows - $offset) : 0;
                                         <p class="text-xs text-pink-600"><?= formatDateTime($item['THOI_GIAN_BAT_DAU']) ?></p>
                                         <p class="text-xs text-pink-500 truncate max-w-[200px]" title="<?= htmlEscape($item['DIA_CHI_HEN']) ?>"><?= htmlEscape($item['DIA_CHI_HEN']) ?></p>
                                     </div>
-                                    <a href="./components/add_assignment.php?scheduleId=<?= $item['ID_LICHHEN'] ?>" class="text-xs font-semibold text-pink-600 hover:text-pink-800">Phân công</a>
+                                    <span class="text-xs font-semibold text-gray-400 cursor-not-allowed" title="Không thể phân công cho lịch đã quá hạn">Quá hạn</span>
                                 </li>
                             <?php endforeach; ?>
                         </ul>

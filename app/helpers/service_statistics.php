@@ -15,12 +15,12 @@ class ServiceStatistics {
                     dv.ID_DV,
                     dv.TEN_DV,
                     dv.IMAGE,
-                    COUNT(lh.ID_LICH_HEN) as booking_count,
+                    COUNT(lh.ID_LICHHEN) as booking_count,
                     SUM(CASE WHEN lh.TRANGTHAI = 'Đã hoàn thành' THEN 1 ELSE 0 END) as completed_count
                 FROM dich_vu dv
                 LEFT JOIN lich_hen lh ON dv.ID_DV = lh.ID_DV
                 WHERE dv.IS_DELETED = 0 AND dv.TRANG_THAI = 'active'
-                GROUP BY dv.ID_DV
+                GROUP BY dv.ID_DV, dv.TEN_DV, dv.IMAGE
                 ORDER BY booking_count DESC
                 LIMIT ?";
         
@@ -49,7 +49,7 @@ class ServiceStatistics {
                 FROM dich_vu dv
                 LEFT JOIN chi_tiet_hoa_don cthd ON cthd.LOAI = 'service' AND cthd.ID_THAM_CHIEU = dv.ID_DV
                 WHERE dv.IS_DELETED = 0
-                GROUP BY dv.ID_DV
+                GROUP BY dv.ID_DV, dv.TEN_DV, dv.IMAGE
                 HAVING total_revenue > 0
                 ORDER BY total_revenue DESC
                 LIMIT ?";
@@ -123,7 +123,7 @@ class ServiceStatistics {
                 WHERE dv.IS_DELETED = 0 
                     AND dv.TRANG_THAI = 'active'
                     AND (lh.NGAY_HEN IS NULL OR lh.NGAY_HEN < DATE_SUB(NOW(), INTERVAL ? DAY))
-                GROUP BY dv.ID_DV
+                GROUP BY dv.ID_DV, dv.TEN_DV, dv.TRANG_THAI
                 ORDER BY last_booking ASC";
         
         $stmt = $this->conn->prepare($sql);

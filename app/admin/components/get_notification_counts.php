@@ -22,7 +22,8 @@ function getManagerNotificationCounts($conn, $branchId) {
     $counts = [
         'appointments_pending' => 0,      // Lịch hẹn cần xác nhận
         'appointments_need_assignment' => 0, // Lịch hẹn cần phân công
-        'schedule_change_requests' => 0   // Yêu cầu đổi lịch làm việc
+        'schedule_change_requests' => 0,   // Yêu cầu đổi lịch làm việc
+        'rentals_pending' => 0            // Đơn thuê chờ duyệt
     ];
     
     // 1. Đếm lịch hẹn cần xác nhận (trạng thái "Đang chờ")
@@ -78,6 +79,22 @@ function getManagerNotificationCounts($conn, $branchId) {
         }
         $stmt->close();
     }
+
+    // 4. Đếm đơn thuê trang phục chờ duyệt theo chi nhánh
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) as total
+        FROM don_thue_trang_phuc
+        WHERE ID_CN = ? AND TRANG_THAI = 'cho_duyet'
+    ");
+    if ($stmt) {
+        $stmt->bind_param('i', $branchId);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($row = $result->fetch_assoc()) {
+            $counts['rentals_pending'] = (int)$row['total'];
+        }
+        $stmt->close();
+    }
     
     return $counts;
 }
@@ -91,7 +108,8 @@ function getAdminNotificationCounts($conn) {
     $counts = [
         'appointments_pending' => 0,      // Lịch hẹn cần xác nhận
         'appointments_need_assignment' => 0, // Lịch hẹn cần phân công
-        'schedule_change_requests' => 0   // Yêu cầu đổi lịch làm việc (tùy chọn cho admin)
+        'schedule_change_requests' => 0,   // Yêu cầu đổi lịch làm việc (tùy chọn cho admin)
+        'rentals_pending' => 0            // Đơn thuê chờ duyệt
     ];
     
     // 1. Đếm lịch hẹn cần xác nhận (trạng thái "Đang chờ")
@@ -139,6 +157,21 @@ function getAdminNotificationCounts($conn) {
         $result = $stmt->get_result();
         if ($row = $result->fetch_assoc()) {
             $counts['schedule_change_requests'] = (int)$row['total'];
+        }
+        $stmt->close();
+    }
+
+    // 4. Đếm đơn thuê trang phục chờ duyệt (toàn hệ thống)
+    $stmt = $conn->prepare("
+        SELECT COUNT(*) as total
+        FROM don_thue_trang_phuc
+        WHERE TRANG_THAI = 'cho_duyet'
+    ");
+    if ($stmt) {
+        $stmt->execute();
+        $result = $stmt->get_result();
+        if ($row = $result->fetch_assoc()) {
+            $counts['rentals_pending'] = (int)$row['total'];
         }
         $stmt->close();
     }

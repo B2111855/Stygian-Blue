@@ -79,7 +79,15 @@ $statusStats = [
     'unpaid' => (int)($scheduleStats['unpaid'] ?? 0) + (int)($rentalStats['unpaid'] ?? 0),
 ];
 
-// Bộ lọc trạng thái
+$paidSumJoin = "
+        LEFT JOIN (
+            SELECT ID_HD, SUM(SO_TIEN) AS PAID_SUM
+            FROM thanh_toan_truc_tuyen
+            WHERE TRANG_THAI = 'thanh_cong'
+            GROUP BY ID_HD
+        ) ps ON ps.ID_HD = h.ID_HD
+";
+// Xác định bộ lọc trạng thái từ query string
 $activeState = isset($_GET['state']) ? strtolower($_GET['state']) : 'all';
 $stateFilterClause = '';
 switch ($activeState) {
@@ -88,9 +96,6 @@ switch ($activeState) {
         break;
     case 'verifying':
         $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND tt.VNPAY_TRANG_THAI = 'pending'";
-        break;
-    case 'unpaid':
-        $stateFilterClause = " AND h.TRANGTHAI_THANHTOAN <> 'Đã thanh toán' AND (tt.VNPAY_TRANG_THAI IS NULL OR tt.VNPAY_TRANG_THAI <> 'pending')";
         break;
     default:
         $activeState = 'all';
@@ -103,8 +108,6 @@ $countQuery = "
         SELECT h.ID_HD
         FROM hoa_don h
         JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
-        LEFT JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
-        LEFT JOIN goi_dich_vu g ON l.ID_GOI = g.ID_GOI
         " . $latestVnpayJoin . "
         WHERE l.ID_TK = '$userId' $stateFilterClause
         UNION ALL
@@ -140,7 +143,8 @@ $sql = "
              l.ID_DV, l.ID_GOI,
                'schedule' AS KIND,
                NULL AS RENTAL_SUMMARY,
-               NULL AS TIEN_COC_RAW
+               NULL AS TIEN_COC_RAW,
+               COALESCE(ps.PAID_SUM,0) AS PAID_SUM
         FROM hoa_don h
         JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
         LEFT JOIN khach_hang k ON l.ID_TK = k.ID_TK
@@ -148,6 +152,7 @@ $sql = "
         LEFT JOIN goi_dich_vu g ON l.ID_GOI = g.ID_GOI
         LEFT JOIN chi_nhanh cn ON l.ID_CHINHANH = cn.ID_CN
         " . $latestVnpayJoin . "
+        " . $paidSumJoin . "
         WHERE l.ID_TK = '$userId' $stateFilterClause
         UNION ALL
          SELECT h.ID_HD, h.NGAY_GIO, h.TONG_TIEN, h.TRANGTHAI_THANHTOAN,
@@ -162,7 +167,8 @@ $sql = "
              NULL AS ID_DV, NULL AS ID_GOI,
                'rental' AS KIND,
                ic.item_names AS RENTAL_SUMMARY,
-               ttp.TIEN_COC AS TIEN_COC_RAW
+               ttp.TIEN_COC AS TIEN_COC_RAW,
+               COALESCE(ps.PAID_SUM,0) AS PAID_SUM
         FROM hoa_don h
         JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
         LEFT JOIN khach_hang k ON ttp.ID_TK = k.ID_TK
@@ -175,6 +181,7 @@ $sql = "
             GROUP BY ct.ID_TTP
         ) ic ON ic.ID_TTP = ttp.ID_TTP
         " . $latestVnpayJoin . "
+        " . $paidSumJoin . "
         WHERE ttp.ID_TK = '$userId' $stateFilterClause
     ) merged
     ORDER BY NGAY_GIO DESC
@@ -324,11 +331,14 @@ function resolveInvoiceState($statusText, $gatewayStatus = null)
     return 'unpaid';
 }
 
-function getPaymentBadgeClasses($status, $gatewayStatus = null)
+function getPaymentBadgeClasses($status, $gatewayStatus = null, $paidSum = 0, $total = 0)
 {
     $normalized = trim((string) $status);
     if ($normalized === 'Đã thanh toán') {
         return ['label' => 'Đã thanh toán', 'class' => 'bg-green-500 text-white'];
+    }
+    if ($paidSum > 0 && $total > 0 && $paidSum < $total) {
+        return ['label' => 'Đã cọc', 'class' => 'bg-blue-500 text-white'];
     }
     if ($gatewayStatus === 'pending') {
         return ['label' => 'Đang xử lý cổng', 'class' => 'bg-amber-400 text-black'];
@@ -452,16 +462,20 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                 $qrData = "STK:1234567890|TONGTIEN:" . $row['TONG_TIEN'] . "|ND:THANHTOAN_HD_" . $invoiceId;
                 $qrImg = "https://api.qrserver.com/v1/create-qr-code/?data=" . urlencode($qrData) . "&size=180x180";
                 $gatewayStatus = $row['VNPAY_TRANG_THAI'] ?? null;
-                $badge = getPaymentBadgeClasses($row['TRANGTHAI_THANHTOAN'], $gatewayStatus);
+                $badge = getPaymentBadgeClasses($row['TRANGTHAI_THANHTOAN'], $gatewayStatus, (int)($row['PAID_SUM'] ?? 0), (int)$row['TONG_TIEN']);
                 $history = $paymentHistory[$invoiceId] ?? [];
                 $latestHistory = $history[0] ?? null;
                 $isPaidInvoice = trim($row['TRANGTHAI_THANHTOAN']) === 'Đã thanh toán';
+                $isPartial = !$isPaidInvoice && ((int)($row['PAID_SUM'] ?? 0) > 0);
                 $paymentDescription = 'Vui lòng hoàn tất thanh toán để giữ lịch.';
                 $paymentState = 'pending';
 
                 if ($isPaidInvoice) {
                     $paymentDescription = 'Khoản phí đã được tất toán đầy đủ.';
                     $paymentState = 'done';
+                } elseif ($isPartial) {
+                    $paymentDescription = 'Bạn đã thanh toán tiền cọc. Vui lòng hoàn tất phần còn lại trước hạn.';
+                    $paymentState = 'processing';
                 } elseif ($gatewayStatus === 'pending') {
                     $paymentDescription = 'VNPay đã ghi nhận giao dịch, hệ thống sẽ tự động cập nhật sau ít phút.';
                     $paymentState = 'processing';
@@ -549,6 +563,9 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                                     <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tổng cộng</p>
                                     <p class="mt-1 text-3xl font-bold text-slate-900"><?= htmlspecialchars(formatCurrency($row['TONG_TIEN'])) ?></p>
                                     <p class="text-xs text-slate-500"><?= htmlspecialchars($row['PHUONGTHUC_THANHTOAN'] ? 'Phương thức: ' . $row['PHUONGTHUC_THANHTOAN'] : 'Chưa chọn phương thức') ?></p>
+                                    <?php if ($isRental && (int)($row['PAID_SUM'] ?? 0) >= (int)($row['TIEN_COC_RAW'] ?? 0) && (int)($row['PAID_SUM'] ?? 0) < (int)$row['TONG_TIEN']): ?>
+                                        <p class="mt-2 inline-flex items-center rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">Đã thanh toán cọc</p>
+                                    <?php endif; ?>
                                 </div>
                             </div>
 
@@ -566,6 +583,22 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                                             <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Tiền cọc</dt><dd><?= htmlspecialchars(formatCurrency($row['TIEN_COC_RAW'])) ?></dd></div>
                                             <div class="flex justify-between gap-2"><dt class="font-medium text-slate-700">Trạng thái đơn</dt><dd><?= htmlspecialchars($row['LICH_TRANGTHAI'] ?? '—') ?></dd></div>
                                         </dl>
+                                        <div class="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Tóm tắt thanh toán</p>
+                                            <?php
+                                                $totalAmt = (int)($row['TONG_TIEN'] ?? 0);
+                                                $depositAmt = (int)($row['TIEN_COC_RAW'] ?? 0);
+                                                $paidSum = (int)($row['PAID_SUM'] ?? 0);
+                                                $remaining = max(0, $totalAmt - $paidSum);
+                                            ?>
+                                            <dl class="mt-3 space-y-2 text-sm text-slate-700">
+                                                <div class="flex justify-between gap-2"><dt>Tổng hóa đơn</dt><dd class="font-semibold"><?= htmlspecialchars(formatCurrency($totalAmt)) ?></dd></div>
+                                                <div class="flex justify-between gap-2"><dt>Tiền cọc dự kiến</dt><dd><?= htmlspecialchars(formatCurrency($depositAmt)) ?></dd></div>
+                                                <div class="flex justify-between gap-2"><dt>Đã thanh toán</dt><dd class="text-emerald-700"><?= htmlspecialchars(formatCurrency($paidSum)) ?></dd></div>
+                                                <div class="flex justify-between gap-2"><dt>Còn lại</dt><dd class="text-slate-900 font-semibold"><?= htmlspecialchars(formatCurrency($remaining)) ?></dd></div>
+                                            </dl>
+                                            <p class="mt-2 text-[11px] text-slate-500">Tiền cọc là một phần của tổng hóa đơn. Việc tất toán chỉ hoàn tất khi số tiền đã thanh toán bằng tổng hóa đơn.</p>
+                                        </div>
                                     <?php else: ?>
                                         <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Thông tin lịch hẹn</p>
                                         <dl class="mt-3 space-y-2 text-sm text-slate-600">
@@ -661,6 +694,9 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                                                 <?php endif; ?>
                                                 <?php if ($isRental && !empty($row['TIEN_COC_RAW'])): ?>
                                                     <p class="mt-2 text-xs text-slate-600">Số tiền cọc dự kiến: <span class="font-semibold text-slate-900"><?= htmlspecialchars(formatCurrency($row['TIEN_COC_RAW'])) ?></span></p>
+                                                    <?php if ((int)($row['PAID_SUM'] ?? 0) >= (int)($row['TIEN_COC_RAW'] ?? 0) && (int)($row['PAID_SUM'] ?? 0) < (int)$row['TONG_TIEN']): ?>
+                                                        <p class="mt-1 text-[11px] text-blue-700">Bạn đã thanh toán xong tiền cọc. Vui lòng thanh toán phần còn lại trước hạn.</p>
+                                                    <?php endif; ?>
                                                 <?php endif; ?>
                                                 <form method="POST" action="../Controller/vnpay_create_payment.php" class="space-y-3 pt-2">
                                                     <input type="hidden" name="invoice_id" value="<?= $invoiceId ?>">
@@ -675,7 +711,7 @@ $stateQueryParam = $activeState !== 'all' ? '&state=' . urlencode($activeState) 
                                                     </form>
                                                     <p class="mt-2 text-[11px] text-slate-500">Nếu bạn gặp sự cố hoặc đã đóng cửa sổ VNPay trước khi hoàn tất, hủy phiên để tạo lại giao dịch mới.</p>
                                                 <?php endif; ?>
-                                                <p class="mt-2 text-xs text-slate-500">Bạn sẽ được chuyển sang cổng VNPAY để hoàn tất giao dịch.</p>
+                                                <p class="mt-2 text-xs text-slate-500"><?= $isRental ? 'Lưu ý: nút này chỉ thanh toán TIỀN CỌC, không phải toàn bộ hóa đơn.' : 'Bạn sẽ được chuyển sang cổng VNPAY để hoàn tất giao dịch.' ?></p>
                                             </div>
                                         </div>
                                         <?php if ($gatewayStatus === 'pending'): ?>

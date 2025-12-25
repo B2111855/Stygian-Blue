@@ -33,18 +33,15 @@ if (!function_exists('sbStaffFormatDateTime')) {
 }
 
 $staffInfo = [
-    'name'      => 'Nhân viên chuyên trách',
+    'name'      => $_SESSION['HO_TEN'] ?? 'Nhân viên chuyên trách',
     'specialty' => null,
 ];
 
-if ($stmt = $conn->prepare('SELECT HO_TEN, CHUYEN_MON FROM nhan_vien WHERE ID_TK = ? LIMIT 1')) {
+if ($stmt = $conn->prepare('SELECT CHUYEN_MON FROM nhan_vien WHERE ID_TK = ? LIMIT 1')) {
     $stmt->bind_param('s', $staffId);
     if ($stmt->execute()) {
-        $stmt->bind_result($fullName, $specialty);
+        $stmt->bind_result($specialty);
         if ($stmt->fetch()) {
-            if (!empty($fullName)) {
-                $staffInfo['name'] = $fullName;
-            }
             if (!empty($specialty)) {
                 $staffInfo['specialty'] = $specialty;
             }

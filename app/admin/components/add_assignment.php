@@ -14,6 +14,9 @@ if ($branch_result) {
     }
 }
 // Lấy danh sách lịch hẹn chưa được phân công, đã xác nhận, chưa quá thời gian hiện tại (chuẩn hóa truy vấn)
+$scheduleIdParam = isset($_GET['scheduleId']) ? intval($_GET['scheduleId']) : null;
+$branchIdParam = isset($_GET['branchId']) ? intval($_GET['branchId']) : null;
+
 $query_schedules = "
         SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.DIA_CHI_HEN, lh.ID_CHINHANH, lh.ID_TK, kh.HO_TEN as TEN_KH,
                      dv.TEN_DV, dv.THOI_GIAN as TONG_THOILUONG
@@ -35,12 +38,14 @@ if ($schedules === false) {
     die('<div style="color:red">Lỗi truy vấn lịch hẹn: ' . htmlspecialchars(mysqli_error($conn)) . '</div>');
 }
 
-// Lấy danh sách nhân viên có chi nhánh (JOIN với bảng nhan_vien)
+// Lấy danh sách nhân viên có chi nhánh (JOIN với bảng nhan_vien), chỉ lấy nhân viên thường (LOAI_NV = 'chuyen_trach')
 $query_employees = "
     SELECT tk.ID_TK, tk.HO_TEN, nv.ID_CN
     FROM tai_khoan tk
     JOIN nhan_vien nv ON tk.ID_TK = nv.ID_TK
     WHERE tk.ID_QUYEN = 2
+      AND nv.LOAI_NV = 'chuyen_trach'
+      AND COALESCE(nv.IS_DELETED, 0) = 0
 ";
 $employees = mysqli_query($conn, $query_employees);
 
@@ -80,38 +85,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <title>Thêm Phân Công</title>
     <?= sb_tailwind_link_tag(); ?>
 </head>
-<body class="bg-gray-100 min-h-screen p-6">
-<div class="max-w-2xl mx-auto">
-    <div class="bg-white shadow-xl rounded-lg p-6">
-        <h2 class="text-3xl font-bold text-indigo-700 mb-6 text-center">Thêm Phân Công</h2>
+<body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen p-6">
+<div class="max-w-4xl mx-auto">
+    <div class="mb-8 rounded-2xl bg-gradient-to-r from-indigo-600 via-purple-600 to-rose-500 text-white p-8 shadow-lg">
+        <h1 class="text-4xl font-bold mb-2">Thêm Phân Công Nhân Viên</h1>
+        <p class="text-white/80">Phân công lịch hẹn cho nhân viên phù hợp với chi nhánh và kỹ năng</p>
+    </div>
 
+    <div class="bg-white shadow-xl rounded-2xl p-8">
         <?php if (!empty($message)) : ?>
-            <div class="<?= $messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700' ?> border <?= $messageType === 'success' ? 'border-green-300' : 'border-red-300' ?> px-4 py-3 rounded mb-4" role="alert" aria-live="assertive">
-                <strong><?= $messageType === 'success' ? 'Thành công' : 'Lỗi' ?>:</strong>
-                <span><?= $message ?></span>
+            <div class="mb-6 rounded-xl px-4 py-4 border-l-4 flex items-start gap-3 <?= $messageType === 'success' ? 'bg-green-50 border-green-500 text-green-800' : 'bg-red-50 border-red-500 text-red-800' ?>" role="alert" aria-live="assertive">
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <?php if ($messageType === 'success'): ?>
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                    <?php else: ?>
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                    <?php endif; ?>
+                </svg>
+                <div>
+                    <strong><?= $messageType === 'success' ? '✓ Thành công' : '✗ Lỗi' ?></strong>
+                    <p class="text-sm mt-1"><?= $message ?></p>
+                </div>
             </div>
         <?php endif; ?>
 
         <?php if ($schedules && mysqli_num_rows($schedules) === 0): ?>
-            <div class="text-red-600 font-semibold text-center mb-4">
-                Không có lịch hẹn nào chờ phân công.
+            <div class="rounded-lg bg-yellow-50 border border-yellow-200 px-4 py-4 text-center text-yellow-800">
+                <p class="font-semibold mb-1">⚠️ Không có lịch hẹn chờ phân công</p>
+                <p class="text-sm">Tất cả lịch hẹn đã xác nhận đều đã được phân công hoặc quá thời gian hiện tại</p>
             </div>
         <?php endif; ?>
 
-
-        <form id="assignmentForm" method="POST" action="add_assignment.php" class="space-y-4" novalidate>
-            <div>
-                <label for="branchFilter" class="block font-medium text-gray-700 mb-1">Chọn chi nhánh</label>
-                <select id="branchFilter" class="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-400" onchange="filterScheduleByBranch()">
-                    <option value="">Tất cả chi nhánh</option>
-                    <?php foreach ($branches as $branch): ?>
-                        <option value="<?= $branch['ID_CN'] ?>"><?= htmlspecialchars($branch['TEN_CN']) ?></option>
-                    <?php endforeach; ?>
-                </select>
-                <label for="scheduleId" class="block font-medium text-gray-700 mb-1">Chọn Lịch Hẹn</label>
-                <select id="scheduleId" name="scheduleId" required onchange="onScheduleChange()"
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">-- Chọn lịch hẹn --</option>
+        <form id="assignmentForm" method="POST" action="add_assignment.php" class="space-y-6" novalidate>
+            <!-- Section: Chọn Lịch Hẹn -->
+            <div class="rounded-xl bg-gradient-to-br from-indigo-50 to-purple-50 p-6 border border-indigo-100">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    Chọn Lịch Hẹn
+                </h3>
+                <div class="space-y-4">
+                    <div>
+                        <label for="branchFilter" class="block text-sm font-medium text-gray-700 mb-2">Lọc theo chi nhánh</label>
+                        <select id="branchFilter" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400" onchange="filterScheduleByBranch()">
+                            <option value="">✓ Tất cả chi nhánh</option>
+                            <?php foreach ($branches as $branch): ?>
+                                <option value="<?= $branch['ID_CN'] ?>"><?= htmlspecialchars($branch['TEN_CN']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="scheduleId" class="block text-sm font-medium text-gray-700 mb-2">Lịch Hẹn <span class="text-red-500">*</span></label>
+                        <select id="scheduleId" name="scheduleId" required onchange="onScheduleChange()"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">-- Chọn lịch hẹn --</option>
                     <?php 
                     $lichHenArr = [];
                     while ($schedule = mysqli_fetch_assoc($schedules)) : 
@@ -130,54 +158,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         >
                             <?= "#{$schedule['ID_LICHHEN']} | {$schedule['TEN_KH']} | {$schedule['TEN_DV']} | {$displayAddress} | Bắt đầu: {$schedule['THOI_GIAN_BAT_DAU']}" ?>
                         </option>
-                    <?php endwhile; ?>
-                </select>
-                <div id="scheduleDetail" class="mt-2 p-3 bg-gray-50 border rounded text-sm hidden"></div>
+                        <?php endwhile; ?>
+                    </select>
+                    <div id="scheduleDetail" class="mt-3 p-4 bg-white rounded-lg border border-indigo-200 text-sm hidden"></div>
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <label for="employeeId" class="block font-medium text-gray-700 mb-1">Chọn Nhân Viên</label>
-                <select id="employeeId" name="employeeId" required disabled aria-disabled="true"
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                    <option value="">-- Chọn nhân viên --</option>
-                    <?php while ($employee = mysqli_fetch_assoc($employees)) : ?>
-                        <option value="<?= $employee['ID_TK'] ?>" data-idcn="<?= $employee['ID_CN'] ?>">
-                            <?= $employee['HO_TEN'] ?>
-                        </option>
-                    <?php endwhile; ?>
-                </select>
-                <div id="noMatchWarning" class="text-red-500 text-sm mt-1 hidden">Không có nhân viên phù hợp với chi nhánh này.</div>
-                <div id="employeeHint" class="text-gray-500 text-xs mt-1">Chọn lịch hẹn trước, danh sách nhân viên sẽ được lọc theo chi nhánh.</div>
+            <!-- Section: Chọn Nhân Viên -->
+            <div class="rounded-xl bg-gradient-to-br from-emerald-50 to-teal-50 p-6 border border-emerald-100">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 4H9m6 0a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Chọn Nhân Viên
+                </h3>
+                <div>
+                    <label for="employeeId" class="block text-sm font-medium text-gray-700 mb-2">Nhân Viên <span class="text-red-500">*</span></label>
+                    <select id="employeeId" name="employeeId" required disabled aria-disabled="true"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="">-- Chọn nhân viên --</option>
+                        <?php while ($employee = mysqli_fetch_assoc($employees)) : ?>
+                            <option value="<?= $employee['ID_TK'] ?>" data-idcn="<?= $employee['ID_CN'] ?>">
+                                <?= $employee['HO_TEN'] ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                    <div id="noMatchWarning" class="text-red-500 text-sm mt-2 hidden">⚠️ Không có nhân viên phù hợp với chi nhánh này</div>
+                    <div id="employeeHint" class="text-gray-500 text-xs mt-2 flex items-start gap-2">
+                        <span>💡</span>
+                        <span>Chọn lịch hẹn trước, danh sách nhân viên sẽ lọc theo chi nhánh</span>
+                    </div>
+                </div>
             </div>
 
-            <div>
-                <label for="startTime" class="block font-medium text-gray-700 mb-1">Thời Gian Bắt Đầu</label>
-                <input type="datetime-local" id="startTime" name="startTime" required aria-describedby="timeHelp" readonly
-                       class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <!-- Section: Chọn Thời Gian -->
+            <div class="rounded-xl bg-gradient-to-br from-orange-50 to-rose-50 p-6 border border-orange-100">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    Chọn Thời Gian
+                </h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="startTime" class="block text-sm font-medium text-gray-700 mb-2">Thời Gian Bắt Đầu <span class="text-red-500">*</span></label>
+                        <input type="datetime-local" id="startTime" name="startTime" required aria-describedby="timeHelp" readonly
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                    <div>
+                        <label for="endTime" class="block text-sm font-medium text-gray-700 mb-2">Thời Gian Kết Thúc <span class="text-red-500">*</span></label>
+                        <input type="datetime-local" id="endTime" name="endTime" required aria-describedby="timeHelp" readonly
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                </div>
+                <div id="timeHelp" class="text-gray-600 text-xs mt-3 flex items-start gap-2">
+                    <span>💡</span>
+                    <span>Thời gian được tính tự động dựa trên thời lượng dịch vụ. Nhập readonly để tránh sai sót.</span>
+                </div>
             </div>
 
-            <div>
-                <label for="endTime" class="block font-medium text-gray-700 mb-1">Thời Gian Kết Thúc (tự động)</label>
-                <input type="datetime-local" id="endTime" name="endTime" required aria-describedby="timeHelp" readonly
-                       class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                <div id="timeHelp" class="text-gray-500 text-xs mt-1">Thời gian kết thúc được tính tự động dựa trên thời lượng dịch vụ.</div>
-            </div>
-
-            <div class="flex justify-between mt-6">
+            <!-- Buttons -->
+            <div class="flex gap-3 pt-4 border-t border-gray-200">
                 <button type="submit" id="submitBtn"
-                    class="bg-green-600 hover:bg-green-700 disabled:bg-green-300 disabled:cursor-not-allowed text-white font-semibold px-5 py-2 rounded-lg shadow transition">
-                    Thêm Phân Công
+                    class="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-semibold px-6 py-3 rounded-lg shadow hover:shadow-lg transition transform hover:scale-105
+                           disabled:bg-gray-500 disabled:text-white disabled:border disabled:border-gray-600 disabled:opacity-100 disabled:cursor-not-allowed disabled:shadow-none disabled:hover:scale-100
+                           focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                    ✓ Thêm Phân Công
                 </button>
                 <button type="button"
                         onclick="window.location.href='http://localhost:8080/stygianblue/app/admin/admin_dashboard.php?page=assignments'"
-                        class="bg-gray-500 hover:bg-gray-600 text-white px-5 py-2 rounded-lg shadow">
-                    Quay Lại
+                        class="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-semibold px-6 py-3 rounded-lg shadow hover:shadow-lg transition">
+                    ← Quay Lại
                 </button>
             </div>
         </form>
     </div>
 </div>
     <script>
+        // Dữ liệu từ PHP
+        const scheduleIdParam = <?= $scheduleIdParam ? json_encode($scheduleIdParam) : 'null' ?>;
+        const branchIdParam = <?= $branchIdParam ? json_encode($branchIdParam) : 'null' ?>;
+
+        // Khởi tạo form khi trang load
+        document.addEventListener('DOMContentLoaded', function() {
+            if (branchIdParam) {
+                document.getElementById('branchFilter').value = branchIdParam;
+                filterScheduleByBranch();
+            }
+            if (scheduleIdParam) {
+                document.getElementById('scheduleId').value = scheduleIdParam;
+                onScheduleChange();
+            }
+        });
+
         // Lọc option lịch hẹn theo chi nhánh
         function filterScheduleByBranch() {
             const branchId = document.getElementById('branchFilter').value;
@@ -247,43 +321,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const endTime = addMinutesToDatetimeLocal(startTime, tongthoiluong + buffer);
             document.getElementById('endTime').value = endTime;
         }
-        // JavaScript function to update start time based on selected schedule
-        function updateStartTime() {
-            var scheduleSelect = document.getElementById('scheduleId');
-            var startTimeInput = document.getElementById('startTime');
-            var endTimeInput = document.getElementById('endTime');
 
-            // Lấy giá trị thời gian bắt đầu từ tùy chọn được chọn
-            var selectedOption = scheduleSelect.options[scheduleSelect.selectedIndex];
-            var startTime = selectedOption.getAttribute('data-start-time');
-
-            // Gán giá trị thời gian bắt đầu và kết thúc
-            if (startTime) {
-                startTime = startTime.replace(' ', 'T'); // Chuyển đổi thành định dạng datetime-local
-                startTimeInput.value = startTime;
-                endTimeInput.value = startTime; // Gán giá trị mặc định cho thời gian kết thúc
-            }
-            document.getElementById('startTime').addEventListener('click', function() {
-                this.focus(); // Đảm bảo trường được focus khi nhấp chuột
-            });
-            document.getElementById('endTime').addEventListener('click', function() {
-                this.focus(); // Tương tự cho trường thời gian kết thúc
-            });
-
-            document.getElementById('startTime').addEventListener('click', function() {
-                this.showPicker(); // Kích hoạt picker khi nhấp vào input
-            });
-            document.getElementById('endTime').addEventListener('click', function() {
-                this.showPicker();
-            });
-            document.querySelectorAll('input[type="datetime-local"]').forEach(input => {
-                input.addEventListener('click', function() {
-                    this.showPicker();
-                });
-            });
-
-        }
-        // ...existing code...
         function filterEmployeesByBranch() {
             const selectedSchedule = document.querySelector('#scheduleId option:checked');
             const scheduleBranchId = selectedSchedule.getAttribute('data-idcn');
@@ -325,10 +363,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const end = document.getElementById('endTime').value;
             const errorEl = document.getElementById('timeError');
             if (start && end && end <= start) {
-                errorEl.classList.remove('hidden');
+                if (errorEl) {
+                    errorEl.classList.remove('hidden');
+                }
                 document.getElementById('endTime').classList.add('border-red-400');
             } else {
-                errorEl.classList.add('hidden');
+                if (errorEl) {
+                    errorEl.classList.add('hidden');
+                }
                 document.getElementById('endTime').classList.remove('border-red-400');
             }
             toggleSubmitState();
@@ -341,7 +383,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             const end = document.getElementById('endTime').value;
             const timeValid = start && end && end > start;
             const submitBtn = document.getElementById('submitBtn');
-            submitBtn.disabled = !(scheduleChosen && employeeChosen && timeValid);
+            const isDisabled = !(scheduleChosen && employeeChosen && timeValid);
+            submitBtn.disabled = isDisabled;
+            
+            // Apply inline styles to ensure visibility
+            if (isDisabled) {
+                submitBtn.style.background = '#9ca3af';
+                submitBtn.style.color = '#ffffff';
+                submitBtn.style.cursor = 'not-allowed';
+                submitBtn.style.opacity = '1';
+            } else {
+                submitBtn.style.background = 'linear-gradient(to right, rgb(22, 163, 74), rgb(16, 185, 129))';
+                submitBtn.style.color = '#ffffff';
+                submitBtn.style.cursor = 'pointer';
+                submitBtn.style.opacity = '1';
+            }
         }
 
         document.getElementById('startTime').addEventListener('change', function(){

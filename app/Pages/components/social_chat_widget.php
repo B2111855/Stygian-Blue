@@ -24,8 +24,8 @@
     <div class="sb-social-item" role="none">
       <img src="../../../public/images/mess_icon.png" alt="Messenger" width="40" height="40" loading="lazy">
       <div class="sb-social-actions" role="group" aria-label="Messenger">
-        <button type="button" class="sb-social-btn" data-social-link="https://m.me/61575562047388" role="menuitem">Chat Messenger</button>
-        <button type="button" class="sb-social-btn is-secondary" data-social-copy="https://m.me/61575562047388" role="menuitem">Sao chép link</button>
+        <button type="button" class="sb-social-btn" data-social-link="https://m.me/595410993662132" role="menuitem">Chat Messenger</button>
+        <button type="button" class="sb-social-btn is-secondary" data-social-copy="https://m.me/595410993662132" role="menuitem">Sao chép link</button>
       </div>
     </div>
   </div>

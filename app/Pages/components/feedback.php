@@ -1,13 +1,80 @@
 <?php
 include '../../../database/config.php';
 
-// mặc định lần đầu: không lọc, phân trang tổng thể
+// Pagination
 $limit = 6;
+$page = max(1, (int)($_GET['p'] ?? 1));
+$offset = ($page - 1) * $limit;
+
+// Get total count
 $totalQuery = mysqli_query($conn, "SELECT COUNT(*) as total FROM phan_hoi_cua_khach_hang");
-$totalRow   = mysqli_fetch_assoc($totalQuery);
-$total      = (int)($totalRow['total'] ?? 0);
-$pages      = max(1, (int)ceil($total / $limit));
-$page       = 1; // trang đầu load qua AJAX nên mặc 1
+$total = (int)(mysqli_fetch_assoc($totalQuery)['total'] ?? 0);
+$pages = max(1, ceil($total / $limit));
+$page = min($page, $pages);
+$offset = ($page - 1) * $limit;
+
+// ============ OPTIMIZED SINGLE QUERY ============
+// Join all related data in one query
+$query = "
+  SELECT 
+    -- Feedback (synthetic ID because table has no PK)
+    CONCAT(ph.ID_TK, '-', ph.ID_DV) AS ID_PHAN_HOI,
+    ph.NOI_DUNG,
+    ph.XEP_HANG_DV,
+    ph.NGAY_GUI,
+    
+    -- Customer
+    ph.ID_TK,
+    tk.HO_TEN as customer_name,
+    tk.SDT as customer_phone,
+    
+    -- Service
+    ph.ID_DV,
+    dv.TEN_DV as service_name,
+    
+    -- Appointment (most recent)
+    lh.ID_LICHHEN,
+    lh.THOI_GIAN_BAT_DAU as appointment_start,
+    lh.DIA_CHI_HEN as appointment_location,
+    
+    -- Staff (comma-separated)
+    GROUP_CONCAT(DISTINCT nv_info.HO_TEN SEPARATOR ', ') as assigned_staff
+    
+  FROM phan_hoi_cua_khach_hang ph
+  LEFT JOIN tai_khoan tk ON ph.ID_TK = tk.ID_TK
+  LEFT JOIN dich_vu dv ON ph.ID_DV = dv.ID_DV
+  LEFT JOIN lich_hen lh ON lh.ID_TK = ph.ID_TK AND lh.ID_DV = ph.ID_DV
+  LEFT JOIN phan_cong_nhan_vien pc ON lh.ID_LICHHEN = pc.ID_LICHHEN
+  LEFT JOIN tai_khoan nv_info ON pc.ID_TK = nv_info.ID_TK
+  
+  GROUP BY
+    ph.NOI_DUNG,
+    ph.XEP_HANG_DV,
+    ph.NGAY_GUI,
+    ph.ID_TK,
+    tk.HO_TEN,
+    tk.SDT,
+    ph.ID_DV,
+    dv.TEN_DV,
+    lh.ID_LICHHEN,
+    lh.THOI_GIAN_BAT_DAU,
+    lh.DIA_CHI_HEN
+  ORDER BY ph.NGAY_GUI DESC
+  LIMIT $limit OFFSET $offset
+";
+
+$feedbacks = [];
+$result = mysqli_query($conn, $query);
+
+// Check for query errors
+if (!$result) {
+  error_log("Feedback query failed: " . mysqli_error($conn));
+  $feedbacks = [];
+} else {
+  while ($row = mysqli_fetch_assoc($result)) {
+    $feedbacks[] = $row;
+  }
+}
 ?>
 <!-- feedback.php (v4) — Bright + Server-side search/sort/pagination -->
 <section data-sb-feedback role="region" aria-label="Phản hồi khách hàng"
@@ -45,12 +112,47 @@ $page       = 1; // trang đầu load qua AJAX nên mặc 1
     </div>
 
     <!-- List -->
-    <div id="feedback-list" class="text-left" aria-live="polite" aria-busy="true">
-      <!-- Skeleton while loading -->
-      <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" data-sb-fb-skeleton>
-        <div class="sbf-skeleton-card"></div><div class="sbf-skeleton-card"></div><div class="sbf-skeleton-card"></div>
-        <div class="sbf-skeleton-card"></div><div class="sbf-skeleton-card"></div><div class="sbf-skeleton-card"></div>
-      </div>
+    <div id="feedback-list" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 text-left" aria-live="polite" aria-busy="false">
+      <?php foreach ($feedbacks as $fb): 
+        $rating = (int)$fb['XEP_HANG_DV'];
+        $stars = str_repeat('★', $rating) . str_repeat('☆', 5 - $rating);
+      ?>
+        <div class="fb-card bg-white rounded-xl border border-slate-200 overflow-hidden hover:shadow-md transition hover:-translate-y-1"
+             data-fb-id="<?= $fb['ID_PHAN_HOI'] ?>" data-rating="<?= $fb['XEP_HANG_DV'] ?>">
+          <div class="p-4 border-b border-slate-100 bg-gradient-to-r from-sky-50 to-blue-50 flex items-start justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-slate-900 text-sm truncate">
+                <?= htmlspecialchars($fb['customer_name'] ?? 'Khách hàng') ?>
+              </h3>
+              <p class="text-xs text-slate-700 truncate">
+                <?= htmlspecialchars($fb['service_name'] ?? 'Dịch vụ') ?>
+              </p>
+            </div>
+            <div class="flex-shrink-0 text-right">
+              <div class="text-yellow-500 text-sm font-bold leading-none">
+                <?= $stars ?>
+              </div>
+              <span class="text-xs text-slate-600"><?= round($fb['XEP_HANG_DV'], 1) ?>/5</span>
+            </div>
+          </div>
+
+          <div class="p-4 space-y-3">
+            <div>
+              <p class="text-xs text-slate-500 uppercase font-semibold mb-1">Phản hồi</p>
+              <p class="text-sm text-slate-700 line-clamp-3">
+                <?= htmlspecialchars($fb['NOI_DUNG']) ?>
+              </p>
+            </div>
+
+            <div class="flex items-center justify-between text-xs text-slate-600 pt-2 border-t border-slate-100">
+              <span><i class="fas fa-calendar-alt mr-1"></i><?= date('d/m/Y', strtotime($fb['NGAY_GUI'])) ?></span>
+              <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs">
+                #<?= $fb['ID_PHAN_HOI'] ?>
+              </span>
+            </div>
+          </div>
+        </div>
+      <?php endforeach; ?>
     </div>
 
     <!-- Empty / Error -->
@@ -67,12 +169,11 @@ $page       = 1; // trang đầu load qua AJAX nên mặc 1
 
     <!-- Pagination (sẽ cập nhật động theo kết quả server) -->
     <div class="mt-6 flex justify-center gap-2" id="pagination" role="navigation" aria-label="Phân trang">
-      <?php for ($i = 1; $i <= $pages; $i++): ?>
-        <button type="button"
-          data-sb-fb-page="<?= $i ?>"
-          class="sbf-page <?= ($i == $page) ? 'active' : '' ?>"
-          aria-current="<?= ($i == $page) ? 'page' : 'false' ?>"
-          aria-label="Trang <?= $i ?>"><?= $i ?></button>
+      <?php for ($i = 1; $i <= min($pages, 5); $i++): ?>
+        <a href="?p=<?= $i ?>"
+           class="px-3 py-1.5 rounded border text-sm transition font-medium <?= $i === $page ? 'bg-sky-500 text-white border-sky-500' : 'bg-white border-slate-200 text-slate-700 hover:border-slate-400' ?>">
+          <?= $i ?>
+        </a>
       <?php endfor; ?>
     </div>
   </div>
@@ -87,119 +188,100 @@ $page       = 1; // trang đầu load qua AJAX nên mặc 1
   [data-sb-feedback] *{ animation:none !important; transition:none !important; }
 }
 [data-sb-feedback]{ overflow-x:hidden; }
-[data-sb-feedback] .sbf-page{
-  @apply px-3 py-1 rounded border text-sm;
-  background: linear-gradient(180deg,#fff,#f8fafc);
-  color:#075985; border-color:#e2e8f0;
-  box-shadow: 0 1px 0 rgba(2,6,23,.04);
-  transition: filter .15s ease, transform .15s ease;
+
+/* Card styles */
+[data-sb-feedback] .fb-card {
+  transition: all 0.2s ease;
 }
-[data-sb-feedback] .sbf-page:hover{ filter:brightness(1.05); transform: translateY(-1px); }
-[data-sb-feedback] .sbf-page.active{
-  background: linear-gradient(90deg,#0ea5e9,#22d3ee,#a78bfa);
-  color:#fff; border-color:transparent;
-  box-shadow: 0 8px 18px rgba(14,165,233,.25);
+
+[data-sb-feedback] .fb-card:hover {
+  border-color: #0ea5e9;
+  box-shadow: 0 8px 16px rgba(14, 165, 233, 0.15);
 }
-[data-sb-feedback] .sbf-skeleton-card{
-  height: 150px; border-radius: 16px; border:1px solid #e2e8f0; overflow:hidden;
-  background:
-    linear-gradient(90deg, rgba(226,232,240,0) 0%, rgba(226,232,240,.7) 50%, rgba(226,232,240,0) 100%),
-    linear-gradient(#ffffff,#f8fafc);
-  background-size: 200% 100%, 100% 100%;
-  animation: sbf-shimmer 1.2s infinite;
+
+/* Responsive grid */
+@media (max-width: 640px) {
+  [data-sb-feedback] .grid {
+    grid-template-columns: 1fr;
+  }
 }
-@keyframes sbf-shimmer{ 0%{ background-position: -200% 0, 0 0; } 100%{ background-position: 200% 0, 0 0; } }
+
+/* Smooth scrollbar */
+[data-sb-feedback] ::-webkit-scrollbar {
+  width: 6px;
+}
+[data-sb-feedback] ::-webkit-scrollbar-track {
+  background: #f3f4f6;
+}
+[data-sb-feedback] ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+[data-sb-feedback] ::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
 </style>
 
 <script>
 (function(){
-  const root  = document.querySelector('[data-sb-feedback]');
+  const root = document.querySelector('[data-sb-feedback]');
   if(!root) return;
 
-  const list      = root.querySelector('#feedback-list');
-  const skel      = root.querySelector('[data-sb-fb-skeleton]');
-  const emptyBox  = root.querySelector('[data-sb-fb-empty]');
-  const errBox    = root.querySelector('[data-sb-fb-error]');
-  const pagWrap   = root.querySelector('#pagination');
-  const qInput    = root.querySelector('#fbSearch');
-  const sortSel   = root.querySelector('#fbSort');
-  const btnRef    = root.querySelector('#fbRefresh');
+  const list = root.querySelector('#feedback-list');
+  const qInput = root.querySelector('#fbSearch');
+  const sortSel = root.querySelector('#fbSort');
+  const btnRef = root.querySelector('#fbRefresh');
 
-  const ENDPOINT  = '../components/load_feedback_ajax.php'; // refactored API (phần 2)
-  let currentPage = 1;
-  let pages       = pagWrap.querySelectorAll('[data-sb-fb-page]').length || 1;
+  // Simple client-side filter (optional, for UX polish)
+  const feedbackData = [
+    <?php echo implode(',', array_map(function($fb) {
+      return json_encode([
+        'id' => $fb['ID_PHAN_HOI'],
+        'customer' => $fb['customer_name'],
+        'phone' => $fb['customer_phone'],
+        'content' => $fb['NOI_DUNG'],
+        'rating' => $fb['XEP_HANG_DV'],
+        'service' => $fb['service_name']
+      ]);
+    }, $feedbacks)); ?>
+  ];
 
-  function setBusy(v){ list.setAttribute('aria-busy', v? 'true':'false'); }
-  function showSkeleton(){ emptyBox.classList.add('hidden'); errBox.classList.add('hidden'); list.innerHTML=''; skel?.classList.remove('hidden'); setBusy(true); }
-  function hideSkeleton(){ skel?.classList.add('hidden'); setBusy(false); }
+  // Search functionality
+  qInput?.addEventListener('input', debounce(function() {
+    const query = this.value.toLowerCase();
+    const cards = document.querySelectorAll('[data-fb-id]');
+    
+    cards.forEach(card => {
+      const text = (
+        card.textContent.toLowerCase()
+      );
+      card.style.display = text.includes(query) ? '' : 'none';
+    });
+  }, 300));
 
-  function renderPagination(totalPages){
-    pagWrap.innerHTML = '';
-    totalPages = Math.max(1, totalPages|0);
-    for(let i=1;i<=totalPages;i++){
-      const b = document.createElement('button');
-      b.type='button';
-      b.className='sbf-page'+(i===currentPage?' active':'');
-      b.setAttribute('data-sb-fb-page', i);
-      b.setAttribute('aria-label', 'Trang '+i);
-      b.setAttribute('aria-current', i===currentPage? 'page':'false');
-      b.textContent = i;
-      b.addEventListener('click', ()=> load(i, {scroll:true}));
-      pagWrap.appendChild(b);
+  // Sort functionality
+  sortSel?.addEventListener('change', function() {
+    const cards = [...document.querySelectorAll('[data-fb-id]')];
+    
+    if (this.value === 'highest') {
+      cards.sort((a, b) => parseFloat(b.dataset.rating) - parseFloat(a.dataset.rating));
+    } else if (this.value === 'lowest') {
+      cards.sort((a, b) => parseFloat(a.dataset.rating) - parseFloat(b.dataset.rating));
     }
+    
+    cards.forEach(card => list.appendChild(card));
+  });
+
+  // Refresh button
+  btnRef?.addEventListener('click', () => location.reload());
+
+  function debounce(fn, ms) {
+    let timeout;
+    return function() {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => fn.call(this), ms);
+    };
   }
-
-  async function load(page=1, {scroll=false}={}){
-    try{
-      currentPage = page;
-      showSkeleton();
-      const url = new URL(ENDPOINT, location.href);
-      url.searchParams.set('page', page);
-      url.searchParams.set('q', qInput?.value||'');
-      url.searchParams.set('sort', sortSel?.value||'newest');
-
-      const res  = await fetch(url.toString(), {headers:{'X-Requested-With':'XMLHttpRequest'}});
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const html = await res.text();
-      hideSkeleton();
-
-      list.innerHTML = html;
-      // lấy meta tổng số trang từ template
-      const meta = list.querySelector('#fb-meta');
-      const totalPages = meta ? parseInt(meta.dataset.totalPages||'1',10) : pages;
-      renderPagination(totalPages);
-
-      // rỗng?
-      const anyItem = list.querySelector('[data-fb-item]');
-      emptyBox.classList.toggle('hidden', !!anyItem);
-
-      // Nếu người dùng chọn byService, sắp xếp lại các thẻ theo tên dịch vụ (client-side)
-if ((root.querySelector('#fbSort')?.value || '') === 'byService') {
-  const cards = [...list.querySelectorAll('[data-fb-item]')];
-  cards.sort((a,b)=>{
-    const sa = (a.querySelector('a[title="Xem dịch vụ"]')?.textContent || '').trim().toLowerCase();
-    const sb = (b.querySelector('a[title="Xem dịch vụ"]')?.textContent || '').trim().toLowerCase();
-    return sa.localeCompare(sb, 'vi', {sensitivity:'base'});
-  }).forEach(el=> el.parentElement.appendChild(el));
-}
-  
-
-      if(scroll){ root.scrollIntoView({behavior:'smooth', block:'start'}); }
-    }catch(e){
-      hideSkeleton();
-      errBox.classList.remove('hidden');
-      console.error(e);
-    }
-  }
-
-  // Debounce search
-  let t=null;
-  qInput?.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=> load(1), 220); });
-  sortSel?.addEventListener('change', ()=> load(1));
-  btnRef?.addEventListener('click', ()=> load(currentPage));
-
-  // Init
-  load(1);
 })();
 </script>
 

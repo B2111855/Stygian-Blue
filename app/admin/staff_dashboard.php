@@ -7,7 +7,7 @@ $page = $_GET['page'] ?? 'overview';
 $componentMap = [
   'overview'            => 'staff_dashboard_overview.php',
   'staff'               => 'staff_assignments.php',
-  'schedule'            => 'staff_assignments.php',
+  'schedule'            => 'staff_schedule_grid.php',
   'staff_assignments'   => 'staff_assignments.php',
   'staff_appoinments'   => 'staff_branch_access_notice.php',
   'staff_appointments'  => 'staff_branch_access_notice.php',
@@ -15,10 +15,22 @@ $componentMap = [
   'feedback'            => 'staff_feedback.php',
   'selfInfo'            => 'manage_selfInfo.php',
   'appointment_detail'  => 'appointment_detail.php',
+  'schedule_grid'       => 'staff_schedule_grid.php',
 ];
 
 $componentFile = $componentMap[$page] ?? $componentMap['overview'];
 $componentPath = __DIR__ . '/components/' . $componentFile;
+// Early exit for CSV export to avoid any prior output before headers
+if ($page === 'staff_salary' && isset($_GET['export']) && $_GET['export'] === 'csv') {
+  if (file_exists($componentPath)) {
+    include $componentPath;
+  } else {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "Not found";
+  }
+  exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="vi">

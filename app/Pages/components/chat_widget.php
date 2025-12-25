@@ -27,8 +27,8 @@ $chatUserKey = !empty($_SESSION['ID_TK'])
   <!-- Speed Dial mở nhanh các kênh: AI / Zalo / Messenger -->
   <div class="sb-ai-speed-dial">
     <div class="sb-ai-dial-actions">
-      <!-- AI Assistant -->
-      <button class="sb-ai-dial-btn sb-ai-btn-ai" type="button" title="Hỏi trợ lý AI" data-dial-action="assistant">
+      <!-- AI Assistant (tạm ẩn để tránh xung đột JS) -->
+      <button class="sb-ai-dial-btn sb-ai-btn-ai hidden" type="button" title="Hỏi trợ lý AI" data-dial-action="assistant" aria-hidden="true" tabindex="-1" style="display:none">
         <span class="sb-ai-dial-badge" data-dial-badge="assistant"></span>
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="10" rx="2"></rect>
@@ -40,28 +40,24 @@ $chatUserKey = !empty($_SESSION['ID_TK'])
       </button>
 
       <!-- Zalo (mở link ngoài) -->
-      <button class="sb-ai-dial-btn sb-ai-btn-zalo" type="button" title="Chat Zalo" data-open-link="https://zalo.me/0909123456">
+      <button class="sb-ai-dial-btn sb-ai-btn-zalo" type="button" title="Chat Zalo" data-open-link="https://zalo.me/0907814560">
         <span class="sb-ai-dial-badge" data-dial-badge="zalo"></span>
-        <span style="font-weight:900;font-size:18px;color:#fff">Z</span>
+        <img src="../../../public/images/zalo.png" alt="Zalo" width="28" height="28">
       </button>
 
       <!-- Messenger (mở link ngoài) -->
-      <button class="sb-ai-dial-btn sb-ai-btn-mess" type="button" title="Messenger" data-open-link="https://m.me/TEN_PAGE_CUA_BAN">
+      <button class="sb-ai-dial-btn sb-ai-btn-mess" type="button" title="Messenger" data-open-link="https://m.me/595410993662132">
         <span class="sb-ai-dial-badge" data-dial-badge="messenger"></span>
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-        </svg>
+        <img src="../../../public/images/mess_icon.png" alt="Messenger" width="28" height="28">
       </button>
     </div>
 
     <button class="sb-ai-chat-toggle" type="button" aria-label="Mở speed dial AI">
       <span class="sb-ai-toggle-icon">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" width="28" height="28">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
+        <img src="../../../public/images/mail.png" alt="Chat icon" width="40" height="40">
       </span>
       <span class="sb-ai-toggle-close" aria-hidden="true">
-        <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>

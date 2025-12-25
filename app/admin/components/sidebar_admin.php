@@ -3,54 +3,77 @@ $currentPage = $_GET['page'] ?? 'overview';
 
 // Lấy thông báo cho admin
 require_once __DIR__ . '/get_notification_counts.php';
-$adminNotifications = ['appointments_pending' => 0, 'appointments_need_assignment' => 0, 'schedule_change_requests' => 0];
+$adminNotifications = ['appointments_pending' => 0, 'appointments_need_assignment' => 0, 'schedule_change_requests' => 0, 'rentals_pending' => 0];
 
 if (isset($conn)) {
     $adminNotifications = getAdminNotificationCounts($conn);
 }
 
+// Sections to collapse by default
+$defaultCollapsedSections = [4, 5, 6, 7];
+
 $adminNavGroups = [
   [
     'title' => 'Điều hành',
+    'tooltip' => 'Quản lý tổng quan & thống kê',
     'items' => [
       ['slug' => 'overview',    'icon' => 'fas fa-th-large',        'label' => 'Tổng quan', 'badge' => null],
-      ['slug' => 'finances',    'icon' => 'fas fa-chart-line',      'label' => 'Thống kê tài chính', 'badge' => null],
+      ['slug' => 'finances_v2', 'icon' => 'fas fa-chart-line',      'label' => 'Thống kê tài chính', 'badge' => null],
       ['slug' => 'report',      'icon' => 'fas fa-chart-pie',       'label' => 'Phân tích thị trường', 'badge' => null],
     ],
   ],
   [
-    'title' => 'Vận hành lịch hẹn',
+    'title' => 'Vận hành',
+    'tooltip' => 'Vận hành lịch hẹn & đơn thuê',
     'items' => [
       ['slug' => 'appointments','icon' => 'fas fa-calendar-check', 'label' => 'Quản lý lịch hẹn', 'badge' => 'appointments_pending'],
-      ['slug' => 'assignments', 'icon' => 'fas fa-user-cog',        'label' => 'Phân công nhân viên', 'badge' => 'schedule_change_requests'],
-      ['slug' => 'payments',    'icon' => 'fas fa-file-invoice',    'label' => 'Quản lý thanh toán', 'badge' => null],
-      ['slug' => 'salaries',    'icon' => 'fas fa-hand-holding-usd','label' => 'Quản lý lương', 'badge' => null],
+      ['slug' => 'assignments', 'icon' => 'fas fa-user-cog',        'label' => 'Phân công', 'badge' => 'schedule_change_requests'],
+      ['slug' => 'costume_rentals','icon' => 'fas fa-file-signature','label' => 'Quản lý đơn thuê', 'badge' => 'rentals_pending'],
     ],
   ],
   [
-    'title' => 'Nhân sự & khách hàng',
+    'title' => 'Tài chính',
+    'tooltip' => 'Quản lý thanh toán & lương',
+    'items' => [
+      ['slug' => 'payments',    'icon' => 'fas fa-file-invoice',    'label' => 'Quản lý thanh toán', 'badge' => null],
+      ['slug' => 'salaries',    'icon' => 'fas fa-hand-holding-usd','label' => 'Quản lý lương', 'badge' => null],
+      ['slug' => 'expense_categories','icon' => 'fas fa-tags',       'label' => 'Loại chi phí', 'badge' => null],
+    ],
+  ],
+  [
+    'title' => 'Nhân sự',
+    'tooltip' => 'Quản lý nhân viên & khách hàng',
     'items' => [
       ['slug' => 'employees',   'icon' => 'fas fa-user-tie',        'label' => 'Quản lý nhân viên', 'badge' => null],
       ['slug' => 'customers',   'icon' => 'fas fa-user-friends',    'label' => 'Quản lý khách hàng', 'badge' => null],
       ['slug' => 'feedback',    'icon' => 'fas fa-comment-dots',    'label' => 'Phản hồi của khách', 'badge' => null],
+    ],
+  ],
+  [
+    'title' => 'Tài sản',
+    'tooltip' => 'Quản lý tài sản & dịch vụ',
+    'items' => [
+      ['slug' => 'services',    'icon' => 'fas fa-concierge-bell',  'label' => 'Quản lý dịch vụ', 'badge' => null],
+      ['slug' => 'packages',    'icon' => 'fas fa-box-open',        'label' => 'Gói dịch vụ', 'badge' => null],
+      ['slug' => 'costumes',    'icon' => 'fas fa-tshirt',          'label' => 'Quản lý trang phục', 'badge' => null],
+      ['slug' => 'package_costumes', 'icon' => 'fas fa-palette',  'label' => 'Gói trang phục', 'badge' => null],
+      ['slug' => 'equipment',   'icon' => 'fas fa-cogs',            'label' => 'Quản lý thiết bị', 'badge' => null],
+      ['slug' => 'albums',      'icon' => 'fas fa-images',          'label' => 'Quản lý Albums', 'badge' => null],
+      ['slug' => 'branches',    'icon' => 'fas fa-code-branch',     'label' => 'Quản lý chi nhánh', 'badge' => null],
+    ],
+  ],
+  [
+    'title' => 'Cá nhân',
+    'tooltip' => 'Thông tin & cài đặt tài khoản',
+    'items' => [
       ['slug' => 'selfInfo',    'icon' => 'fas fa-user-circle',     'label' => 'Thông tin cá nhân', 'badge' => null],
     ],
   ],
   [
-    'title' => 'Dịch vụ & tài sản',
+    'title' => 'Bảo mật',
+    'tooltip' => 'Hệ thống & bảo mật',
     'items' => [
-      ['slug' => 'services',    'icon' => 'fas fa-concierge-bell',  'label' => 'Quản lý dịch vụ', 'badge' => null],
-      ['slug' => 'packages',    'icon' => 'fas fa-box-open',        'label' => 'Gói dịch vụ', 'badge' => null],
-      ['slug' => 'package_costumes', 'icon' => 'fas fa-palette',  'label' => 'Gói trang phục', 'badge' => null],
-      ['slug' => 'branches',    'icon' => 'fas fa-code-branch',     'label' => 'Quản lý chi nhánh', 'badge' => null],
-      ['slug' => 'equipment',   'icon' => 'fas fa-cogs',            'label' => 'Quản lý thiết bị', 'badge' => null],
-      ['slug' => 'costumes',    'icon' => 'fas fa-tshirt',          'label' => 'Quản lý trang phục', 'badge' => null],
-      ['slug' => 'costume_rentals','icon' => 'fas fa-file-signature','label' => 'Đơn thuê trang phục', 'badge' => null],
-    ],
-  ],
-  [
-    'title' => 'Giám sát & bảo mật',
-    'items' => [
+      ['slug' => 'admin_accounts', 'icon' => 'fas fa-shield-alt',   'label' => 'Tài khoản Admin', 'badge' => null],
       ['slug' => 'system_logs', 'icon' => 'fas fa-clipboard-list',  'label' => 'Nhật ký hệ thống', 'badge' => null],
     ],
   ],
@@ -105,13 +128,17 @@ if (!function_exists('renderAdminNavItemEnhanced')) {
   </div>
   <nav class="flex-1 overflow-y-auto" data-persist-scroll="admin-sidebar">
     <ul class="space-y-4 p-4 text-sm">
-      <?php $adminSectionIndex = 0; foreach ($adminNavGroups as $group): $adminSectionIndex++; $adminSectionId = 'adm-section-' . $adminSectionIndex; ?>
-        <li class="sidebar-section" data-section-id="<?= $adminSectionId ?>">
-          <button type="button" class="section-toggle w-full flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 py-1 px-2 rounded hover:bg-indigo-800/30 transition-all duration-200 group" onclick="toggleAdminSection('<?= $adminSectionId ?>')">
+      <?php $adminSectionIndex = 0; foreach ($adminNavGroups as $group): $adminSectionIndex++; $adminSectionId = 'adm-section-' . $adminSectionIndex; 
+      // Check if section should be collapsed by default OR if user has it collapsed in localStorage (passed via JavaScript)
+      $isCollapsedByDefault = in_array($adminSectionIndex, $defaultCollapsedSections);
+      $collapsedClass = $isCollapsedByDefault ? 'collapsed' : '';
+      ?>
+        <li class="sidebar-section" data-section-id="<?= $adminSectionId ?>" data-default-collapsed="<?= $isCollapsedByDefault ? '1' : '0' ?>">
+          <button type="button" class="section-toggle w-full flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2 py-1 px-2 rounded hover:bg-indigo-800/30 transition-all duration-200 group relative" onclick="toggleAdminSection('<?= $adminSectionId ?>')" title="<?= htmlspecialchars($group['tooltip'] ?? $group['title']) ?>">
             <span><?= htmlspecialchars($group['title']) ?></span>
-            <i class="fas fa-chevron-down section-icon transition-transform duration-300 text-gray-500 group-hover:text-gray-300"></i>
+            <i class="fas fa-chevron-down section-icon transition-transform duration-300 text-gray-500 group-hover:text-gray-300 <?= $collapsedClass ?>"></i>
           </button>
-          <ul class="section-content space-y-1 overflow-hidden transition-all duration-300">
+          <ul class="section-content space-y-1 overflow-hidden transition-all duration-300 <?= $collapsedClass ?>">
             <?php foreach ($group['items'] as $item) {
                 renderAdminNavItemEnhanced(
                     $item['slug'], 
@@ -201,6 +228,12 @@ if (!function_exists('renderAdminNavItemEnhanced')) {
 .section-icon.collapsed {
   transform: rotate(-90deg);
 }
+
+body.sidebar-initializing .section-toggle,
+body.sidebar-initializing .section-content,
+body.sidebar-initializing .section-icon {
+  transition: none !important;
+}
 </style>
 
 <script>
@@ -227,18 +260,49 @@ function toggleAdminSection(sectionId) {
   localStorage.setItem('admin-collapsed-sections', JSON.stringify(collapsedSections));
 }
 
-// Restore collapsed state on page load
+// Restore collapsed state from localStorage (user's previous interactions)
 document.addEventListener('DOMContentLoaded', function() {
+  document.body.classList.add('sidebar-initializing');
   const collapsedSections = JSON.parse(localStorage.getItem('admin-collapsed-sections') || '[]');
   
-  collapsedSections.forEach(sectionId => {
-    const section = document.querySelector(`[data-section-id="${sectionId}"]`);
-    if (section) {
-      const content = section.querySelector('.section-content');
-      const icon = section.querySelector('.section-icon');
-      content.classList.add('collapsed');
-      icon.classList.add('collapsed');
+  document.querySelectorAll('[data-section-id]').forEach(section => {
+    const sectionId = section.getAttribute('data-section-id');
+    const isDefaultCollapsed = section.getAttribute('data-default-collapsed') === '1';
+    const wasUserCollapsed = collapsedSections.includes(sectionId);
+    const content = section.querySelector('.section-content');
+    const icon = section.querySelector('.section-icon');
+
+    if (!content || !icon) {
+      return;
     }
+
+    // If user has toggled this section before, use that state
+    // Otherwise use the default state
+    const shouldBeCollapsed = wasUserCollapsed !== isDefaultCollapsed ? wasUserCollapsed : isDefaultCollapsed;
+
+    content.classList.toggle('collapsed', shouldBeCollapsed);
+    icon.classList.toggle('collapsed', shouldBeCollapsed);
+  });
+
+  // Restore saved scroll positions for persistent containers
+  document.querySelectorAll('[data-persist-scroll]').forEach(container => {
+    const key = 'scroll-pos-' + container.getAttribute('data-persist-scroll');
+    const savedPosition = localStorage.getItem(key);
+
+    if (savedPosition !== null) {
+      const numericPosition = parseInt(savedPosition, 10);
+      if (!Number.isNaN(numericPosition)) {
+        container.scrollTop = numericPosition;
+      }
+    }
+
+    container.addEventListener('scroll', () => {
+      localStorage.setItem(key, String(container.scrollTop));
+    });
+  });
+
+  requestAnimationFrame(() => {
+    document.body.classList.remove('sidebar-initializing');
   });
 });
 </script>

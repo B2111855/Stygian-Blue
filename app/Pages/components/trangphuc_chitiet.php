@@ -78,13 +78,13 @@ if (!ctype_digit((string)$costumeId)) {
 
     $sql = "SELECT
       tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.TRANG_THAI AS TINH_TRANG, tp.GHI_CHU,
-      tp.ID_CN, cn.TEN_CN, cn.DIA_CHI_CN, cn.SDT_CN,
+      tp.ID_CN, COALESCE(cn.TEN_CN, 'Tất cả chi nhánh') AS TEN_CN, cn.DIA_CHI_CN, cn.SDT_CN,
       COALESCE(tp.GIA_THUE, 0) AS DON_GIA,
       loai.TEN_LOAI, loai.ID_LOAI, COALESCE(loai.GIA_THUE_CO_SO, 0) AS GIA_LOAI
     FROM trang_phuc tp
-    JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN
+    LEFT JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN
     LEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI
-    WHERE tp.ID_TRANG_PHUC = ?
+    WHERE tp.ID_TRANG_PHUC = ? AND tp.DELETED_AT IS NULL
     LIMIT 1";
 
     if ($stmt = $conn->prepare($sql)) {
@@ -114,10 +114,11 @@ if (!ctype_digit((string)$costumeId)) {
             $imgStmt->close();
         }
 
-        $recommendSql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.ID_CN, cn.TEN_CN, COALESCE(tp.GIA_THUE, 0) AS DON_GIA, ha.URL AS HINH_ANH\n        FROM trang_phuc tp\n        JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\n        LEFT JOIN (\n            SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n            FROM trang_phuc_hinh_anh\n            WHERE IS_ACTIVE = 1\n            GROUP BY ID_TP\n        ) ha ON ha.ID_TP = tp.ID_TRANG_PHUC\n        WHERE tp.ID_TRANG_PHUC <> ? AND tp.ID_CN = ?\n        ORDER BY tp.TRANG_THAI = 'available' DESC, tp.TEN ASC LIMIT 4";
+        $recommendSql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.ID_CN, COALESCE(cn.TEN_CN, 'Tất cả chi nhánh') AS TEN_CN, COALESCE(tp.GIA_THUE, 0) AS DON_GIA, ha.URL AS HINH_ANH\n        FROM trang_phuc tp\n        LEFT JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\n        LEFT JOIN (\n            SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n            FROM trang_phuc_hinh_anh\n            WHERE IS_ACTIVE = 1\n            GROUP BY ID_TP\n        ) ha ON ha.ID_TP = tp.ID_TRANG_PHUC\n        WHERE tp.ID_TRANG_PHUC <> ? AND tp.DELETED_AT IS NULL AND (tp.ID_CN = ? OR (tp.ID_CN IS NULL AND ? IS NULL))\n        ORDER BY tp.TRANG_THAI = 'available' DESC, tp.TEN ASC LIMIT 4";
 
         if ($recStmt = $conn->prepare($recommendSql)) {
-            $recStmt->bind_param('ii', $costumeId, $costume['ID_CN']);
+            $branchId = $costume['ID_CN'];
+            $recStmt->bind_param('iii', $costumeId, $branchId, $branchId);
             if ($recStmt->execute()) {
                 if ($recResult = $recStmt->get_result()) {
                     while ($row = $recResult->fetch_assoc()) {
@@ -193,6 +194,7 @@ if (!empty($costume['ID_LOAI'])) {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css">
   <style>
     body { font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     .gradient-bg { background: linear-gradient(130deg, rgba(15,23,42,0.92) 0%, rgba(79,70,229,0.88) 38%, rgba(14,165,233,0.85) 100%); }
@@ -204,7 +206,7 @@ if (!empty($costume['ID_LOAI'])) {
 </head>
 <body class="bg-slate-950 text-slate-100">
   <div class="gradient-bg min-h-screen">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       <header class="flex items-center justify-between gap-4 text-white">
         <a href="trangphuc.php" class="text-sm font-medium uppercase tracking-[0.3em] text-sky-200 hover:text-white transition">Trở lại danh sách</a>
         <div class="text-right">
@@ -224,7 +226,7 @@ if (!empty($costume['ID_LOAI'])) {
           <div class="space-y-6">
             <div class="glass-panel rounded-3xl overflow-hidden">
               <div class="relative">
-                <img id="tp-main-img" src="<?= tp_escape($coverImage) ?>" alt="<?= tp_escape($coverAlt) ?>" class="w-full object-cover aspect-[4/3]">
+                <img id="tp-main-img" src="<?= tp_escape($coverImage) ?>" alt="<?= tp_escape($coverAlt) ?>" class="w-full object-contain max-h-[500px]" style="height: 500px;">
                 <?php if ($statusInfo): ?>
                   <span class="absolute top-6 left-6 inline-flex items-center rounded-full px-4 py-1.5 text-sm font-semibold <?= tp_escape($statusInfo[1]) ?>">
                     <?= tp_escape($statusInfo[0]) ?>
@@ -324,17 +326,24 @@ if (!empty($costume['ID_LOAI'])) {
               <p class="text-sm text-slate-500 uppercase tracking-[0.3em]">Đặt thuê trực tiếp</p>
               <div class="grid gap-4">
                 <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-medium text-slate-600">Nhận từ</span>
-                  <input type="datetime-local" id="rent_from" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= tp_escape($fromQuery ? (strpos($fromQuery,'T')!==false?$fromQuery:$fromQuery.'T10:00') : '') ?>">
+                  <span class="font-medium text-slate-600">Ngày & giờ nhận</span>
+                  <input type="text" id="rent_from" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="Chọn ngày giờ nhận">
+                  <span class="text-xs text-slate-500">Giờ làm việc: 8:00 - 21:00</span>
                 </label>
                 <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-medium text-slate-600">Trả vào</span>
-                  <input type="datetime-local" id="rent_to" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= tp_escape($toQuery ? (strpos($toQuery,'T')!==false?$toQuery:$toQuery.'T10:00') : '') ?>">
+                  <span class="font-medium text-slate-600">Số ngày thuê</span>
+                  <div class="flex items-center gap-2">
+                    <button type="button" onclick="adjustDetailDays(-1)" class="flex items-center justify-center w-9 h-9 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition">-</button>
+                    <input type="number" min="1" max="30" id="rent_days" class="flex-1 text-center rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold focus:border-indigo-500 focus:ring-indigo-500" value="2">
+                    <button type="button" onclick="adjustDetailDays(1)" class="flex items-center justify-center w-9 h-9 rounded-lg border border-slate-300 bg-slate-50 text-slate-700 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed transition">+</button>
+                  </div>
+                  <span class="text-xs text-slate-500">Tối đa 30 ngày</span>
                 </label>
-                <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-medium text-slate-600">Số lượng (bộ)</span>
-                  <input type="number" min="1" id="rent_qty" class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-indigo-500" value="<?= (int)$qtyQuery ?>">
-                </label>
+                <div class="flex flex-col gap-1 text-sm">
+                  <span class="font-medium text-slate-600">Ngày trả dự kiến</span>
+                  <div class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600" id="rent_to_display">—</div>
+                  <span class="text-xs text-slate-500">Tự động tính theo số ngày thuê</span>
+                </div>
               </div>
               <div class="space-y-1">
                 <p class="text-xs text-slate-500">Ước tính chi phí</p>
@@ -411,37 +420,60 @@ if (!empty($costume['ID_LOAI'])) {
   </div>
 
   <?php if ($priceValue > 0): ?>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
   <script>
     (function(){
       const priceItem = <?= (int)$priceValue ?>;
       const priceType = <?= (int)$typePriceValue ?>;
+      const fromInput = document.getElementById('rent_from');
+      const daysInput = document.getElementById('rent_days');
+      const toDisplay = document.getElementById('rent_to_display');
       const estimateText = document.getElementById('estimateText');
       const estimateNote = document.getElementById('estimateNote');
-      const fromInput = document.getElementById('rent_from');
-      const toInput = document.getElementById('rent_to');
-      const qtyInput = document.getElementById('rent_qty');
+      let fromDate = null;
+      let toDate = null;
 
-      function calcDays(start, end) {
-        const a = new Date(start);
-        const b = new Date(end);
-        if (isNaN(a) || isNaN(b)) return 0;
-        const diff = b.getTime() - a.getTime();
-        return Math.max(0, Math.ceil(diff / 86400000));
+      function adjustDetailDays(delta) {
+        if (!daysInput) return;
+        let val = parseInt(daysInput.value, 10) || 2;
+        val = Math.max(1, Math.min(30, val + delta));
+        daysInput.value = val;
+        updateReturnDate();
+        updateEstimate();
+      }
+      window.adjustDetailDays = adjustDetailDays;
+
+      function updateReturnDate() {
+        if (!fromDate || !daysInput) {
+          if (toDisplay) toDisplay.textContent = '—';
+          toDate = null;
+          return;
+        }
+        const days = parseInt(daysInput.value, 10) || 2;
+        const returnDate = new Date(fromDate.getTime());
+        returnDate.setDate(returnDate.getDate() + days);
+        toDate = returnDate;
+        if (toDisplay) {
+          const formatted = returnDate.getFullYear() + '-' + 
+            String(returnDate.getMonth() + 1).padStart(2, '0') + '-' + 
+            String(returnDate.getDate()).padStart(2, '0') + ' ' + 
+            String(returnDate.getHours()).padStart(2, '0') + ':' + 
+            String(returnDate.getMinutes()).padStart(2, '0');
+          toDisplay.textContent = formatted;
+        }
       }
 
       function updateEstimate(){
-        const fromVal = fromInput.value;
-        const toVal = toInput.value;
-        const qtyVal = parseInt(qtyInput.value,10) || 1;
-        const days = calcDays(fromVal, toVal);
-        if(days <= 0){
+        if (!fromDate || !toDate) {
           estimateText.textContent = 'Chọn thời gian để xem';
           estimateNote.textContent = '';
           return;
         }
+        const days = parseInt(daysInput?.value || '2', 10);
+        const qtyVal = 1; // Item mode always 1
         const estItem = priceItem * days * qtyVal;
         const estType = priceType * days * qtyVal;
-        estimateText.textContent = new Intl.NumberFormat('vi-VN').format(estItem) + ' ₫';
+        estimateText.textContent = new Intl.NumberFormat('vi-VN').format(estItem) + ' ₫ (' + days + ' ngày)';
         if (priceType !== priceItem) {
           estimateNote.textContent = 'Theo loại: ' + new Intl.NumberFormat('vi-VN').format(estType) + ' ₫';
         } else {
@@ -449,18 +481,51 @@ if (!empty($costume['ID_LOAI'])) {
         }
       }
 
-      ['change','input'].forEach(ev => {
-        fromInput.addEventListener(ev, updateEstimate);
-        toInput.addEventListener(ev, updateEstimate);
-        qtyInput.addEventListener(ev, updateEstimate);
-      });
+      // Initialize flatpickr for detail page
+      if (fromInput && typeof flatpickr !== 'undefined') {
+        flatpickr(fromInput, {
+          enableTime: true,
+          time_24hr: true,
+          dateFormat: 'Y-m-d H:i',
+          minDate: 'today',
+          minTime: '08:00',
+          maxTime: '21:00',
+          defaultDate: 'today',
+          onChange: function(selectedDates) {
+            if (selectedDates[0]) {
+              fromDate = selectedDates[0];
+              updateReturnDate();
+              updateEstimate();
+            }
+          }
+        });
+      }
+
+      if (daysInput) {
+        daysInput.addEventListener('change', () => {
+          updateReturnDate();
+          updateEstimate();
+        });
+      }
       updateEstimate();
 
       // Sync hidden fields before submit
       function syncHidden(){
-        const fromVal = fromInput.value;
-        const toVal = toInput.value;
-        const qtyVal = qtyInput.value;
+        if (!fromDate || !toDate) {
+          alert('Vui lòng chọn thời gian nhận trang phục');
+          return false;
+        }
+        const fromVal = fromDate.getFullYear() + '-' + 
+          String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + 
+          String(fromDate.getDate()).padStart(2, '0') + 'T' + 
+          String(fromDate.getHours()).padStart(2, '0') + ':' + 
+          String(fromDate.getMinutes()).padStart(2, '0');
+        const toVal = toDate.getFullYear() + '-' + 
+          String(toDate.getMonth() + 1).padStart(2, '0') + '-' + 
+          String(toDate.getDate()).padStart(2, '0') + 'T' + 
+          String(toDate.getHours()).padStart(2, '0') + ':' + 
+          String(toDate.getMinutes()).padStart(2, '0');
+        const qtyVal = '1'; // Item mode always 1
         const itemFrom = document.getElementById('rent_from_field_item');
         const itemTo = document.getElementById('rent_to_field_item');
         const itemQty = document.getElementById('rent_qty_field_item');
@@ -473,11 +538,12 @@ if (!empty($costume['ID_LOAI'])) {
         if(typeFrom) typeFrom.value = fromVal;
         if(typeTo) typeTo.value = toVal;
         if(typeQty) typeQty.value = qtyVal;
+        return true;
       }
       const itemForm = document.getElementById('itemBookingForm');
       const typeForm = document.getElementById('typeBookingForm');
-      if(itemForm){ itemForm.addEventListener('submit', syncHidden); }
-      if(typeForm){ typeForm.addEventListener('submit', syncHidden); }
+      if(itemForm){ itemForm.addEventListener('submit', function(e) { if (!syncHidden()) e.preventDefault(); }); }
+      if(typeForm){ typeForm.addEventListener('submit', function(e) { if (!syncHidden()) e.preventDefault(); }); }
 
       const thumbs = document.querySelectorAll('[data-thumb]');
       const mainImg = document.getElementById('tp-main-img');

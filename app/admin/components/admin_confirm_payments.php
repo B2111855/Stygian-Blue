@@ -144,6 +144,15 @@ $totalRows = mysqli_fetch_assoc($countResult)['total'];
 $totalPages = ceil($totalRows / $limit);
 
 // Truy vấn dữ liệu phân trang
+$paidSumJoin = "
+        LEFT JOIN (
+            SELECT ID_HD, SUM(SO_TIEN) AS PAID_SUM
+            FROM thanh_toan_truc_tuyen
+            WHERE TRANG_THAI = 'success'
+            GROUP BY ID_HD
+        ) ps ON ps.ID_HD = h.ID_HD
+";
+
 $query = "
     SELECT * FROM (
         SELECT 
@@ -151,14 +160,24 @@ $query = "
           h.PHUONGTHUC_THANHTOAN,
           tt.VNPAY_TRANG_THAI, tt.VNPAY_MA_THAM_CHIEU, tt.VNPAY_UPDATED_AT,
           kh.HO_TEN AS TEN_KH,
-          dv.TEN_DV AS TEN_DV,
+          COALESCE(icSvc.item_names, dv.TEN_DV) AS TEN_DV,
           'schedule' AS KIND,
-          NULL AS RENTAL_SUMMARY
+          NULL AS RENTAL_SUMMARY,
+          COALESCE(ps.PAID_SUM,0) AS PAID_SUM
         FROM hoa_don h
         JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
         JOIN tai_khoan kh ON l.ID_TK = kh.ID_TK
         JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
+        LEFT JOIN (
+            SELECT bi.ID_LICHHEN,
+                   GROUP_CONCAT(dv2.TEN_DV ORDER BY bi.ID_ITEM SEPARATOR ', ') AS item_names
+            FROM BOOKING_ITEM bi
+            JOIN DICH_VU dv2 ON dv2.ID_DV = bi.REF_ID
+            WHERE bi.ITEM_TYPE = 'service'
+            GROUP BY bi.ID_LICHHEN
+        ) icSvc ON icSvc.ID_LICHHEN = l.ID_LICHHEN
         " . $latestVnpayJoin . "
+        " . $paidSumJoin . "
         $scheduleWhere
         UNION ALL
         SELECT 
@@ -168,7 +187,8 @@ $query = "
           kh.HO_TEN AS TEN_KH,
           CONCAT('Thuê trang phục (', COALESCE(icCnt.item_count,0), ' món)') AS TEN_DV,
           'rental' AS KIND,
-          icCnt.item_names AS RENTAL_SUMMARY
+          icCnt.item_names AS RENTAL_SUMMARY,
+          COALESCE(ps.PAID_SUM,0) AS PAID_SUM
         FROM hoa_don h
         JOIN don_thue_trang_phuc ttp ON h.ID_TTP = ttp.ID_TTP
         JOIN tai_khoan kh ON ttp.ID_TK = kh.ID_TK
@@ -180,6 +200,7 @@ $query = "
             GROUP BY ct.ID_TTP
         ) icCnt ON icCnt.ID_TTP = ttp.ID_TTP
         " . $latestVnpayJoin . "
+        " . $paidSumJoin . "
         $rentalWhere
     ) merged
     ORDER BY NGAY_GIO DESC
@@ -205,9 +226,25 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
 ?>
 <!--  -->
 
+<head>
+  <link rel="stylesheet" href="../../public/assets/css/invoice-notifications.css">
+</head>
 <body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen p-6">
   <div class="max-w-7xl mx-auto bg-white shadow-xl rounded-xl p-8">
     <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">Quản Lý Hóa Đơn</h1>
+    
+    <!-- Bulk Actions Toolbar -->
+    <div id="invoiceBulkToolbar" class="invoice-bulk-toolbar hidden mb-6">
+      <span class="invoice-bulk-count">Chọn <span id="selectedCount">0</span> hóa đơn</span>
+      <div class="invoice-bulk-actions">
+        <button type="button" onclick="bulkConfirmInvoices()" class="invoice-bulk-btn invoice-bulk-confirm">
+          ✓ Xác nhận thanh toán
+        </button>
+        <button type="button" onclick="clearInvoiceSelection()" class="invoice-bulk-btn invoice-bulk-clear">
+          ✕ Bỏ chọn
+        </button>
+      </div>
+    </div>
 
     <?php
     $resolvedPercent = $stats['total_invoices'] > 0 ? round(($stats['paid_invoices'] / $stats['total_invoices']) * 100) : 0;
@@ -289,13 +326,16 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
       <table class="min-w-full text-sm text-left bg-white border border-gray-200">
         <thead class="bg-indigo-600 text-white">
           <tr>
-            <th class="px-6 py-3">Mã hóa đơn</th>
-            <th class="px-6 py-3">Khách hàng</th>
-            <th class="px-6 py-3">Dịch vụ</th>
-            <th class="px-6 py-3">Ngày giờ</th>
-            <th class="px-6 py-3">Tổng tiền</th>
-            <th class="px-6 py-3">Trạng thái</th>
-            <th class="px-6 py-3 text-center">Hành động</th>
+            <th class="px-4 py-3 w-12">
+              <input type="checkbox" id="selectAllInvoices" onchange="toggleSelectAllInvoices()" class="w-4 h-4">
+            </th>
+            <th class="px-6 py-3 whitespace-nowrap">Mã hóa đơn</th>
+            <th class="px-6 py-3 whitespace-nowrap">Khách hàng</th>
+            <th class="px-6 py-3 whitespace-nowrap">Dịch vụ</th>
+            <th class="px-6 py-3 whitespace-nowrap">Ngày giờ</th>
+            <th class="px-6 py-3 whitespace-nowrap">Tổng tiền</th>
+            <th class="px-6 py-3 whitespace-nowrap">Trạng thái</th>
+            <th class="px-6 py-3 text-center whitespace-nowrap">Hành động</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-200">
@@ -304,13 +344,35 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
               <?php
               $isPaid = $row['TRANGTHAI_THANHTOAN'] === 'Đã thanh toán';
               $gatewayStatus = $row['VNPAY_TRANG_THAI'] ?? null;
+              $paidSum = (int)($row['PAID_SUM'] ?? 0);
               $isGatewayPending = !$isPaid && $gatewayStatus === 'pending';
+              $isRental = $row['KIND'] === 'rental';
+              $isPartial = !$isPaid && $paidSum > 0 && $isRental; // Chỉ đơn thuê mới hiển thị "Đã cọc"
               $rowClass = $isGatewayPending
                 ? 'bg-amber-50 border-l-4 border-amber-400 shadow-inner'
                 : '';
-              $methodLabel = $row['PHUONGTHUC_THANHTOAN'] ? strtoupper($row['PHUONGTHUC_THANHTOAN']) : 'Chưa ghi nhận';
+              
+              // Format phương thức thanh toán
+              $methodLabel = '';
+              if ($isPaid && $row['PHUONGTHUC_THANHTOAN']) {
+                $method = strtolower($row['PHUONGTHUC_THANHTOAN']);
+                if (strpos($method, 'vnpay') !== false) {
+                  $methodLabel = 'VNPay';
+                } elseif (strpos($method, 'chuyen') !== false || strpos($method, 'bank') !== false) {
+                  $methodLabel = 'Chuyển khoản ngân hàng';
+                } else {
+                  $methodLabel = ucfirst($method);
+                }
+              } elseif (!$isPaid) {
+                $methodLabel = ''; // Chưa thanh toán - không hiển thị
+              } else {
+                $methodLabel = 'Chưa ghi nhận';
+              }
               ?>
               <tr class="hover:shadow-lg hover:bg-indigo-50 transition duration-200 <?= $rowClass ?>">
+                <td class="px-4 py-4">
+                  <input type="checkbox" value="<?= $row['ID_HD'] ?>" class="invoice-checkbox w-4 h-4" onchange="updateInvoiceBulkToolbar()">
+                </td>
                 <td class="px-6 py-4 font-medium whitespace-nowrap">#<?= $row['ID_HD'] ?></td>
                 <td class="px-6 py-4 whitespace-nowrap"><?= htmlspecialchars($row['TEN_KH']) ?></td>
                 <td class="px-6 py-4 whitespace-nowrap">
@@ -326,10 +388,17 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
                   <?= number_format($row['TONG_TIEN'], 0, ',', '.') ?> VND
                 </td>
                 <td class="px-6 py-4">
-                  <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold <?= $isPaid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600' ?>">
-                    <?= $isPaid ? 'Đã thanh toán' : 'Chưa thanh toán' ?>
-                  </span>
-                  <div class="text-xs text-gray-500 mt-1">Phương thức: <?= htmlspecialchars($methodLabel) ?></div>
+                  <?php if ($isPaid): ?>
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">Đã thanh toán</span>
+                  <?php elseif ($isPartial): ?>
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">Đã cọc</span>
+                    <div class="text-[11px] text-gray-500 mt-0.5">Đã nhận: <?= number_format($paidSum, 0, ',', '.') ?> VND</div>
+                  <?php else: ?>
+                    <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-600">Chưa thanh toán</span>
+                  <?php endif; ?>
+                  <?php if ($methodLabel): ?>
+                    <div class="text-xs text-gray-500 mt-1">Phương thức: <?= htmlspecialchars($methodLabel) ?></div>
+                  <?php endif; ?>
                   <?php if ($gatewayStatus): ?>
                     <?php
                       $gatewayMap = [
@@ -350,10 +419,10 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
                     <?php endif; ?>
                   <?php endif; ?>
                 </td>
-                <td class="px-6 py-4 text-center">
-                  <a href="?page=hoa_don_chi_tiet&id_hd=<?= $row['ID_HD'] ?>"
-                    class="inline-flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded shadow transition whitespace-nowrap">
-                    <span>Chi tiết</span>
+                <td class="px-6 py-4 text-center whitespace-nowrap">
+                  <a href="./hoa_don_chi_tiet.php?id_hd=<?= $row['ID_HD'] ?>"
+                    class="inline-block invoice-action-btn invoice-action-btn-detail whitespace-nowrap">
+                    Chi tiết
                   </a>
                 </td>
               </tr>
@@ -371,6 +440,122 @@ function renderPagination($totalPages, $currentPage, $searchParams = [])
     </div>
     <?php renderPagination($totalPages, $page, $_GET); ?>
   </div>
+
+  <!-- AJAX Invoice Client -->
+  <script src="../../public/assets/js/invoice-client.js"></script>
+
+  <!-- Bulk Invoice Management Scripts -->
+  <script>
+  // Toggle Select All Checkboxes
+  function toggleSelectAllInvoices() {
+    const selectAllCheckbox = document.getElementById('selectAllInvoices');
+    const invoiceCheckboxes = document.querySelectorAll('.invoice-checkbox');
+    
+    invoiceCheckboxes.forEach(checkbox => {
+      checkbox.checked = selectAllCheckbox.checked;
+    });
+    
+    updateInvoiceBulkToolbar();
+  }
+
+  // Update Bulk Toolbar Visibility and Count
+  function updateInvoiceBulkToolbar() {
+    const invoiceCheckboxes = document.querySelectorAll('.invoice-checkbox');
+    const selectedCheckboxes = Array.from(invoiceCheckboxes).filter(cb => cb.checked);
+    const bulkToolbar = document.getElementById('invoiceBulkToolbar');
+    const selectedCount = document.getElementById('selectedCount');
+    const selectAllCheckbox = document.getElementById('selectAllInvoices');
+    
+    selectedCount.textContent = selectedCheckboxes.length;
+    
+    // Show/hide toolbar based on selection
+    if (selectedCheckboxes.length > 0) {
+      bulkToolbar.classList.remove('hidden');
+    } else {
+      bulkToolbar.classList.add('hidden');
+    }
+    
+    // Update "Select All" checkbox state
+    selectAllCheckbox.checked = selectedCheckboxes.length === invoiceCheckboxes.length && invoiceCheckboxes.length > 0;
+    selectAllCheckbox.indeterminate = selectedCheckboxes.length > 0 && selectedCheckboxes.length < invoiceCheckboxes.length;
+  }
+
+  // Bulk Confirm All Selected Invoices
+  async function bulkConfirmInvoices() {
+    const selectedCheckboxes = Array.from(document.querySelectorAll('.invoice-checkbox:checked'));
+    const selectedIds = selectedCheckboxes.map(cb => parseInt(cb.value));
+    
+    if (selectedIds.length === 0) {
+      alert('Vui lòng chọn ít nhất một hóa đơn');
+      return;
+    }
+    
+    const confirmAction = confirm(`Bạn có chắc chắn muốn xác nhận ${selectedIds.length} hóa đơn không?`);
+    if (!confirmAction) return;
+    
+    try {
+      const client = new InvoiceClient();
+      await client.bulkConfirm(selectedIds);
+      
+      // Clear selection and refresh
+      clearInvoiceSelection();
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      console.error('Lỗi khi xác nhận hóa đơn:', error);
+    }
+  }
+
+  // Clear Invoice Selection
+  function clearInvoiceSelection() {
+    document.querySelectorAll('.invoice-checkbox').forEach(cb => cb.checked = false);
+    document.getElementById('selectAllInvoices').checked = false;
+    document.getElementById('invoiceBulkToolbar').classList.add('hidden');
+    document.getElementById('selectedCount').textContent = '0';
+  }
+
+  // Confirm Single Invoice Payment via AJAX
+  async function confirmInvoicePayment(invoiceId) {
+    const confirmAction = confirm('Xác nhận thanh toán hóa đơn này?');
+    if (!confirmAction) return;
+    
+    try {
+      const client = new InvoiceClient();
+      await client.confirmPayment(invoiceId);
+      
+      // Uncheck the checkbox and refresh
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      console.error('Lỗi khi xác nhận thanh toán:', error);
+    }
+  }
+
+  // Refund Invoice Amount via AJAX
+  async function refundInvoiceAmount(invoiceId) {
+    const reason = prompt('Nhập lý do hoàn tiền:');
+    if (!reason) return;
+    
+    const amount = prompt('Nhập số tiền hoàn tiền (VND):');
+    if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
+      alert('Số tiền hoàn tiền không hợp lệ');
+      return;
+    }
+    
+    try {
+      const client = new InvoiceClient();
+      await client.refundInvoice(invoiceId, parseFloat(amount), reason);
+      
+      // Refresh after refund
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (error) {
+      console.error('Lỗi khi hoàn tiền:', error);
+    }
+  }
+
+  // Initialize bulk toolbar on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    updateInvoiceBulkToolbar();
+  });
+  </script>
 </body>
 
 <?php

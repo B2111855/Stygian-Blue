@@ -33,14 +33,37 @@ $page = isset($_GET['page_num']) ? max(1, (int)$_GET['page_num']) : 1;
 $offset = ($page - 1) * $limit;
 
 $filters = [
-    'ten_khach'  => trim($_GET['ten_khach'] ?? ''),
-    'ten_dv'     => trim($_GET['ten_dv'] ?? ''),
-    'ngay'       => trim($_GET['ngay'] ?? ''),
-    'trangthai'  => trim($_GET['trangthai'] ?? ''),
+  'ten_khach'  => trim($_GET['ten_khach'] ?? ''),
+  'ten_dv'     => trim($_GET['ten_dv'] ?? ''),
+  'ngay'       => trim($_GET['ngay'] ?? ''),
+  'trangthai'  => trim($_GET['trangthai'] ?? ''),
 ];
+
+// Check if BOOKING_ITEM table exists
+$bookingItemExists = false;
+$checkTable = $conn->query("SHOW TABLES LIKE 'BOOKING_ITEM'");
+if ($checkTable && $checkTable->num_rows > 0) {
+    $bookingItemExists = true;
+}
+
+$multiServiceJoin = "";
+if ($bookingItemExists) {
+    $multiServiceJoin = "
+      LEFT JOIN (
+        SELECT bi.ID_LICHHEN,
+             GROUP_CONCAT(dv.TEN_DV ORDER BY bi.ID_ITEM SEPARATOR ', ') AS SERVICE_LIST,
+             COUNT(DISTINCT bi.REF_ID) AS SERVICE_COUNT
+        FROM BOOKING_ITEM bi
+        JOIN DICH_VU dv ON dv.ID_DV = bi.REF_ID
+        WHERE bi.ITEM_TYPE = 'service'
+        GROUP BY bi.ID_LICHHEN
+      ) ms ON ms.ID_LICHHEN = lh.ID_LICHHEN
+    ";
+}
 
 function buildWhereClause(mysqli $conn, array $filters, $branchId)
 {
+    global $bookingItemExists;
     $conditions = [];
     // So sánh với INT thay vì STRING
     $conditions[] = "lh.ID_CHINHANH = " . (int)$branchId;
@@ -52,7 +75,11 @@ function buildWhereClause(mysqli $conn, array $filters, $branchId)
 
     if ($filters['ten_dv'] !== '') {
         $keyword = mysqli_real_escape_string($conn, $filters['ten_dv']);
-        $conditions[] = "dv.TEN_DV LIKE '%{$keyword}%'";
+        if ($bookingItemExists) {
+            $conditions[] = "COALESCE(ms.SERVICE_LIST, dv.TEN_DV) LIKE '%{$keyword}%'";
+        } else {
+            $conditions[] = "dv.TEN_DV LIKE '%{$keyword}%'";
+        }
     }
 
     if ($filters['ngay'] !== '') {
@@ -72,10 +99,12 @@ $whereClause = buildWhereClause($conn, $filters, $branchId);
 
 function countAppointments(mysqli $conn, string $whereClause)
 {
-    $query = "SELECT COUNT(*) AS total FROM lich_hen lh" .
-             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
-             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
-             " {$whereClause}";
+  global $multiServiceJoin;
+  $query = "SELECT COUNT(*) AS total FROM lich_hen lh" .
+       " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+       " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+       " {$multiServiceJoin}" .
+       " {$whereClause}";
 
     $result = $conn->query($query);
     if (!$result) {
@@ -90,13 +119,22 @@ function countAppointments(mysqli $conn, string $whereClause)
 
 function fetchAppointments(mysqli $conn, string $whereClause, int $offset, int $limit)
 {
-    $query = "SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.DIA_CHI_HEN, lh.TRANGTHAI, tk.HO_TEN, dv.TEN_DV" .
-             " FROM lich_hen lh" .
-             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
-             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
-             " {$whereClause}" .
-             " ORDER BY lh.THOI_GIAN_BAT_DAU DESC" .
-             " LIMIT {$offset}, {$limit}";
+  global $multiServiceJoin, $bookingItemExists;
+  
+  if ($bookingItemExists) {
+      $serviceDisplay = "COALESCE(ms.SERVICE_LIST, dv.TEN_DV) AS DISPLAY_SERVICE, COALESCE(ms.SERVICE_COUNT, 1) AS SERVICE_COUNT";
+  } else {
+      $serviceDisplay = "dv.TEN_DV AS DISPLAY_SERVICE, 1 AS SERVICE_COUNT";
+  }
+  
+  $query = "SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.DIA_CHI_HEN, lh.TRANGTHAI, lh.KHACH_XAC_NHAN, lh.EMAIL_XAC_NHAN_SENT, tk.HO_TEN, dv.TEN_DV, {$serviceDisplay}" .
+       " FROM lich_hen lh" .
+       " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+       " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+       " {$multiServiceJoin}" .
+       " {$whereClause}" .
+       " ORDER BY lh.THOI_GIAN_BAT_DAU DESC" .
+       " LIMIT {$offset}, {$limit}";
 
     $result = $conn->query($query);
     if (!$result) {
@@ -108,12 +146,14 @@ function fetchAppointments(mysqli $conn, string $whereClause, int $offset, int $
 
 function summarizeStatuses(mysqli $conn, string $whereClause)
 {
-    $query = "SELECT lh.TRANGTHAI, COUNT(*) AS total" .
-             " FROM lich_hen lh" .
-             " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
-             " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
-             " {$whereClause}" .
-             " GROUP BY lh.TRANGTHAI";
+  global $multiServiceJoin;
+  $query = "SELECT lh.TRANGTHAI, COUNT(*) AS total" .
+       " FROM lich_hen lh" .
+       " INNER JOIN tai_khoan tk ON lh.ID_TK = tk.ID_TK" .
+       " INNER JOIN dich_vu dv ON lh.ID_DV = dv.ID_DV" .
+       " {$multiServiceJoin}" .
+       " {$whereClause}" .
+       " GROUP BY lh.TRANGTHAI";
 
     $summary = [
         'Đang chờ'     => 0,
@@ -248,38 +288,78 @@ $statusSummary = summarizeStatuses($conn, $whereClause);
         <table class="min-w-full table-auto text-left text-sm">
           <thead>
             <tr class="bg-indigo-700 text-indigo-50">
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Mã lịch</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Dịch vụ</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Khách hàng</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Thời gian</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Địa điểm</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide">Trạng thái</th>
-              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide text-center">Chi tiết</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Mã lịch</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Dịch vụ</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Khách hàng</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Thời gian</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Trạng thái</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap">Khách xác nhận</th>
+              <th class="px-6 py-4 text-xs font-semibold uppercase tracking-wide whitespace-nowrap text-center">Chi tiết</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-100">
             <?php while ($row = $appointments->fetch_assoc()): ?>
               <tr class="transition-colors duration-150 hover:bg-indigo-50">
                 <td class="px-6 py-4 font-semibold text-indigo-700"><?= (int)($row['ID_LICHHEN'] ?? 0) ?></td>
-                <td class="px-6 py-4 text-gray-700"><?= htmlspecialchars($row['TEN_DV'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
-                <td class="px-6 py-4 text-gray-700"><?= htmlspecialchars($row['HO_TEN'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
-                <td class="px-6 py-4 text-gray-700"><?= formatDateTimeDisplay($row['THOI_GIAN_BAT_DAU'] ?? '') ?></td>
-                <td class="px-6 py-4 text-gray-700">
-                  <?php 
-                    $address = $row['DIA_CHI_HEN'] ?? '—';
-                    $displayAddress = mb_strlen($address) > 50 ? mb_substr($address, 0, 50) . '...' : $address;
+                <td class="px-6 py-4 text-gray-700 max-h-20 overflow-hidden">
+                  <?php
+                    $svcLabel = $row['DISPLAY_SERVICE'] ?? $row['TEN_DV'] ?? '—';
+                    $svcCount = (int)($row['SERVICE_COUNT'] ?? 1);
+                    if ($svcCount > 1):
+                        $svcParts = array_map('trim', explode(',', $svcLabel));
+                        $primarySvc = $svcParts[0] ?? $svcLabel;
+                        $extras = $svcCount - 1;
                   ?>
-                  <span title="<?= htmlspecialchars($address, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($displayAddress, ENT_QUOTES, 'UTF-8') ?></span>
+                    <span class="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700 font-medium text-sm truncate" title="<?= htmlspecialchars($primarySvc, ENT_QUOTES, 'UTF-8') ?>">
+                      <?= htmlspecialchars($primarySvc, ENT_QUOTES, 'UTF-8') ?>
+                    </span>
+                    <span class="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 text-xs ml-1">
+                      +<?= $extras ?>
+                    </span>
+                  <?php else: ?>
+                    <span class="truncate" title="<?= htmlspecialchars($svcLabel, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($svcLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                  <?php endif; ?>
                 </td>
-                <td class="px-6 py-4">
-                  <?php $status = $row['TRANGTHAI'] ?? ''; ?>
-                  <span class="inline-flex items-center whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold <?= statusBadgeClass($status) ?>">
-                    <?= htmlspecialchars($status ?: 'Không xác định', ENT_QUOTES, 'UTF-8') ?>
-                  </span>
+                <td class="px-6 py-4 text-gray-700 truncate" title="<?= htmlspecialchars($row['HO_TEN'] ?? '—', ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($row['HO_TEN'] ?? '—', ENT_QUOTES, 'UTF-8') ?></td>
+                <td class="px-6 py-4 text-gray-700"><?= formatDateTimeDisplay($row['THOI_GIAN_BAT_DAU'] ?? '') ?></td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                  <?php 
+                    $status = $row['TRANGTHAI'] ?? ''; 
+                    // Check if appointment is overdue
+                    $appointmentTime = strtotime($row['THOI_GIAN_BAT_DAU']);
+                    $isOverdue = $appointmentTime < time() && !in_array($status, ['Không đến', 'Đã hoàn thành', 'Đã hủy']);
+                  ?>
+                  <div class="flex flex-col gap-1">
+                    <span class="inline-block whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold <?= statusBadgeClass($status) ?>">
+                      <?= htmlspecialchars($status ?: 'Không xác định', ENT_QUOTES, 'UTF-8') ?>
+                    </span>
+                    <?php if ($isOverdue): ?>
+                      <span class="inline-block bg-red-100 text-red-800 px-2 py-0.5 text-xs font-bold rounded">Quá hạn</span>
+                    <?php endif; ?>
+                  </div>
+                </td>
+                <td class="px-6 py-4 text-center">
+                  <?php
+                    $confirmed = (int)($row['KHACH_XAC_NHAN'] ?? 0);
+                    $emailSent = (int)($row['EMAIL_XAC_NHAN_SENT'] ?? 0);
+                  ?>
+                  <?php if ($confirmed): ?>
+                    <span class="inline-block rounded-full bg-green-100 text-green-800 px-3 py-1 text-xs font-semibold whitespace-nowrap">
+                      Đã xác nhận
+                    </span>
+                  <?php elseif ($emailSent): ?>
+                    <span class="inline-block rounded-full bg-blue-100 text-blue-800 px-3 py-1 text-xs font-semibold whitespace-nowrap">
+                      Email gửi
+                    </span>
+                  <?php else: ?>
+                    <span class="inline-block rounded-full bg-gray-100 text-gray-800 px-3 py-1 text-xs font-semibold whitespace-nowrap">
+                      Chưa
+                    </span>
+                  <?php endif; ?>
                 </td>
                 <td class="px-6 py-4 text-center">
                   <a href="?page=appointment_detail&amp;ID_LICHHEN=<?= (int)($row['ID_LICHHEN'] ?? 0) ?>"
-                     class="text-sm font-medium text-indigo-600 transition hover:text-indigo-800">Xem</a>
+                     class="text-sm font-medium text-indigo-600 transition hover:text-indigo-800 whitespace-nowrap">Xem</a>
                 </td>
               </tr>
             <?php endwhile; ?>
@@ -301,3 +381,6 @@ $statusSummary = summarizeStatuses($conn, $whereClause);
     </nav>
   <?php endif; ?>
 </div>
+
+
+

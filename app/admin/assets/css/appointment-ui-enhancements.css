@@ -1,0 +1,163 @@
+/* Appointment Detail UI Enhancements */
+
+/* Success Message Animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fadeIn {
+    animation: fadeIn 0.4s ease-out;
+}
+
+/* Table Hover Effects */
+table tbody tr {
+    transition: all 0.2s ease;
+}
+
+table tbody tr:hover {
+    box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.3);
+}
+
+/* Card Enhancements */
+.border-l-4 {
+    border-left-width: 4px;
+}
+
+.shadow-sm {
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+/* Status Badge Pulse */
+@keyframes subtle-pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.9;
+    }
+}
+
+/* Typography Enhancements */
+h2.text-4xl {
+    letter-spacing: 0.025em;
+}
+
+/* Alert Box Improvements */
+.border-l-4.border-l-green-600 {
+    background-color: rgba(16, 185, 129, 0.05);
+    border-left-color: #10b981;
+}
+
+.border-l-4.border-l-red-600 {
+    background-color: rgba(239, 68, 68, 0.05);
+    border-left-color: #ef4444;
+}
+
+.border-l-4.border-l-yellow-600 {
+    background-color: rgba(217, 119, 6, 0.05);
+    border-left-color: #d97706;
+}
+
+.border-l-4.border-l-blue-500 {
+    background-color: rgba(59, 130, 246, 0.05);
+    border-left-color: #3b82f6;
+}
+
+.border-l-4.border-l-orange-600 {
+    background-color: rgba(234, 88, 12, 0.05);
+    border-left-color: #ea580c;
+}
+
+.border-l-4.border-l-gray-400 {
+    background-color: rgba(156, 163, 175, 0.05);
+    border-left-color: #9ca3af;
+}
+
+.border-l-4.border-l-indigo-600 {
+    background-color: rgba(79, 70, 229, 0.05);
+    border-left-color: #4f46e5;
+}
+
+/* Field Label Styling */
+label.text-xs.font-semibold.uppercase {
+    letter-spacing: 0.05em;
+    color: #6b7280;
+}
+
+/* Form Input Enhancements */
+input[type="text"],
+input[type="datetime-local"],
+textarea {
+    transition: all 0.2s ease;
+}
+
+input[type="text"]:focus,
+input[type="datetime-local"]:focus,
+textarea:focus {
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+/* Status Transition Flow */
+.space-y-6 {
+    margin-top: 1.5rem;
+}
+
+/* Customer Info Grid */
+dl.space-y-4 > div {
+    transition: background-color 0.2s ease;
+}
+
+dl.space-y-4 > div:hover {
+    background-color: rgba(79, 70, 229, 0.02);
+    padding: 0 -0.5rem;
+}
+
+/* Invoice Table Striping */
+table tbody tr:nth-child(even) {
+    background-color: rgba(249, 250, 251, 1);
+}
+
+table tbody tr:nth-child(odd) {
+    background-color: #ffffff;
+}
+
+/* Status Badge Typography */
+.uppercase.tracking-wide {
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+}
+
+/* Responsive Improvements */
+@media (max-width: 768px) {
+    .lg\:col-span-2 {
+        display: block;
+    }
+    
+    .lg\:grid-cols-3 {
+        display: grid;
+        grid-template-columns: 1fr;
+    }
+    
+    table {
+        font-size: 0.75rem;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .no-print {
+        display: none;
+    }
+    
+    .border-l-4 {
+        border-left: 4px solid #000;
+    }
+}

@@ -1,0 +1,18 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Set base to subdirectory to ensure rewrites work under /StygianBlue
+    RewriteBase /StygianBlue/
+    
+    # Allow direct access to specific API files
+    RewriteRule ^api/(branch-customers|invoices|appointments|service-packages)\.php$ - [L]
+
+    # Route RESTful service-packages paths (including sub-resources) to dedicated controller
+    RewriteRule ^api/service-packages(/.*)?$ api/service-packages.php [QSA,L]
+    
+    # Redirect all other /api/* requests to api.php
+    RewriteRule ^api/(.*)$ api.php [QSA,L]
+    
+    # Prevent direct access to directories and files
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+</IfModule>

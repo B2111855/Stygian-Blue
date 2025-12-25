@@ -103,6 +103,17 @@ if ($amount <= 0) {
 $config = VNPayConfig::fromEnvironment(array_merge($_ENV, $_SERVER));
 $service = new VNPayService($config);
 
+// Xác định base URL (ngrok hoặc localhost)
+$protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost:8080';
+$baseUrl = $protocol . '://' . $host;
+$projectPath = '/StygianBlue';
+
+// Override từ .env nếu có (cho ngrok)
+if (!empty($_ENV['VNPAY_BASE_URL'])) {
+    $baseUrl = rtrim($_ENV['VNPAY_BASE_URL'], '/');
+}
+
 $orderId = ($isRental ? 'COC_TTP' . $invoice['ID_TTP'] : 'HD' . $invoiceId) . '_' . date('YmdHis');
 $payload = [
     'orderId' => $orderId,
@@ -116,6 +127,9 @@ $payload = [
         'email' => $invoice['EMAIL'] ?? '',
         'mobile' => $invoice['SDT'] ?? '',
     ],
+    // Truyền URL động cho ngrok
+    'returnUrl' => $baseUrl . $projectPath . '/vnpay_php/vnpay_return.php',
+    'ipnUrl' => $baseUrl . $projectPath . '/vnpay_php/vnpay_ipn.php',
 ];
 
 $paymentUrl = $service->buildPaymentUrl($payload);

@@ -16,27 +16,38 @@ class PackageServiceRepository {
                     g.ID_GOI,
                     g.TEN_GOI,
                     g.MO_TA,
-                    g.GIA_GOI,
+                    COALESCE(v.TONG_GIA_GOI, 0) AS GIA_GOI,
                     g.TRANG_THAI,
                     g.HIEU_LUC_TU,
                     g.HIEU_LUC_DEN,
                     gct.SO_LUONG,
-                    gct.GHI_CHU
+                    NULL AS GHI_CHU
                 FROM goi_dich_vu g
                 INNER JOIN goi_dich_vu_chi_tiet gct ON g.ID_GOI = gct.ID_GOI
+                LEFT JOIN v_goi_dich_vu_tong_tien v ON v.ID_GOI = g.ID_GOI
                 WHERE gct.ID_DV = ?
                 ORDER BY g.TRANG_THAI DESC, g.ID_GOI DESC";
         
         $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            throw new \RuntimeException('Prepare failed: ' . $this->conn->error);
+        }
+
         $stmt->bind_param('i', $serviceId);
-        $stmt->execute();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \RuntimeException('Execute failed: ' . $this->conn->error);
+        }
         $result = $stmt->get_result();
         
         $packages = [];
-        while ($row = $result->fetch_assoc()) {
-            $packages[] = $row;
+        if ($result) {
+            while ($row = $result->fetch_assoc()) {
+                $packages[] = $row;
+            }
         }
         
+        $stmt->close();
         return $packages;
     }
     
@@ -53,11 +64,20 @@ class PackageServiceRepository {
                 AND (g.HIEU_LUC_DEN IS NULL OR g.HIEU_LUC_DEN >= NOW())";
         
         $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            throw new \RuntimeException('Prepare failed: ' . $this->conn->error);
+        }
+
         $stmt->bind_param('i', $serviceId);
-        $stmt->execute();
-        $result = $stmt->get_result()->fetch_assoc();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \RuntimeException('Execute failed: ' . $this->conn->error);
+        }
+        $result = $stmt->get_result();
+        $row = $result ? $result->fetch_assoc() : ['count' => 0];
+        $stmt->close();
         
-        return (int)$result['count'] > 0;
+        return (int)($row['count'] ?? 0) > 0;
     }
     
     /**
@@ -73,14 +93,23 @@ class PackageServiceRepository {
                 WHERE gct.ID_DV = ?";
         
         $stmt = $this->conn->prepare($sql);
+        if (!$stmt) {
+            throw new \RuntimeException('Prepare failed: ' . $this->conn->error);
+        }
+
         $stmt->bind_param('i', $serviceId);
-        $stmt->execute();
-        $result = $stmt->get_result()->fetch_assoc();
+        if (!$stmt->execute()) {
+            $stmt->close();
+            throw new \RuntimeException('Execute failed: ' . $this->conn->error);
+        }
+        $result = $stmt->get_result();
+        $row = $result ? $result->fetch_assoc() : [];
+        $stmt->close();
         
         return [
-            'total' => (int)($result['total_packages'] ?? 0),
-            'active' => (int)($result['active_packages'] ?? 0),
-            'inactive' => (int)($result['inactive_packages'] ?? 0)
+            'total' => (int)($row['total_packages'] ?? 0),
+            'active' => (int)($row['active_packages'] ?? 0),
+            'inactive' => (int)($row['inactive_packages'] ?? 0)
         ];
     }
 }

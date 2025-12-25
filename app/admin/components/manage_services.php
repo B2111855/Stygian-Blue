@@ -8,6 +8,7 @@ require_once __DIR__ . '/../../services/DeletionPolicyService.php';
 require_once __DIR__ . '/../../helpers/system_log.php';
 require_once __DIR__ . '/../../helpers/service_statistics.php';
 require_once __DIR__ . '/../../helpers/image_helper.php';
+require_once __DIR__ . '/../../helpers/assets.php';
 
 use App\Repositories\ServiceRepository;
 use App\Repositories\ServiceCategoryRepository;
@@ -23,6 +24,16 @@ $packageRepo = new PackageServiceRepository($conn);
 
 $categories = $categoryRepo->getAll();
 $allTags = $tagRepo->getAll();
+
+if (!function_exists('admin_image_url')) {
+    function admin_image_url(?string $path): string
+    {
+        if (!$path) return sb_asset_href('public/images/placeholders/service-placeholder.svg');
+        if (preg_match('~^https?://~i', $path)) return $path;
+        $normalized = ltrim(str_replace('\\', '/', $path), '/');
+        return sb_asset_href($normalized);
+    }
+}
 
 function service_url(array $params, array $overrides = []): string
 {
@@ -263,6 +274,130 @@ function handleUploadImage(string $field): ?string
     }
 }
 
+function saveSampleImages(mysqli $conn, int $serviceId, string $field = 'SAMPLE_IMAGES'): int
+{
+    if (!isset($_FILES[$field])) return 0;
+
+    // Normalize multiple files structure
+    $files = [];
+    if (is_array($_FILES[$field]['name'] ?? null)) {
+        $count = count($_FILES[$field]['name']);
+        for ($i = 0; $i < $count; $i++) {
+            if (($_FILES[$field]['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) continue;
+            $files[] = [
+                'name' => $_FILES[$field]['name'][$i] ?? '',
+                'type' => $_FILES[$field]['type'][$i] ?? '',
+                'tmp_name' => $_FILES[$field]['tmp_name'][$i] ?? '',
+                'error' => $_FILES[$field]['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+                'size' => $_FILES[$field]['size'][$i] ?? 0,
+            ];
+        }
+    } else {
+        if (($_FILES[$field]['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE) {
+            $files[] = $_FILES[$field];
+        }
+    }
+
+    if (empty($files)) return 0;
+
+    // Get next order
+    $order = 1;
+    $stmtOrder = $conn->prepare("SELECT COALESCE(MAX(THU_TU),0) AS max_order FROM dich_vu_hinh_anh WHERE ID_DV=?");
+    if ($stmtOrder && $stmtOrder->bind_param('i', $serviceId) && $stmtOrder->execute()) {
+        $res = $stmtOrder->get_result()->fetch_assoc();
+        $order = ((int)($res['max_order'] ?? 0)) + 1;
+        $stmtOrder->close();
+    }
+
+    $inserted = 0;
+    $stmt = $conn->prepare("INSERT INTO dich_vu_hinh_anh (ID_DV, URL, ALT_TEXT, THU_TU, IS_COVER, IS_ACTIVE, CREATED_AT, UPDATED_AT) VALUES (?, ?, ?, ?, 0, 1, NOW(), NOW())");
+    if (!$stmt) return 0;
+
+    foreach ($files as $file) {
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) continue;
+        try {
+            $upload = ImageHelper::uploadImage($file, 'public/images/dichvu', [
+                'max_width' => 1920,
+                'max_height' => 1920,
+                'create_thumb' => true,
+            ]);
+            if (!$upload || empty($upload['path'])) continue;
+
+            $url = $upload['path'];
+            $alt = pathinfo($file['name'] ?? '', PATHINFO_FILENAME);
+            $stmt->bind_param('issi', $serviceId, $url, $alt, $order);
+            if ($stmt->execute()) {
+                $inserted++;
+                $order++;
+            }
+        } catch (\Throwable $e) {
+            // swallow individual file errors to continue others
+            continue;
+        }
+    }
+
+    $stmt->close();
+    return $inserted;
+}
+
+function getLatestServicePrice(mysqli $conn, int $serviceId): ?int
+{
+    $stmt = $conn->prepare("SELECT DON_GIA FROM don_gia_dich_vu WHERE ID_DV = ? ORDER BY NGAY_GIO DESC LIMIT 1");
+    if (!$stmt) {
+        return null;
+    }
+
+    $stmt->bind_param('i', $serviceId);
+    if (!$stmt->execute()) {
+        $stmt->close();
+        return null;
+    }
+
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+
+    return $row ? (int)$row['DON_GIA'] : null;
+}
+
+function ensureThoiDiem(mysqli $conn, string $dateTime): bool
+{
+    // `don_gia_dich_vu.NGAY_GIO` has a FK to `thoi_diem.NGAY_GIO` so we need to upsert that row first
+    $stmt = $conn->prepare("INSERT IGNORE INTO thoi_diem (NGAY_GIO) VALUES (?)");
+    if (!$stmt) {
+        return false;
+    }
+
+    $stmt->bind_param('s', $dateTime);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    return $ok;
+}
+
+function saveServicePriceIfChanged(mysqli $conn, int $serviceId, int $newPrice): bool
+{
+    $currentPrice = getLatestServicePrice($conn, $serviceId);
+    if ($currentPrice !== null && $currentPrice === $newPrice) {
+        return true;
+    }
+
+    $now = date('Y-m-d H:i:s');
+
+    if (!ensureThoiDiem($conn, $now)) {
+        return false;
+    }
+
+    $stmt = $conn->prepare("INSERT INTO don_gia_dich_vu (ID_DV, NGAY_GIO, DON_GIA) VALUES (?, ?, ?)");
+    if (!$stmt) {
+        return false;
+    }
+    $stmt->bind_param('isi', $serviceId, $now, $newPrice);
+    $ok = $stmt->execute();
+    $stmt->close();
+
+    return $ok;
+}
+
 // Create
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_service'])) {
     $payload = [
@@ -270,26 +405,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_service'])) {
         'MOTA_DV'   => trim($_POST['MOTA_DV'] ?? ''),
         'THOI_GIAN' => (int)($_POST['THOI_GIAN'] ?? 0),
         'GIA'       => (int)($_POST['GIA'] ?? 0),
-        'ID_DANH_MUC' => isset($_POST['ID_DANH_MUC']) && $_POST['ID_DANH_MUC'] !== '' ? (int)$_POST['ID_DANH_MUC'] : null,
+        'ID_DANH_MUC' => (int)($_POST['ID_DANH_MUC'] ?? 0),
     ];
-    if ($payload['TEN_DV'] === '' || $payload['MOTA_DV'] === '' || $payload['THOI_GIAN'] <= 0 || $payload['GIA'] <= 0) {
+    if ((int)($_POST['ID_DANH_MUC'] ?? 0) === 0) {
+        $errorMessage = '❌ Bạn phải chọn danh mục cho dịch vụ!';
+    } else if ($payload['TEN_DV'] === '' || $payload['MOTA_DV'] === '' || $payload['THOI_GIAN'] <= 0 || $payload['GIA'] <= 0) {
         $errorMessage = 'Dữ liệu không hợp lệ.';
     } else {
         $img = handleUploadImage('IMAGE');
         try {
-            $new = $repo->create($payload, $img);
+            if ($img !== null) {
+                $payload['IMAGE'] = $img;
+            }
+            $newId = $repo->create($payload);
+            $new = $repo->findById($newId);
             
             // Set tags
             if (isset($_POST['tags']) && is_array($_POST['tags'])) {
                 $tagIds = array_map('intval', $_POST['tags']);
-                $tagRepo->setTagsForService($new['ID_DV'], $tagIds);
+                $tagRepo->setTagsForService($newId, $tagIds);
             }
             
             $successMessage = 'Dịch vụ đã được thêm thành công!';
-            record_system_log($conn, 'SERVICE_CREATE', 'service:' . $new['ID_DV'], null, [
-                'ID_DV' => $new['ID_DV'],
-                'TEN_DV' => $new['TEN_DV'],
-                'THOI_GIAN' => $new['THOI_GIAN'],
+            record_system_log($conn, 'SERVICE_CREATE', 'service:' . $newId, null, [
+                'ID_DV' => $newId,
+                'TEN_DV' => $new['TEN_DV'] ?? $payload['TEN_DV'],
+                'THOI_GIAN' => $new['THOI_GIAN'] ?? $payload['THOI_GIAN'],
                 'TRANG_THAI' => $new['TRANG_THAI'] ?? null
             ]);
         } catch (\Throwable $e) {
@@ -306,14 +447,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_service'])) {
         'MOTA_DV'   => trim($_POST['MOTA_DV'] ?? ''),
         'THOI_GIAN' => (int)($_POST['THOI_GIAN'] ?? 0),
         'GIA'       => (int)($_POST['GIA'] ?? 0),
-        'ID_DANH_MUC' => isset($_POST['ID_DANH_MUC']) && $_POST['ID_DANH_MUC'] !== '' ? (int)$_POST['ID_DANH_MUC'] : null,
+        'ID_DANH_MUC' => (int)($_POST['ID_DANH_MUC'] ?? 0),
     ];
     $img = handleUploadImage('IMAGE');
-    if ($payload['TEN_DV'] === '' || $payload['MOTA_DV'] === '' || $payload['THOI_GIAN'] <= 0) {
+    if ((int)($_POST['ID_DANH_MUC'] ?? 0) === 0) {
+        $errorMessage = '❌ Bạn phải chọn danh mục cho dịch vụ!';
+    } else if ($payload['TEN_DV'] === '' || $payload['MOTA_DV'] === '' || $payload['THOI_GIAN'] <= 0) {
         $errorMessage = 'Dữ liệu cập nhật không hợp lệ.';
     } else {
         $before = $repo->findById($payload['ID_DV']);
-        if ($repo->update($payload, $img)) {
+        $updateSucceeded = false;
+        try {
+            $conn->begin_transaction();
+            $sql = "UPDATE dich_vu SET TEN_DV=?, MOTA_DV=?, THOI_GIAN=?, ID_DANH_MUC=?, UPDATED_AT=NOW()";
+            $params = [
+                $payload['TEN_DV'],
+                $payload['MOTA_DV'],
+                $payload['THOI_GIAN'],
+                $payload['ID_DANH_MUC'],
+            ];
+            $types = 'ssii';
+            if ($img !== null) {
+                $sql .= ", IMAGE=?";
+                $params[] = $img;
+                $types .= 's';
+            }
+            $sql .= " WHERE ID_DV=?";
+            $params[] = $payload['ID_DV'];
+            $types .= 'i';
+            $stmt = $conn->prepare($sql);
+            if (!$stmt) {
+                throw new \RuntimeException('Không thể chuẩn bị truy vấn cập nhật dịch vụ.');
+            }
+            $stmt->bind_param($types, ...$params);
+            if (!$stmt->execute()) {
+                $stmt->close();
+                throw new \RuntimeException('Không thể thực thi truy vấn cập nhật dịch vụ.');
+            }
+            $stmt->close();
+
+            if ($payload['GIA'] > 0 && !saveServicePriceIfChanged($conn, $payload['ID_DV'], $payload['GIA'])) {
+                throw new \RuntimeException('Không thể cập nhật giá dịch vụ.');
+            }
+
+            // Save sample/gallery images if provided
+            saveSampleImages($conn, $payload['ID_DV'], 'SAMPLE_IMAGES');
+
+            $conn->commit();
+            $updateSucceeded = true;
+        } catch (\Throwable $e) {
+            $conn->rollback();
+            $errorMessage = 'Lỗi khi cập nhật dịch vụ: ' . $e->getMessage();
+        }
+
+        if ($updateSucceeded) {
             // Update tags
             if (isset($_POST['tags']) && is_array($_POST['tags'])) {
                 $tagIds = array_map('intval', $_POST['tags']);
@@ -325,8 +512,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_service'])) {
             $after = $repo->findById($payload['ID_DV']);
             $successMessage = 'Dịch vụ đã được cập nhật thành công!';
             record_system_log($conn, 'SERVICE_UPDATE', 'service:' . $payload['ID_DV'], $before, $after);
-        } else {
-            $errorMessage = 'Lỗi khi cập nhật dịch vụ.';
         }
     }
 }
@@ -359,12 +544,15 @@ if (isset($_GET['duplicate'])) {
                 }
             }
             
-            $new = $repo->create($payload, $newImagePath);
-            $successMessage = 'Dịch vứ đã được sao chép thành công! (ID: ' . $new['ID_DV'] . ')';
+            if ($newImagePath !== null) {
+                $payload['IMAGE'] = $newImagePath;
+            }
+            $newId = $repo->create($payload);
+            $successMessage = 'Dịch vứ đã được sao chép thành công! (ID: ' . $newId . ')';
             record_system_log($conn, 'SERVICE_DUPLICATE', 'service:' . $new['ID_DV'], null, [
                 'source_id' => $sourceId,
-                'new_id' => $new['ID_DV'],
-                'TEN_DV' => $new['TEN_DV']
+                'new_id' => $newId,
+                'TEN_DV' => $payload['TEN_DV']
             ]);
         } catch (\Throwable $e) {
             $errorMessage = 'Lỗi sao chép dịch vụ: ' . $e->getMessage();
@@ -476,6 +664,9 @@ $isEditing = isset($_GET['edit']);
 $editService = null;
 if ($isEditing) {
     $editService = $repo->findById((int)$_GET['edit']);
+    if ($editService) {
+        $editService['DON_GIA'] = getLatestServicePrice($conn, (int)$editService['ID_DV']);
+    }
 }
 
 // Handle success messages from redirects
@@ -669,9 +860,145 @@ if (isset($_GET['success'])) {
             width: 14px;
             height: 14px;
         }
+        .action-menu-btn {
+            background: linear-gradient(135deg, #f8fafc, #e0e7ff);
+            color: #4338ca;
+            border: 1px solid #c7d2fe;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+            transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+        }
+        .action-menu-btn:hover,
+        .action-menu-btn:focus-visible {
+            background: #e0e7ff;
+            color: #312e81;
+            box-shadow: 0 2px 6px rgba(67, 56, 202, 0.25);
+        }
+        .btn-soft {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4rem;
+            padding: 0.55rem 1.2rem;
+            border-radius: 999px;
+            font-weight: 600;
+            font-size: 0.92rem;
+            border: 1px solid transparent;
+            transition: background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+            box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+            cursor: pointer;
+        }
+        .btn-soft svg {
+            width: 16px;
+            height: 16px;
+        }
+        .btn-soft:focus-visible {
+            outline: 2px solid rgba(79, 70, 229, 0.3);
+            outline-offset: 2px;
+        }
+        .btn-soft--primary {
+            background: linear-gradient(145deg, #ede9fe, #c4b5fd);
+            color: #3b1d9a;
+            border-color: #ddd6fe;
+        }
+        .btn-soft--primary:hover,
+        .btn-soft--primary:focus-visible {
+            background: linear-gradient(145deg, #e0d4ff, #a78bfa);
+            color: #2f167a;
+            box-shadow: 0 10px 25px rgba(88, 28, 135, 0.25);
+        }
+        .btn-soft--teal {
+            background: linear-gradient(145deg, #ecfeff, #99f6e4);
+            color: #0f766e;
+            border-color: #ccfbf1;
+        }
+        .btn-soft--teal:hover,
+        .btn-soft--teal:focus-visible {
+            background: linear-gradient(145deg, #cffafe, #5eead4);
+            color: #0d5f59;
+            box-shadow: 0 10px 25px rgba(13, 148, 136, 0.25);
+        }
+        .btn-soft--blue {
+            background: linear-gradient(145deg, #eff6ff, #bfdbfe);
+            color: #1d4ed8;
+            border-color: #dbeafe;
+        }
+        .btn-soft--blue:hover,
+        .btn-soft--blue:focus-visible {
+            background: linear-gradient(145deg, #dbeafe, #93c5fd);
+            color: #1e3a8a;
+            box-shadow: 0 10px 25px rgba(37, 99, 235, 0.2);
+        }
+        .btn-soft--success {
+            background: linear-gradient(145deg, #ecfdf5, #a7f3d0);
+            color: #047857;
+            border-color: #d1fae5;
+        }
+        .btn-soft--success:hover,
+        .btn-soft--success:focus-visible {
+            background: linear-gradient(145deg, #bbf7d0, #6ee7b7);
+            color: #065f46;
+            box-shadow: 0 10px 25px rgba(16, 185, 129, 0.25);
+        }
+        .btn-soft--warning {
+            background: linear-gradient(145deg, #fffbeb, #fde68a);
+            color: #92400e;
+            border-color: #fef3c7;
+        }
+        .btn-soft--warning:hover,
+        .btn-soft--warning:focus-visible {
+            background: linear-gradient(145deg, #fde68a, #fcd34d);
+            color: #78350f;
+            box-shadow: 0 10px 25px rgba(251, 191, 36, 0.3);
+        }
+        .btn-soft--danger {
+            background: linear-gradient(145deg, #fef2f2, #fecaca);
+            color: #b91c1c;
+            border-color: #fee2e2;
+        }
+        .btn-soft--danger:hover,
+        .btn-soft--danger:focus-visible {
+            background: linear-gradient(145deg, #fecaca, #fca5a5);
+            color: #991b1b;
+            box-shadow: 0 10px 25px rgba(239, 68, 68, 0.25);
+        }
+        .btn-soft--muted {
+            background: linear-gradient(145deg, #f8fafc, #e2e8f0);
+            color: #475569;
+            border-color: #e2e8f0;
+        }
+        .btn-soft--muted:hover,
+        .btn-soft--muted:focus-visible {
+            background: linear-gradient(145deg, #e2e8f0, #cbd5f5);
+            color: #334155;
+            box-shadow: 0 10px 25px rgba(15, 23, 42, 0.12);
+        }
+        .btn-soft--ghost {
+            background: rgba(255, 255, 255, 0.7);
+            color: #475569;
+            border-color: rgba(148, 163, 184, 0.4);
+        }
+        .btn-soft--ghost:hover,
+        .btn-soft--ghost:focus-visible {
+            background: rgba(255, 255, 255, 0.95);
+            color: #1f2937;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
+        }
+        .btn-soft-sm {
+            padding: 0.35rem 0.85rem;
+            font-size: 0.8rem;
+            border-radius: 0.65rem;
+            box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+        }
+        .btn-soft[disabled],
+        .btn-soft.disabled,
+        .btn-soft:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
     </style>
     <div class="max-w-7xl mx-auto">
-        <iframe id="downloadFrame" name="downloadFrame" style="display:none;"></iframe>
+        <iframe id="downloadFrame" name="downloadFrame" style="display:none;" title="Khung tải xuống ẩn"></iframe>
         <h1 class="text-3xl font-bold text-indigo-700 mb-6 text-center">Quản lý dịch vụ</h1>
 
         <!-- Notification Container (Floating) -->
@@ -692,16 +1019,16 @@ if (isset($_GET['success'])) {
                     <span id="selectedCount">0</span> dịch vụ được chọn
                 </span>
                 <div class="flex gap-2">
-                    <button onclick="bulkAction('activate')" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm">
+                    <button type="button" onclick="bulkAction('activate')" class="btn-soft btn-soft-sm btn-soft--success">
                         Kích hoạt
                     </button>
-                    <button onclick="bulkAction('draft')" class="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm">
+                    <button type="button" onclick="bulkAction('draft')" class="btn-soft btn-soft-sm btn-soft--warning">
                         Chuyển Draft
                     </button>
-                    <button onclick="bulkAction('retire')" class="bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm">
+                    <button type="button" onclick="bulkAction('retire')" class="btn-soft btn-soft-sm btn-soft--danger">
                         Ngừng hoạt động
                     </button>
-                    <button onclick="clearSelection()" class="bg-gray-500 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm">
+                    <button type="button" onclick="clearSelection()" class="btn-soft btn-soft-sm btn-soft--muted">
                         Bỏ chọn
                     </button>
                 </div>
@@ -713,7 +1040,7 @@ if (isset($_GET['success'])) {
             <div class="bg-white p-6 rounded shadow mb-6">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="text-2xl font-bold text-indigo-700">Thống kê dịch vụ</h2>
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="text-sm text-gray-600 hover:text-gray-800">× Đóng</a>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft-sm btn-soft--ghost">× Đóng</a>
                 </div>
                 
                 <!-- Overall Stats Cards -->
@@ -752,7 +1079,7 @@ if (isset($_GET['success'])) {
                                         <?= $idx + 1 ?>
                                     </div>
                                     <?php if ($service['IMAGE']): ?>
-                                        <img src="/<?= htmlspecialchars($service['IMAGE']) ?>" class="w-10 h-10 object-cover rounded">
+                                        <img src="<?= htmlspecialchars(admin_image_url($service['IMAGE'])); ?>" class="w-10 h-10 object-cover rounded" alt="<?= htmlspecialchars($service['TEN_DV']) ?>">
                                     <?php endif; ?>
                                     <div class="flex-1">
                                         <div class="font-medium text-sm"><?= htmlspecialchars($service['TEN_DV']) ?></div>
@@ -782,7 +1109,7 @@ if (isset($_GET['success'])) {
                                         <?= $idx + 1 ?>
                                     </div>
                                     <?php if ($service['IMAGE']): ?>
-                                        <img src="/<?= htmlspecialchars($service['IMAGE']) ?>" class="w-10 h-10 object-cover rounded">
+                                        <img src="<?= htmlspecialchars(admin_image_url($service['IMAGE'])); ?>" class="w-10 h-10 object-cover rounded" alt="<?= htmlspecialchars($service['TEN_DV']) ?>">
                                     <?php endif; ?>
                                     <div class="flex-1">
                                         <div class="font-medium text-sm"><?= htmlspecialchars($service['TEN_DV']) ?></div>
@@ -821,33 +1148,33 @@ if (isset($_GET['success'])) {
 
         <!-- Thanh tìm kiếm và nút thêm -->
         <div class="flex flex-wrap justify-between items-center gap-2 mb-6">
-            <form method="GET" id="serviceFilterForm" class="flex flex-wrap items-center gap-2">
+            <form method="GET" id="serviceFilterForm" data-action="filter_services" class="flex flex-wrap items-center gap-2" aria-label="Bộ lọc dịch vụ">
                 <input type="hidden" name="page" value="services">
-                <input type="text" name="search" placeholder="🔍 Tìm theo tên hoặc mô tả" value="<?= htmlspecialchars($search) ?>" class="p-2 border rounded w-64 shadow-sm">
-                <select name="status" class="p-2 border rounded">
+                <input type="text" name="search" placeholder="🔍 Tìm theo tên hoặc mô tả" value="<?= htmlspecialchars($search) ?>" data-action="search" class="p-2 border rounded w-64 shadow-sm" aria-label="Tìm kiếm dịch vụ">
+                <select name="status" class="p-2 border rounded" aria-label="Lọc theo trạng thái">
                     <option value="all" <?= $statusFilter === 'all' ? 'selected' : '' ?>>Tất cả trạng thái</option>
                     <option value="active" <?= $statusFilter === 'active' ? 'selected' : '' ?>>Hoạt động</option>
                     <option value="draft" <?= $statusFilter === 'draft' ? 'selected' : '' ?>>Nháp</option>
                     <option value="retired" <?= $statusFilter === 'retired' ? 'selected' : '' ?>>Ngừng</option>
                 </select>
-                <input type="number" name="min_price" placeholder="Giá từ" value="<?= $minPrice !== null ? $minPrice : '' ?>" class="p-2 border rounded w-24">
-                <input type="number" name="max_price" placeholder="Giá đến" value="<?= $maxPrice !== null ? $maxPrice : '' ?>" class="p-2 border rounded w-24">
-                <select name="category" class="p-2 border rounded">
+                <input type="number" name="min_price" placeholder="Giá từ" value="<?= $minPrice !== null ? $minPrice : '' ?>" class="p-2 border rounded w-24" aria-label="Giá tối thiểu">
+                <input type="number" name="max_price" placeholder="Giá đến" value="<?= $maxPrice !== null ? $maxPrice : '' ?>" class="p-2 border rounded w-24" aria-label="Giá tối đa">
+                <select name="category" class="p-2 border rounded" aria-label="Lọc theo danh mục">
                     <option value="">Tất cả danh mục</option>
                     <?php foreach ($categories as $cat): ?>
                         <option value="<?= $cat['ID_DANH_MUC'] ?>" <?= $categoryFilter !== null && $categoryFilter === (int)$cat['ID_DANH_MUC'] ? 'selected' : '' ?>><?= htmlspecialchars($cat['TEN_DANH_MUC']) ?></option>
                     <?php endforeach; ?>
                 </select>
-                <select name="tag" class="p-2 border rounded">
+                <select name="tag" class="p-2 border rounded" aria-label="Lọc theo thẻ">
                     <option value="">Tất cả thẻ</option>
                     <?php foreach ($allTags as $tag): ?>
                         <option value="<?= $tag['ID_THE'] ?>" <?= $tagFilter !== null && $tagFilter === (int)$tag['ID_THE'] ? 'selected' : '' ?>><?= htmlspecialchars($tag['TEN_THE']) ?></option>
                     <?php endforeach; ?>
                 </select>
-                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded shadow">Lọc</button>
+                <button type="submit" class="btn-soft btn-soft--primary">Lọc</button>
             </form>
             <div class="flex gap-2 items-center">
-                <select onchange="if(this.value){window.location.href=this.value;}" class="p-2 border rounded text-sm">
+                <select onchange="if(this.value){window.location.href=this.value;}" class="p-2 border rounded text-sm" aria-label="Sắp xếp danh sách dịch vụ">
                     <option value="" <?= $sortBy === 'ID_DV' && $sortOrder === 'DESC' ? 'selected' : '' ?> disabled>Sắp xếp</option>
                     <option value="<?= htmlspecialchars(service_url($serviceQueryParams, ['sort' => 'TEN_DV', 'order' => 'ASC', 'p' => null]), ENT_QUOTES) ?>" <?= $sortBy === 'TEN_DV' && $sortOrder === 'ASC' ? 'selected' : '' ?>>Tên A-Z</option>
                     <option value="<?= htmlspecialchars(service_url($serviceQueryParams, ['sort' => 'TEN_DV', 'order' => 'DESC', 'p' => null]), ENT_QUOTES) ?>" <?= $sortBy === 'TEN_DV' && $sortOrder === 'DESC' ? 'selected' : '' ?>>Tên Z-A</option>
@@ -858,34 +1185,34 @@ if (isset($_GET['success'])) {
                     <option value="<?= htmlspecialchars(service_url($serviceQueryParams, ['sort' => 'ID_DV', 'order' => 'DESC', 'p' => null]), ENT_QUOTES) ?>" <?= $sortBy === 'ID_DV' && $sortOrder === 'DESC' ? 'selected' : '' ?>>Mới nhất</option>
                     <option value="<?= htmlspecialchars(service_url($serviceQueryParams, ['sort' => 'ID_DV', 'order' => 'ASC', 'p' => null]), ENT_QUOTES) ?>" <?= $sortBy === 'ID_DV' && $sortOrder === 'ASC' ? 'selected' : '' ?>>Cũ nhất</option>
                 </select>
-                <div class="flex gap-1 border rounded overflow-hidden">
+                <div class="flex gap-1">
                     <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['view' => 'table', 'p' => null]), ENT_QUOTES) ?>" 
-                       class="px-3 py-2 <?= $viewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100' ?>" title="Table View">
+                       class="btn-soft btn-soft-sm <?= $viewMode === 'table' ? 'btn-soft--primary' : 'btn-soft--ghost text-gray-600' ?>" title="Table View">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                         </svg>
                     </a>
                     <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['view' => 'grid', 'p' => null]), ENT_QUOTES) ?>" 
-                       class="px-3 py-2 <?= $viewMode === 'grid' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100' ?>" title="Grid View">
+                       class="btn-soft btn-soft-sm <?= $viewMode === 'grid' ? 'btn-soft--primary' : 'btn-soft--ghost text-gray-600' ?>" title="Grid View">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
                         </svg>
                     </a>
                 </div>
-                <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['stats' => 1]), ENT_QUOTES) ?>" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded shadow flex items-center gap-2">
+                <a href="?page=trending_report" class="btn-soft btn-soft--primary">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
                     </svg>
                     Thống kê
                 </a>
-                <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['manage_categories' => 1]), ENT_QUOTES) ?>" class="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded shadow flex items-center gap-2">
+                <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['manage_categories' => 1]), ENT_QUOTES) ?>" class="btn-soft btn-soft--teal">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
                     </svg>
                     Danh mục & Thẻ
                 </a>
                 <div class="relative group">
-                    <button class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded shadow flex items-center gap-2">
+                    <button class="btn-soft btn-soft--blue">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
@@ -912,13 +1239,13 @@ if (isset($_GET['success'])) {
                         </a>
                     </div>
                 </div>
-                <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['add' => 'true']), ENT_QUOTES) ?>" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded shadow">Thêm dịch vụ</a>
+                <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['add' => 'true']), ENT_QUOTES) ?>" class="btn-soft btn-soft--success">Thêm dịch vụ</a>
             </div>
         </div>
 
         <!-- Form Thêm Dịch vụ -->
         <?php if (isset($_GET['add']) && $_GET['add'] === 'true' && !$isEditing) : ?>
-            <form method="POST" enctype="multipart/form-data" class="bg-white p-6 rounded shadow mb-6">
+            <form method="POST" enctype="multipart/form-data" data-action="add_service" class="bg-white p-6 rounded shadow mb-6">
                 <h2 class="text-xl font-semibold text-indigo-600 mb-4">Thêm dịch vụ</h2>
                 
                 <!-- Section: Thông tin cơ bản -->
@@ -956,8 +1283,11 @@ if (isset($_GET['success'])) {
                     </h3>
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Danh mục</label>
-                            <select name="ID_DANH_MUC" class="p-2 border rounded w-full">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Danh mục
+                                <span class="text-red-500">*</span>
+                            </label>
+                            <select name="ID_DANH_MUC" class="p-2 border rounded w-full" required>
                                 <option value="">-- Chọn danh mục --</option>
                                 <?php foreach ($categories as $cat): ?>
                                     <option value="<?= $cat['ID_DANH_MUC'] ?>"><?= htmlspecialchars($cat['TEN_DANH_MUC']) ?></option>
@@ -1020,8 +1350,8 @@ if (isset($_GET['success'])) {
                 </div>
                 
                 <div class="mt-4 flex justify-end gap-2">
-                    <button type="submit" name="add_service" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded">Lưu</button>
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">Hủy</a>
+                    <button type="submit" name="add_service" class="btn-soft btn-soft--success">Lưu</button>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Hủy</a>
                 </div>
             </form>
         <?php endif; ?>
@@ -1030,7 +1360,7 @@ if (isset($_GET['success'])) {
         <?php if ($isEditing && $editService) : ?>
             <?php $currentTags = $tagRepo->getTagsForService($editService['ID_DV']); ?>
             <?php $currentTagIds = array_column($currentTags, 'ID_THE'); ?>
-            <form method="POST" enctype="multipart/form-data" class="bg-white p-6 rounded shadow mb-6">
+            <form method="POST" enctype="multipart/form-data" data-action="edit_service" class="bg-white p-6 rounded shadow mb-6">
                 <h2 class="text-xl font-semibold text-indigo-600 mb-4">Cập nhật dịch vụ #<?= $editService['ID_DV']; ?></h2>
                 <input type="hidden" name="ID_DV" value="<?= $editService['ID_DV']; ?>">
                 
@@ -1069,8 +1399,11 @@ if (isset($_GET['success'])) {
                     </h3>
                     <div class="space-y-4">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Danh mục</label>
-                            <select name="ID_DANH_MUC" class="p-2 border rounded w-full">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                Danh mục
+                                <span class="text-red-500">*</span>
+                            </label>
+                            <select name="ID_DANH_MUC" class="p-2 border rounded w-full" required>
                                 <option value="">-- Chọn danh mục --</option>
                                 <?php foreach ($categories as $cat): ?>
                                     <option value="<?= $cat['ID_DANH_MUC'] ?>" <?= isset($editService['ID_DANH_MUC']) && $editService['ID_DANH_MUC'] == $cat['ID_DANH_MUC'] ? 'selected' : '' ?>>
@@ -1106,7 +1439,7 @@ if (isset($_GET['success'])) {
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Giá dịch vụ (VNĐ) <span class="text-red-500">*</span></label>
-                            <input type="number" name="GIA" value="<?= $editService['DON_GIA'] ?? ''; ?>" class="p-2 border rounded w-full" required min="0">
+                            <input type="number" name="GIA" value="<?= htmlspecialchars($editService['DON_GIA'] ?? '', ENT_QUOTES); ?>" class="p-2 border rounded w-full" required min="0">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Thời lượng (phút) <span class="text-red-500">*</span></label>
@@ -1129,11 +1462,12 @@ if (isset($_GET['success'])) {
                         <?php if ($editService['IMAGE']): ?>
                             <div class="mt-3">
                                 <p class="text-sm text-gray-600 mb-2">Ảnh hiện tại:</p>
-                                <img src="/<?= htmlspecialchars($editService['IMAGE']); ?>" class="w-48 h-48 object-cover rounded border shadow" />
+                                <?php $editImgUrl = admin_image_url($editService['IMAGE']); ?>
+                                <img src="<?= htmlspecialchars($editImgUrl); ?>" class="w-48 h-48 object-cover rounded border shadow" alt="<?= htmlspecialchars($editService['TEN_DV']); ?>" />
                             </div>
                         <?php else: ?>
                             <div class="mt-3">
-                                <img src="/public/images/placeholders/service-placeholder.svg" class="w-48 h-48 object-cover rounded border shadow bg-gray-100" />
+                                <img src="<?= htmlspecialchars(sb_asset_href('public/images/placeholders/service-placeholder.svg')); ?>" class="w-48 h-48 object-cover rounded border shadow bg-gray-100" alt="Không có ảnh dịch vụ" />
                             </div>
                         <?php endif; ?>
                         <div id="imagePreviewEdit" class="mt-3 hidden">
@@ -1143,11 +1477,16 @@ if (isset($_GET['success'])) {
                         </div>
                         <p class="text-xs text-gray-500 mt-1">Chấp nhận: JPG, PNG, WEBP, GIF. Để trống nếu không thay đổi</p>
                     </div>
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Ảnh mẫu (thư viện hiển thị trang chi tiết)</label>
+                        <input type="file" name="SAMPLE_IMAGES[]" accept="image/jpeg,image/png,image/webp,image/gif" class="p-2 border rounded w-full" multiple>
+                        <p class="text-xs text-gray-500 mt-1">Có thể chọn nhiều ảnh; ảnh này sẽ xuất hiện trong thư viện mẫu của trang chi tiết.</p>
+                    </div>
                 </div>
                 
                 <div class="mt-6 flex justify-end gap-2 pt-4 border-t">
-                    <button type="submit" name="edit_service" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded shadow">💾 Lưu thay đổi</button>
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded shadow">Hủy</a>
+                    <button type="submit" name="edit_service" class="btn-soft btn-soft--primary">Lưu thay đổi</button>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Hủy</a>
                 </div>
             </form>
         <?php endif; ?>
@@ -1159,7 +1498,7 @@ if (isset($_GET['success'])) {
                 <thead class="bg-indigo-100 text-indigo-700 sticky top-0 z-10 shadow-sm">
                     <tr>
                         <th class="p-2 w-checkbox text-center">
-                            <input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer" title="Chọn tất cả">
+                            <input type="checkbox" id="selectAll" class="w-4 h-4 cursor-pointer" title="Chọn tất cả" aria-label="Chọn tất cả dịch vụ">
                         </th>
                         <th class="p-2 w-id text-center">ID</th>
                         <th class="p-2 w-img text-center">Ảnh</th>
@@ -1182,15 +1521,16 @@ if (isset($_GET['success'])) {
                         $st = $service['TRANG_THAI'] ?? 'active';
                         $rowBgClass = $st === 'active' ? 'bg-green-50/30 hover:bg-green-50/50' : ($st === 'draft' ? 'bg-yellow-50/30 hover:bg-yellow-50/50' : 'bg-gray-50/30 hover:bg-gray-50/50');
                         $serviceTags = $tagRepo->getTagsForService($service['ID_DV']);
+                        $statusVariant = $st === 'active' ? 'btn-soft--success' : ($st === 'draft' ? 'btn-soft--warning' : 'btn-soft--muted');
                         ?>
                         <tr class="<?= $rowBgClass ?>" data-id-dv="<?= $service['ID_DV']; ?>" data-thoi-gian="<?= (int)$service['THOI_GIAN']; ?>" data-gia="<?= isset($service['DON_GIA']) ? (int)$service['DON_GIA'] : 0; ?>">
                             <td class="p-2 text-center">
-                                <input type="checkbox" class="service-checkbox w-4 h-4 cursor-pointer" value="<?= $service['ID_DV']; ?>">
+                                <input type="checkbox" class="service-checkbox w-4 h-4 cursor-pointer" value="<?= $service['ID_DV']; ?>" aria-label="Chọn dịch vụ <?= htmlspecialchars($service['TEN_DV']); ?>">
                             </td>
                             <td class="p-2 font-semibold text-gray-600 text-center"><?= $service['ID_DV']; ?></td>
                             <td class="p-2 text-center">
-                                <?php $imgSrc = $service['IMAGE'] ? '/' . htmlspecialchars($service['IMAGE']) : '/public/images/placeholders/service-placeholder.svg'; ?>
-                                <img src="<?= $imgSrc ?>" alt="Service Image" class="w-12 h-12 object-cover rounded shadow-sm mx-auto <?= !$service['IMAGE'] ? 'bg-gray-100' : '' ?>" title="<?= htmlspecialchars($service['TEN_DV']) ?>">
+                                <?php $imgSrc = $service['IMAGE'] ? admin_image_url($service['IMAGE']) : sb_asset_href('public/images/placeholders/service-placeholder.svg'); ?>
+                                <img src="<?= htmlspecialchars($imgSrc) ?>" alt="<?= htmlspecialchars($service['TEN_DV']); ?>" class="w-12 h-12 object-cover rounded shadow-sm mx-auto <?= !$service['IMAGE'] ? 'bg-gray-100' : '' ?>" title="<?= htmlspecialchars($service['TEN_DV']) ?>">
                             </td>
                             <td class="p-2 text-left">
                                 <div class="font-medium text-gray-800 truncate" style="max-width: 250px;" title="<?= htmlspecialchars($service['TEN_DV']); ?>"><?= htmlspecialchars($service['TEN_DV']); ?></div>
@@ -1240,12 +1580,12 @@ if (isset($_GET['success'])) {
                             <td class="p-2 font-semibold text-green-600 text-right text-xs"><?= isset($service['DON_GIA']) ? number_format($service['DON_GIA'], 0, ',', '.') : '—' ?></td>
                             <td class="p-2 text-center">
                                 <div class="relative inline-block">
-                                    <button type="button" class="status-menu-btn px-2 py-1 rounded text-xs font-semibold cursor-pointer <?php echo $st === 'active' ? 'bg-green-100 text-green-800' : ($st === 'draft' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-300 text-gray-700'); ?>" data-service-id="<?= $service['ID_DV'] ?>">
+                                    <button type="button" class="status-menu-btn btn-soft btn-soft-sm <?= $statusVariant ?>" data-service-id="<?= $service['ID_DV'] ?>">
                                         <?= htmlspecialchars($st); ?> ▼
                                     </button>
                                     <div class="status-dropdown hidden absolute left-0 mt-1 bg-white border rounded shadow-lg z-50 min-w-[120px]" data-service-id="<?= $service['ID_DV'] ?>">
                                         <?php if ($st !== 'active'): ?>
-                                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['status_modal' => $service['ID_DV'], 'target' => 'active']), ENT_QUOTES) ?>" class="block px-3 py-2 text-xs hover:bg-green-50 text-green-700">✓ Kích hoạt</a>
+                                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['change_status' => $service['ID_DV'], 'new_status' => 'active']), ENT_QUOTES) ?>" class="block px-3 py-2 text-xs hover:bg-green-50 text-green-700">✓ Kích hoạt</a>
                                         <?php endif; ?>
                                         <?php if ($st !== 'draft'): ?>
                                             <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['status_modal' => $service['ID_DV'], 'target' => 'draft']), ENT_QUOTES) ?>" class="block px-3 py-2 text-xs hover:bg-yellow-50 text-yellow-700">✎ Draft</a>
@@ -1258,31 +1598,31 @@ if (isset($_GET['success'])) {
                             </td>
                             <td class="p-2 text-center">
                                 <div class="relative inline-block">
-                                    <button type="button" class="action-menu-btn action-btn-compact bg-gray-600 hover:bg-gray-700 text-white rounded shadow" data-service-id="<?= $service['ID_DV']; ?>" title="Menu">
+                                    <button type="button" class="action-menu-btn action-btn-compact rounded" data-service-id="<?= $service['ID_DV']; ?>" title="Menu" aria-label="Mở menu thao tác cho dịch vụ <?= htmlspecialchars($service['TEN_DV']); ?>">
                                         <svg fill="currentColor" viewBox="0 0 20 20">
                                             <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
                                         </svg>
                                     </button>
                                     <div class="action-dropdown hidden absolute right-0 mt-1 bg-white border rounded shadow-lg z-50 min-w-[160px]" data-service-id="<?= $service['ID_DV']; ?>">
-                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['edit' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-yellow-50 text-yellow-700 flex items-center gap-2">
+                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['edit' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-yellow-50 text-yellow-700 flex items-center gap-2 whitespace-nowrap">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
                                             </svg>
                                             Chỉnh sửa
                                         </a>
-                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['history' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-indigo-50 text-indigo-700 flex items-center gap-2 border-t">
+                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['history' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-indigo-50 text-indigo-700 flex items-center gap-2 border-t whitespace-nowrap">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                             </svg>
                                             Lịch sử giá
                                         </a>
-                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['packages' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-purple-50 text-purple-700 flex items-center gap-2 border-t">
+                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['packages' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-purple-50 text-purple-700 flex items-center gap-2 border-t whitespace-nowrap">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"></path>
                                             </svg>
                                             Xem gói
                                         </a>
-                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['duplicate' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-blue-50 text-blue-700 flex items-center gap-2 border-t" onclick="return confirm('Sao chép dịch vụ này?');">
+                                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['duplicate' => $service['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 text-sm hover:bg-blue-50 text-blue-700 flex items-center gap-2 border-t whitespace-nowrap" onclick="return confirm('Sao chép dịch vụ này?');">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                                             </svg>
@@ -1306,12 +1646,12 @@ if (isset($_GET['success'])) {
                 $du_phut = $phut % 60;
                 $thoi_gian_dang_dep = "$gio giờ $du_phut phút";
                 $st = $service['TRANG_THAI'] ?? 'active';
-                $imgSrc = $service['IMAGE'] ? '/' . htmlspecialchars($service['IMAGE']) : '/public/images/placeholders/service-placeholder.svg';
+                $imgSrc = $service['IMAGE'] ? admin_image_url($service['IMAGE']) : sb_asset_href('public/images/placeholders/service-placeholder.svg');
                 $badgeClass = $st === 'active' ? 'bg-green-100 text-green-800' : ($st === 'draft' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-300 text-gray-700');
                 ?>
                 <div class="bg-white rounded-lg shadow hover:shadow-lg transition-shadow overflow-hidden">
                     <div class="relative">
-                        <input type="checkbox" class="service-checkbox absolute top-2 left-2 w-5 h-5 cursor-pointer z-10 bg-white rounded" value="<?= $service['ID_DV']; ?>">
+                        <input type="checkbox" class="service-checkbox absolute top-2 left-2 w-5 h-5 cursor-pointer z-10 bg-white rounded" value="<?= $service['ID_DV']; ?>" aria-label="Chọn dịch vụ <?= htmlspecialchars($service['TEN_DV']); ?>">
                         <img src="<?= $imgSrc ?>" alt="<?= htmlspecialchars($service['TEN_DV']) ?>" class="w-full h-48 object-cover <?= !$service['IMAGE'] ? 'bg-gray-100' : '' ?>">
                         <span class="absolute top-2 right-2 px-2 py-1 rounded text-xs font-semibold <?= $badgeClass ?>">
                             <?= $st === 'active' ? 'Hoạt động' : ($st === 'retired' ? 'Ngừng' : ($st === 'draft' ? 'Nháp' : htmlspecialchars($st))); ?>
@@ -1339,10 +1679,10 @@ if (isset($_GET['success'])) {
                             </div>
                         </div>
                         <div class="flex gap-2">
-                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['edit' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-2 rounded text-xs text-center">Sửa</a>
-                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['packages' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 bg-purple-500 hover:bg-purple-600 text-white px-3 py-2 rounded text-xs text-center">Gói</a>
-                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['duplicate' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded text-xs text-center" onclick="return confirm('Sao chép?');">Sao chép</a>
-                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['status_modal' => $service['ID_DV'], 'target' => 'retired']), ENT_QUOTES) ?>" class="flex-1 bg-red-500 hover:bg-red-600 text-white px-3 py-2 rounded text-xs text-center">Ngừng</a>
+                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['edit' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 btn-soft btn-soft-sm btn-soft--warning justify-center">Sửa</a>
+                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['packages' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 btn-soft btn-soft-sm btn-soft--primary justify-center">Gói</a>
+                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['duplicate' => $service['ID_DV']]), ENT_QUOTES) ?>" class="flex-1 btn-soft btn-soft-sm btn-soft--blue justify-center" onclick="return confirm('Sao chép?');">Sao chép</a>
+                            <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['status_modal' => $service['ID_DV'], 'target' => 'retired']), ENT_QUOTES) ?>" class="flex-1 btn-soft btn-soft-sm btn-soft--danger justify-center">Ngừng</a>
                         </div>
                     </div>
                 </div>
@@ -1363,7 +1703,7 @@ if (isset($_GET['success'])) {
             <div id="servicesPagination" class="mt-6 flex justify-center gap-2">
                 <?php for ($i = 1; $i <= $totalPages; $i++): ?>
                     <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['p' => $i > 1 ? $i : null]), ENT_QUOTES) ?>"
-                        class="px-3 py-1 rounded border <?= ($i == $page) ? 'bg-indigo-600 text-white' : 'bg-white hover:bg-gray-100' ?>">
+                        class="btn-soft btn-soft-sm <?= ($i == $page) ? 'btn-soft--primary' : 'btn-soft--ghost text-gray-600' ?>">
                         <?= $i ?>
                     </a>
                 <?php endfor; ?>
@@ -1396,7 +1736,7 @@ if (isset($_GET['success'])) {
                     </tbody>
                 </table>
                 <div class="flex justify-end gap-2">
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white">Đóng</a>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Đóng</a>
                 </div>
             </div>
         </div>
@@ -1415,11 +1755,11 @@ if (isset($_GET['success'])) {
                     endif; ?>
                 </ul>
                 <div class="flex justify-end gap-2">
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white">Hủy</a>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Hủy</a>
                     <?php if ($policy->canRetire((int)$confirmRetireService['ID_DV'])): ?>
-                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['delete' => $confirmRetireService['ID_DV']]), ENT_QUOTES) ?>" class="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-white" onclick="return confirm('Xác nhận ngừng dịch vụ?');">Xác nhận ngừng</a>
+                        <a href="<?= htmlspecialchars(service_url($serviceQueryParams, ['delete' => $confirmRetireService['ID_DV']]), ENT_QUOTES) ?>" class="btn-soft btn-soft--danger" onclick="return confirm('Xác nhận ngừng dịch vụ?');">Xác nhận ngừng</a>
                     <?php else: ?>
-                        <button disabled class="px-4 py-2 rounded bg-red-300 text-white cursor-not-allowed">Không thể ngừng</button>
+                        <button type="button" disabled class="btn-soft btn-soft--danger">Không thể ngừng</button>
                     <?php endif; ?>
                 </div>
             </div>
@@ -1500,7 +1840,7 @@ if (isset($_GET['success'])) {
                 <?php endif; ?>
                 
                 <div class="flex justify-end gap-2 mt-4">
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white">Đóng</a>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Đóng</a>
                 </div>
             </div>
         </div>
@@ -1525,8 +1865,8 @@ if (isset($_GET['success'])) {
                     </div>
                     
                     <div class="flex justify-end gap-2">
-                        <a href="<?= $serviceBaseUrlEsc ?>" class="px-4 py-2 rounded bg-gray-500 hover:bg-gray-600 text-white">Hủy</a>
-                        <button type="submit" class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-700 text-white">Xác nhận</button>
+                        <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Hủy</a>
+                        <button type="submit" class="btn-soft btn-soft--primary">Xác nhận</button>
                     </div>
                 </form>
             </div>
@@ -1557,11 +1897,11 @@ if (isset($_GET['success'])) {
                         </h3>
                         
                         <!-- Add Category Form -->
-                        <form method="POST" class="mb-4 bg-white p-3 rounded border">
+                        <form method="POST" data-action="add_category" class="mb-4 bg-white p-3 rounded border">
                             <label class="block text-sm font-medium text-gray-700 mb-2">Thêm danh mục mới</label>
                             <div class="flex gap-2">
                                 <input type="text" name="TEN_DANH_MUC" placeholder="Nhập tên danh mục..." class="flex-1 p-2 border rounded text-sm" required>
-                                <button type="submit" name="add_category" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded text-sm whitespace-nowrap">+ Thêm danh mục</button>
+                                <button type="submit" name="add_category" class="btn-soft btn-soft-sm btn-soft--blue whitespace-nowrap">+ Thêm danh mục</button>
                             </div>
                         </form>
                         
@@ -1607,7 +1947,7 @@ if (isset($_GET['success'])) {
                         </h3>
                         
                         <!-- Add Tag Form -->
-                        <form method="POST" class="mb-4 bg-white p-3 rounded border">
+                        <form method="POST" data-action="add_tag" class="mb-4 bg-white p-3 rounded border">
                             <label class="block text-sm font-medium text-gray-700 mb-2">Thêm thẻ mới</label>
                             <div class="flex gap-2 items-end">
                                 <div class="flex-1">
@@ -1618,7 +1958,7 @@ if (isset($_GET['success'])) {
                                         <span class="text-xs text-gray-500">Chọn màu cho thẻ</span>
                                     </div>
                                 </div>
-                                <button type="submit" name="add_tag" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded text-sm whitespace-nowrap">+ Thêm thẻ</button>
+                                <button type="submit" name="add_tag" class="btn-soft btn-soft-sm btn-soft--primary whitespace-nowrap">+ Thêm thẻ</button>
                             </div>
                         </form>
                         
@@ -1658,7 +1998,7 @@ if (isset($_GET['success'])) {
                 </div>
                 
                 <div class="mt-6 flex justify-end">
-                    <a href="<?= $serviceBaseUrlEsc ?>" class="px-6 py-2 rounded bg-gray-600 hover:bg-gray-700 text-white">Đóng cửa sổ</a>
+                    <a href="<?= $serviceBaseUrlEsc ?>" class="btn-soft btn-soft--muted">Đóng cửa sổ</a>
                 </div>
             </div>
         </div>
@@ -1667,12 +2007,12 @@ if (isset($_GET['success'])) {
         <div id="editCategoryModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
             <div class="bg-white p-6 rounded shadow-lg w-96">
                 <h3 class="text-lg font-semibold mb-4">Sửa danh mục</h3>
-                <form method="POST">
+                <form method="POST" data-action="edit_category">
                     <input type="hidden" name="ID_DANH_MUC" id="editCategoryId">
                     <input type="text" name="TEN_DANH_MUC" id="editCategoryName" class="w-full p-2 border rounded mb-4" required>
                     <div class="flex justify-end gap-2">
-                        <button type="button" onclick="closeEditCategory()" class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded">Hủy</button>
-                        <button type="submit" name="edit_category" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded">Lưu</button>
+                        <button type="button" onclick="closeEditCategory()" class="btn-soft btn-soft-sm btn-soft--muted">Hủy</button>
+                        <button type="submit" name="edit_category" class="btn-soft btn-soft-sm btn-soft--blue">Lưu</button>
                     </div>
                 </form>
             </div>
@@ -1681,7 +2021,7 @@ if (isset($_GET['success'])) {
         <div id="editTagModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
             <div class="bg-white p-6 rounded shadow-lg w-96">
                 <h3 class="text-lg font-semibold mb-4">Sửa thẻ</h3>
-                <form method="POST">
+                <form method="POST" data-action="edit_tag">
                     <input type="hidden" name="ID_THE" id="editTagId">
                     <input type="text" name="TEN_THE" id="editTagName" class="w-full p-2 border rounded mb-3" required>
                     <div class="flex items-center gap-2 mb-4">
@@ -1689,8 +2029,8 @@ if (isset($_GET['success'])) {
                         <input type="color" name="MAU_SAC" id="editTagColor" class="w-12 h-8 border rounded cursor-pointer">
                     </div>
                     <div class="flex justify-end gap-2">
-                        <button type="button" onclick="closeEditTag()" class="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded">Hủy</button>
-                        <button type="submit" name="edit_tag" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded">Lưu</button>
+                        <button type="button" onclick="closeEditTag()" class="btn-soft btn-soft-sm btn-soft--muted">Hủy</button>
+                        <button type="submit" name="edit_tag" class="btn-soft btn-soft-sm btn-soft--primary">Lưu</button>
                     </div>
                 </form>
             </div>
@@ -2062,4 +2402,10 @@ if (isset($_GET['success'])) {
             document.getElementById('editTagModal').classList.add('hidden');
         }
     </script>
+    
+    <!-- API Client Utilities -->
+    <script src="../../public/assets/js/api-client.js"></script>
+    
+    <!-- Page-Specific Service Management -->
+    <script src="../../public/assets/js/manage-services.js"></script>
 </body>

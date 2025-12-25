@@ -1,6 +1,10 @@
 <?php
+
+use App\Repositories\CostumeRepository;
+
 session_start();
 include '../../../database/config.php';
+require_once __DIR__ . '/../../repositories/CostumeRepository.php';
 
 function tp_redirect(string $location): void
 {
@@ -16,6 +20,8 @@ function tp_redirect(string $location): void
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     tp_redirect('../Views/trangphuc.php');
 }
+
+$costumeRepo = new CostumeRepository($conn);
 
 $costumeId = $_POST['costume_id'] ?? '';
 $returnTo  = trim($_POST['return_to'] ?? '');
@@ -44,7 +50,8 @@ if (empty($_SESSION['ID_TK'])) {
     tp_redirect($loginRedirect);
 }
 
-if (!ctype_digit((string)$branchId)) {
+$branchIdInt = ctype_digit((string)$branchId) ? (int)$branchId : 0;
+if ($branchIdInt <= 0) {
     $_SESSION['message'] = 'Chi nhánh không hợp lệ.';
     $_SESSION['message_type'] = 'error';
     tp_redirect($bookingView);
@@ -88,7 +95,8 @@ if ($days <= 0) {
 $costumeSql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.ID_CN, tp.TEN AS TEN_TP, tp.TRANG_THAI AS TINH_TRANG, COALESCE(tp.GIA_THUE, 0) AS DON_GIA FROM trang_phuc tp WHERE tp.ID_TRANG_PHUC = ? LIMIT 1";
 $costumeData = null;
 if ($stmt = $conn->prepare($costumeSql)) {
-    $stmt->bind_param('i', $costumeId);
+    $costumeIdInt = (int)$costumeId;
+    $stmt->bind_param('i', $costumeIdInt);
     if ($stmt->execute()) {
         $result = $stmt->get_result();
         if ($result) {
@@ -104,7 +112,14 @@ if (!$costumeData) {
     tp_redirect($bookingView);
 }
 
-if ((string)$costumeData['ID_CN'] !== (string)$branchId) {
+$scopeCheck = $costumeRepo->validateCostumeCanBeRented((int)$costumeId, $branchIdInt);
+if (!$scopeCheck['allowed']) {
+    $_SESSION['message'] = $scopeCheck['reason'] ?? 'Trang phục không thể thuê tại chi nhánh này.';
+    $_SESSION['message_type'] = 'error';
+    tp_redirect($bookingView);
+}
+
+if ((int)$costumeData['ID_CN'] !== $branchIdInt) {
     $_SESSION['message'] = 'Chi nhánh đặt thuê không khớp với trang phục.';
     $_SESSION['message_type'] = 'error';
     tp_redirect($bookingView);
@@ -122,6 +137,15 @@ if ($pricePerDay <= 0 && $priceFromForm > 0) {
 }
 if ($pricePerDay <= 0) {
     $_SESSION['message'] = 'Không tìm thấy đơn giá áp dụng cho trang phục này.';
+    $_SESSION['message_type'] = 'error';
+    tp_redirect($bookingView);
+}
+
+$ngayNhan    = $fromDt->format('Y-m-d H:i:s');
+$ngayTra     = $toDt->format('Y-m-d H:i:s');
+
+if (!$costumeRepo->isAvailableDuring((int)$costumeId, $ngayNhan, $ngayTra, $branchIdInt)) {
+    $_SESSION['message'] = 'Trang phục đã được đặt trong khoảng thời gian này. Vui lòng chọn thời gian khác.';
     $_SESSION['message_type'] = 'error';
     tp_redirect($bookingView);
 }
@@ -160,9 +184,6 @@ try {
     }
 
     $userId      = $_SESSION['ID_TK'];
-    $branchIdInt = (int)$branchId;
-    $ngayNhan    = $fromDt->format('Y-m-d H:i:s');
-    $ngayTra     = $toDt->format('Y-m-d H:i:s');
 
     $insertOrder->bind_param(
         'sissiis',
@@ -187,7 +208,8 @@ try {
         throw new Exception('Không thể lưu chi tiết đơn thuê: ' . $conn->error);
     }
 
-    $insertDetail->bind_param('iiii', $orderId, $costumeId, $quantity, $pricePerDay);
+    $selectedCostumeId = (int)$costumeId;
+    $insertDetail->bind_param('iiii', $orderId, $selectedCostumeId, $quantity, $pricePerDay);
     if (!$insertDetail->execute()) {
         throw new Exception('Không thể lưu chi tiết đơn thuê: ' . $insertDetail->error);
     }

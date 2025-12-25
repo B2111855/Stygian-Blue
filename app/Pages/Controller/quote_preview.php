@@ -21,6 +21,16 @@ try {
 
     $branchId     = isset($data['branch_id']) ? (int)$data['branch_id'] : 0;
     $serviceId    = isset($data['service_id']) ? (int)$data['service_id'] : 0;
+    $serviceIds   = [];
+    if (isset($data['service_ids']) && is_array($data['service_ids'])) {
+        foreach ($data['service_ids'] as $sid) {
+            if (ctype_digit((string)$sid)) { $serviceIds[] = (int)$sid; }
+        }
+        $serviceIds = array_values(array_unique($serviceIds));
+        if (!$serviceId && !empty($serviceIds)) {
+            $serviceId = $serviceIds[0];
+        }
+    }
     $packageId    = isset($data['package_id']) ? (int)$data['package_id'] : 0;
     $bookingType  = isset($data['booking_type']) ? (string)$data['booking_type'] : 'service';
     $bookingType  = in_array($bookingType, ['service','package','costume'], true) ? $bookingType : 'service';
@@ -65,6 +75,51 @@ try {
         $resultPayload['booking_type'] = 'package';
         $resultPayload['selected_costume_ids'] = $costumeIds;
     } else {
+        // Dịch vụ lẻ: hỗ trợ nhiều dịch vụ (service_ids) hoặc một (service_id)
+        if ($bookingType === 'service' && !empty($serviceIds)) {
+            // Inline logic: lấy đơn giá mới nhất cho từng dịch vụ, cộng lại + phụ phí di chuyển
+            $items = [];
+            $sumServices = 0;
+            $stmt = $conn->prepare("SELECT TEN_DV FROM DICH_VU WHERE ID_DV = ? LIMIT 1");
+            $stmtPrice = $conn->prepare("SELECT DON_GIA FROM DON_GIA_DICH_VU WHERE ID_DV = ? ORDER BY NGAY_GIO DESC LIMIT 1");
+            foreach ($serviceIds as $sid) {
+                $name = 'Dịch vụ';
+                if ($stmt) {
+                    $stmt->bind_param('i', $sid);
+                    $stmt->execute();
+                    $res = $stmt->get_result();
+                    $row = $res ? $res->fetch_assoc() : null;
+                    if ($row && isset($row['TEN_DV'])) { $name = $row['TEN_DV']; }
+                }
+                $price = 0;
+                if ($stmtPrice) {
+                    $stmtPrice->bind_param('i', $sid);
+                    $stmtPrice->execute();
+                    $resP = $stmtPrice->get_result();
+                    $rowP = $resP ? $resP->fetch_assoc() : null;
+                    if ($rowP && isset($rowP['DON_GIA'])) { $price = (int)$rowP['DON_GIA']; }
+                }
+                $sumServices += $price;
+                $items[] = ['label' => $name, 'price' => $price, 'service_id' => $sid];
+            }
+
+            $travel = computeTravelFeeInline($conn, $branchId, $locationType, $extLat, $extLng);
+            $total = $sumServices + $travel['fee'];
+            $items[] = ['label' => 'Phụ phí di chuyển', 'price' => $travel['fee']];
+
+            $resultPayload = [
+                'ok' => true,
+                'total' => $total,
+                'items' => $items,
+                'travel_fee' => $travel['fee'],
+                'distance_km' => $travel['distance_km'],
+                'mode' => 'service_multi',
+                'booking_type' => 'service',
+                'service_ids' => $serviceIds,
+                'service_id' => $serviceId,
+                'currency' => 'VND'
+            ];
+        } else {
         // Fallback service logic cũ (giữ nguyên hành vi nếu không có package)
         if (!class_exists('App\\Services\\QuoteService')) {
             // Logic inline cũ để không phụ thuộc lớp khi autoload chưa có
@@ -101,6 +156,7 @@ try {
             $serviceQuote['service_id'] = $serviceId;
             $serviceQuote['booking_type'] = $bookingType;
             $resultPayload = $serviceQuote;
+        }
         }
     }
 

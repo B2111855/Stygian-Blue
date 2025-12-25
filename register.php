@@ -76,59 +76,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $errors[] = 'Tên đăng nhập đã tồn tại. Vui lòng chọn tên khác.';
                 $conn->rollback();
             } else {
-                $hashedPassword = password_hash($rawPassword, PASSWORD_DEFAULT);
+                $checkStmt->free_result();
 
-                $username = $input['username'];
-                $fullName = $input['full_name'];
-                $birthDate = null;
-                $address = $input['address'];
-                $email = $input['email'];
-                $phone = $input['phone'];
+                // Check email/phone uniqueness within the same transaction to avoid duplicates
+                $dupStmt = $conn->prepare('SELECT EMAIL, SDT FROM tai_khoan WHERE EMAIL = ? OR SDT = ? LIMIT 1');
+                $dupStmt->bind_param('ss', $input['email'], $input['phone']);
+                $dupStmt->execute();
+                $dupResult = $dupStmt->get_result();
 
-                $insertAccount = $conn->prepare(
-                    'INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
-                    . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-                );
-                $insertAccount->bind_param(
-                    'sissssss',
-                    $username,
-                    $roleId,
-                    $fullName,
-                    $birthDate,
-                    $address,
-                    $email,
-                    $phone,
-                    $hashedPassword
-                );
-                $insertAccount->execute();
+                if ($dupResult && $dupResult->num_rows > 0) {
+                    $dupStmt->close();
+                    $checkStmt->close();
+                    $conn->rollback();
+                    $errors[] = 'Email hoặc số điện thoại đã được sử dụng. Vui lòng chọn thông tin khác.';
+                } else {
+                    $dupStmt->close();
 
-                $insertCustomer = $conn->prepare(
-                    'INSERT INTO khach_hang (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
-                    . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-                );
-                $insertCustomer->bind_param(
-                    'sissssss',
-                    $username,
-                    $roleId,
-                    $fullName,
-                    $birthDate,
-                    $address,
-                    $email,
-                    $phone,
-                    $hashedPassword
-                );
-                $insertCustomer->execute();
+                    $hashedPassword = password_hash($rawPassword, PASSWORD_DEFAULT);
 
-                $insertAccount->close();
-                $insertCustomer->close();
-                $checkStmt->close();
+                    $username = $input['username'];
+                    $fullName = $input['full_name'];
+                    $birthDate = null;
+                    $address = $input['address'];
+                    $email = $input['email'];
+                    $phone = $input['phone'];
 
-                $conn->commit();
+                    $insertAccount = $conn->prepare(
+                        'INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+                        . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                    );
+                    $insertAccount->bind_param(
+                        'sissssss',
+                        $username,
+                        $roleId,
+                        $fullName,
+                        $birthDate,
+                        $address,
+                        $email,
+                        $phone,
+                        $hashedPassword
+                    );
+                    $insertAccount->execute();
 
-                $_SESSION['message'] = 'Tạo tài khoản thành công! Vui lòng đăng nhập.';
-                $_SESSION['message_type'] = 'success';
-                header('Location: login.php');
-                exit;
+                    $insertCustomer = $conn->prepare(
+                        'INSERT INTO khach_hang (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) '
+                        . 'VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                    );
+                    $insertCustomer->bind_param(
+                        'sissssss',
+                        $username,
+                        $roleId,
+                        $fullName,
+                        $birthDate,
+                        $address,
+                        $email,
+                        $phone,
+                        $hashedPassword
+                    );
+                    $insertCustomer->execute();
+
+                    $insertAccount->close();
+                    $insertCustomer->close();
+                    $checkStmt->close();
+
+                    $conn->commit();
+
+                    $_SESSION['message'] = 'Tạo tài khoản thành công! Vui lòng đăng nhập.';
+                    $_SESSION['message_type'] = 'success';
+                    header('Location: login.php');
+                    exit;
+                }
             }
         } catch (mysqli_sql_exception $exception) {
             if (isset($insertAccount) && $insertAccount instanceof mysqli_stmt) {
@@ -160,7 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="auth-card">
         <div class="auth-card__logo">
             <a href="./app/Pages/Views/home.php" title="Về trang chủ">
-                <img src="public/images/logo5.png" alt="Logo Stygian Blue Studio">
+                <img src="public/images/StygianBlueLogo.png" alt="Logo Stygian Blue Studio">
             </a>
         </div>
 

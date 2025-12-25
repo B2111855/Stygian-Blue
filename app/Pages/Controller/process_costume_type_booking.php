@@ -36,9 +36,10 @@ $bookingView = '../Views/trangphuc_loai_datthue.php?' . http_build_query($queryP
 if (!ctype_digit((string)$typeId)) {
     $_SESSION['message'] = 'Loại trang phục không hợp lệ.'; $_SESSION['message_type'] = 'error'; tp_redirect_type($bookingView);
 }
-if (!ctype_digit((string)$branchId)) {
+if (!ctype_digit((string)$branchId) || (int)$branchId <= 0) {
     $_SESSION['message'] = 'Chi nhánh không hợp lệ.'; $_SESSION['message_type'] = 'error'; tp_redirect_type($bookingView);
 }
+$branchIdInt = (int)$branchId;
 if (empty($_SESSION['ID_TK'])) {
     $_SESSION['message'] = 'Vui lòng đăng nhập để đặt thuê.'; $_SESSION['message_type'] = 'error'; tp_redirect_type('../../../login.php');
 }
@@ -80,13 +81,13 @@ try {
     $insertOrder = $conn->prepare("INSERT INTO don_thue_trang_phuc (ID_TK, ID_CN, NGAY_NHAN, NGAY_TRA_DK, TRANG_THAI, TIEN_COC, TONG_TIEN_DU_KIEN, GHI_CHU) VALUES (?,?,?,?, 'cho_duyet', ?, ?, ?)");
     if (!$insertOrder) { throw new Exception('Không thể tạo đơn: ' . $conn->error); }
     $userId = $_SESSION['ID_TK']; $fromStr = $fromDt->format('Y-m-d H:i:s'); $toStr = $toDt->format('Y-m-d H:i:s');
-    $insertOrder->bind_param('sissiii', $userId, $branchId, $fromStr, $toStr, $deposit, $estTotal, $ghiChu);
+    $insertOrder->bind_param('sissiii', $userId, $branchIdInt, $fromStr, $toStr, $deposit, $estTotal, $ghiChu);
     if (!$insertOrder->execute()) { throw new Exception('Lỗi lưu đơn: ' . $insertOrder->error); }
     $orderId = $insertOrder->insert_id; $insertOrder->close();
 
     // Allocation
     $bookingService = new BookingService();
-    $alloc = $bookingService->allocateItemsForType($conn, $orderId, (int)$typeId, (int)$branchId, $quantity, $fromStr, $toStr, $priceDay);
+    $alloc = $bookingService->allocateItemsForType($conn, $orderId, (int)$typeId, $branchIdInt, $quantity, $fromStr, $toStr, $priceDay);
     if ($alloc['allocated'] !== $quantity) { throw new Exception('Phân bổ không đủ số lượng yêu cầu.'); }
 
     $conn->commit();

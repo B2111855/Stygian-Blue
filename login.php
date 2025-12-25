@@ -80,9 +80,10 @@ function finishLoginAndRedirect($conn, $userRow) {
     // $userRow chứa các trường: ID_TK, ID_QUYEN
     // Ta cần xem người này có phải nhân viên hay không (để lấy LOAI_NV, ID_CN)
     $stmt2 = $conn->prepare("
-        SELECT LOAI_NV, ID_CN
-        FROM nhan_vien
-        WHERE ID_TK = ?
+        SELECT nv.LOAI_NV, nv.ID_CN, cn.TEN_CN
+        FROM nhan_vien nv
+        LEFT JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN
+        WHERE nv.ID_TK = ?
         LIMIT 1
     ");
     $stmt2->bind_param("s", $userRow['ID_TK']);
@@ -94,6 +95,8 @@ function finishLoginAndRedirect($conn, $userRow) {
     $_SESSION['ID_TK']     = $userRow['ID_TK'];
     $_SESSION['ID_QUYEN']  = $userRow['ID_QUYEN']; // ví dụ: 1 = admin, 2 = nhân viên, ...
     $_SESSION['branch_id'] = $nvRow ? intval($nvRow['ID_CN']) : null;
+    $_SESSION['branch_name'] = $nvRow ? ($nvRow['TEN_CN'] ?? 'Chi nhánh của tôi') : 'Chi nhánh của tôi';
+    $_SESSION['HO_TEN'] = $userRow['HO_TEN'] ?? 'Người dùng';
     $_SESSION['STAFF_TYPE'] = $nvRow ? $nvRow['LOAI_NV'] : null; // Lưu loại nhân viên
 
     // Xác định role dựa trên ID_QUYEN + LOAI_NV:
@@ -164,7 +167,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     if ($inputUsername !== '' && $inputPassword !== '') {
         // Lấy tài khoản theo ID_TK (username = mã tài khoản nội bộ)
         $stmt = $conn->prepare("
-            SELECT ID_TK, MAT_KHAU, ID_QUYEN
+            SELECT ID_TK, HO_TEN, MAT_KHAU, ID_QUYEN
             FROM tai_khoan
             WHERE ID_TK = ?
             LIMIT 1
@@ -177,10 +180,37 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             $user = $result->fetch_assoc();
 
             if (password_verify($inputPassword, $user['MAT_KHAU'])) {
-                // Thành công → set session + redirect
-                $_SESSION['message'] = 'Đăng nhập thành công!';
-                $_SESSION['message_type'] = 'success';
-                finishLoginAndRedirect($conn, $user);
+                // Check soft-delete flag for staff/manager accounts
+                $softDeleted = false;
+                $checkStmt = $conn->prepare("SELECT IS_DELETED FROM nhan_vien WHERE ID_TK = ? LIMIT 1");
+                if ($checkStmt) {
+                    $checkStmt->bind_param("s", $user['ID_TK']);
+                    $checkStmt->execute();
+                    $checkRes = $checkStmt->get_result();
+                    if ($checkRes && $row = $checkRes->fetch_assoc()) {
+                        $softDeleted = (int)($row['IS_DELETED'] ?? 0) === 1;
+                    }
+                    $checkStmt->close();
+                }
+
+                if ($softDeleted) {
+                    $error = "Tài khoản đã bị vô hiệu hóa.";
+                    record_system_log(
+                        $conn,
+                        'LOGIN_FAILED',
+                        'auth',
+                        null,
+                        [
+                            'ID_TK'  => $inputUsername,
+                            'reason' => 'soft_deleted'
+                        ]
+                    );
+                } else {
+                    // Thành công → set session + redirect
+                    $_SESSION['message'] = 'Đăng nhập thành công!';
+                    $_SESSION['message_type'] = 'success';
+                    finishLoginAndRedirect($conn, $user);
+                }
             } else {
                 $error = "Mật khẩu không chính xác.";
                 record_system_log(
@@ -237,7 +267,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <div class="auth-card__logo">
             <a href="./app/Pages/Views/home.php" title="Về trang chủ">
                 <img
-                    src="public/images/logo5.png"
+                    src="public/images/StygianBlueLogo.png"
                     alt="Logo"
                 />
             </a>

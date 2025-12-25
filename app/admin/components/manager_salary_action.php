@@ -89,6 +89,15 @@ $metaStmt->execute();
 $metaRow = $metaStmt->get_result()->fetch_assoc();
 $metaStmt->close();
 
+// Trạng thái cũ để tránh chèn trùng vào tai_chinh khi đã ở trạng thái 'da_chi_tra'
+$prevStatus = null;
+$prevStmt = $conn->prepare('SELECT TRANG_THAI FROM quanly_luong_chinhanh WHERE ID_TK_NV = ? AND THANG = ? AND NAM = ? LIMIT 1');
+$prevStmt->bind_param('sii', $employeeId, $month, $year);
+$prevStmt->execute();
+$prevRow = $prevStmt->get_result()->fetch_assoc();
+$prevStatus = $prevRow['TRANG_THAI'] ?? null;
+$prevStmt->close();
+
 $baseAmount = $metaRow ? (int)$metaRow['BASE_TONG_LUONG'] : (int)($salaryRow['TONG_LUONG'] ?? 0);
 $baseAmount = max(0, $baseAmount);
 $net = max(0, $baseAmount + $allowance - $deduction);
@@ -119,6 +128,16 @@ $updateSalary = $conn->prepare('UPDATE luong_nhan_vien SET TONG_LUONG = ?, NGAY_
 $updateSalary->bind_param('isii', $net, $employeeId, $month, $year);
 $updateSalary->execute();
 $updateSalary->close();
+
+// Đồng bộ vào tai_chinh khi chuyển trạng thái sang 'da_chi_tra' (idempotent)
+if ($status === 'da_chi_tra' && $prevStatus !== 'da_chi_tra') {
+    $insertFinanceQuery = "INSERT INTO tai_chinh (LOAI_GIAO_DICH, SO_TIEN, LOAI_CHI_TIET, NGAY_GIAO_DICH, ID_CN, TRANG_THAI)
+                          VALUES ('chi phí', ?, 'Lương nhân viên', NOW(), ?, 'đã thanh toán')";
+    $financeStmt = $conn->prepare($insertFinanceQuery);
+    $financeStmt->bind_param('ii', $net, $branchId);
+    $financeStmt->execute();
+    $financeStmt->close();
+}
 
 $redirect = $returnUrl ?: '../manager_dashboard.php?page=salaries';
 if (preg_match('/^https?:\/\//i', $redirect)) {

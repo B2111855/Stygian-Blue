@@ -34,42 +34,36 @@ $selectedMonthLabel = $selectedMonthObj ? $selectedMonthObj->format('m/Y') : dat
 $baseCategories = [
   'rent' => [
     'label' => 'Chi phí mặt bằng',
-    'icon' => '🏢',
     'placeholder' => 'Ví dụ: 25.000.000',
     'helper' => 'Tiền thuê, phí dịch vụ tòa nhà.',
     'aliases' => ['Chi phí mặt bằng', 'Chi phí thuê mặt bằng'],
   ],
   'utilities' => [
     'label' => 'Chi phí điện nước',
-    'icon' => '💡',
     'placeholder' => 'Ví dụ: 6.500.000',
     'helper' => 'Điện, nước, internet, vệ sinh.',
     'aliases' => ['Chi phí điện nước', 'Chi phí tiện ích'],
   ],
   'marketing' => [
     'label' => 'Chi phí marketing',
-    'icon' => '📣',
     'placeholder' => 'Ví dụ: 4.000.000',
     'helper' => 'Quảng cáo online/offline.',
     'aliases' => ['Chi phí marketing', 'Chi phí quảng cáo'],
   ],
   'maintenance' => [
     'label' => 'Chi phí bảo trì thiết bị',
-    'icon' => '🛠️',
     'placeholder' => 'Ví dụ: 2.000.000',
     'helper' => 'Sửa chữa, bảo dưỡng trang thiết bị.',
     'aliases' => ['Chi phí bảo trì thiết bị', 'Chi phí bảo trì'],
   ],
   'personnel' => [
     'label' => 'Chi phí nhân sự hỗ trợ',
-    'icon' => '👥',
     'placeholder' => 'Ví dụ: 8.000.000',
     'helper' => 'CTV, bảo vệ, hỗ trợ sự kiện.',
     'aliases' => ['Chi phí nhân sự hỗ trợ', 'Chi phí nhân sự'],
   ],
   'supplies' => [
     'label' => 'Chi phí vật tư - văn phòng phẩm',
-    'icon' => '📦',
     'placeholder' => 'Ví dụ: 1.500.000',
     'helper' => 'Vật tư tiêu hao, văn phòng phẩm.',
     'aliases' => ['Chi phí vật tư - văn phòng phẩm', 'Chi phí vật tư'],
@@ -223,7 +217,7 @@ function formatCurrency($value)
               <?php $prefill = $prefilledExpenses[$key]; ?>
               <div class="rounded-2xl border border-white bg-white/80 p-4 shadow-sm">
                 <div class="flex items-center justify-between text-sm text-gray-500">
-                  <span><?= $definition['icon'] ?> <?= htmlspecialchars($definition['label']) ?></span>
+                  <span><?= htmlspecialchars($definition['label']) ?></span>
                   <span class="font-semibold text-indigo-600" data-prefill>
                     <?= $prefill['amount'] > 0 ? formatCurrency($prefill['amount']) . ' đ' : '---' ?>
                   </span>

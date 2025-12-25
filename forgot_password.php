@@ -81,7 +81,7 @@ $authBodyAttributes = buildAuthBodyAttributes([
   <div class="auth-card">
     <div class="auth-card__logo">
       <a href="./app/Pages/Views/home.php" title="Về trang chủ">
-        <img src="public/images/logo5.png" alt="Logo Stygian Blue">
+        <img src="public/images/StygianBlueLogo.png" alt="Logo Stygian Blue">
       </a>
     </div>
 

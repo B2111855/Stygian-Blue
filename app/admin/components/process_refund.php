@@ -18,7 +18,7 @@ if (file_exists('../../../.env')) {
 function redirect_with_notice(int $invoiceId, string $message, string $type = 'error'): void {
     $_SESSION['refund_notice'] = $message;
     $_SESSION['refund_notice_type'] = $type;
-    header('Location: ../admin_dashboard.php?page=hoa_don_chi_tiet&id_hd=' . $invoiceId);
+    header('Location: ../hoa_don_chi_tiet.php?id_hd=' . $invoiceId);
     exit;
 }
 

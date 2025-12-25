@@ -115,7 +115,7 @@ try {
   $deleteFinanceStmt->execute();
 
   $expenseInsertStmt = $conn->prepare("INSERT INTO chi_phi_phat_sinh (TEN_CP, MOTA_CP, GIA_TRI, NGAY_GIO, ID_CN) VALUES (?, ?, ?, ?, ?)");
-  $financeInsertStmt = $conn->prepare("INSERT INTO tai_chinh (LOAI_GIAO_DICH, SO_TIEN, NGAY_GIAO_DICH, ID_CN) VALUES (?, ?, ?, ?)");
+  $financeInsertStmt = $conn->prepare("INSERT INTO tai_chinh (LOAI_GIAO_DICH, SO_TIEN, LOAI_CHI_TIET, NGAY_GIAO_DICH, ID_CN) VALUES (?, ?, ?, ?, ?)");
 
   foreach ($expenses as $expense) {
     $description = $expense['note'] ?: "Chi phí {$expense['name']} tháng " . $monthDate->format('m/Y');
@@ -132,9 +132,10 @@ try {
 
     $financeType = 'chi phí';
     $financeAmount = $expense['amount'];
+    $financeLoaiChiTiet = 'Chi phí phát sinh';
     $financeDate = $firstOfMonth;
 
-    $financeInsertStmt->bind_param('sdsi', $financeType, $financeAmount, $financeDate, $branchId);
+    $financeInsertStmt->bind_param('sdssi', $financeType, $financeAmount, $financeLoaiChiTiet, $financeDate, $branchId);
     $financeInsertStmt->execute();
   }
 
@@ -153,9 +154,10 @@ try {
 
     $financeType = 'chi phí';
     $financeAmount = $taxValue;
+    $financeLoaiChiTiet = 'Thuế VAT';
     $financeDate = $firstOfMonth;
 
-    $financeInsertStmt->bind_param('sdsi', $financeType, $financeAmount, $financeDate, $branchId);
+    $financeInsertStmt->bind_param('sdssi', $financeType, $financeAmount, $financeLoaiChiTiet, $financeDate, $branchId);
     $financeInsertStmt->execute();
   }
 

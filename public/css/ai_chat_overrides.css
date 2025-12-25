@@ -7,10 +7,22 @@
 /* Fix speed dial not blocking content */
 .sb-ai-speed-dial { 
   pointer-events: none !important; 
+  z-index: 99999 !important; /* Cao hơn auth overlay (z-index 999) */
 }
 
 .sb-ai-chat-toggle {
   pointer-events: auto !important;
+  cursor: pointer !important; /* Mặc định là pointer để click được */
+}
+
+/* Chỉ hiển thị grab cursor khi speed dial đóng (có thể drag) */
+.sb-ai-speed-dial:not(.is-open) .sb-ai-chat-toggle:hover {
+  cursor: grab !important;
+}
+
+/* Chỉ hiển thị grabbing khi đang drag thật sự */
+.sb-ai-speed-dial.dragging .sb-ai-chat-toggle {
+  cursor: grabbing !important;
 }
 
 .sb-ai-speed-dial.is-open .sb-ai-dial-btn {
@@ -19,4 +31,11 @@
 
 .sb-ai-chat-window {
   pointer-events: auto !important;
+  z-index: 99999 !important; /* Đảm bảo chat window cũng cao hơn auth overlay */
+}
+
+/* Đảm bảo widget container không bị ảnh hưởng bởi pointer-events:none từ parent */
+[data-ai-chat-widget] {
+  pointer-events: auto !important;
+  z-index: 99999 !important;
 }

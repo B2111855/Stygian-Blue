@@ -31,6 +31,7 @@ function getEmployeesSearch($search = "", $branch = "", $role = "", $limit = 6, 
     FROM nhan_vien nv
     INNER JOIN tai_khoan tk ON nv.ID_TK = tk.ID_TK
     INNER JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN
+    WHERE nv.IS_DELETED = 0
 ";
 
     $conditions = [];
@@ -54,7 +55,7 @@ function getEmployeesSearch($search = "", $branch = "", $role = "", $limit = 6, 
     }
 
     if (!empty($conditions)) {
-        $query .= ' WHERE ' . implode(' AND ', $conditions);
+        $query .= ' AND ' . implode(' AND ', $conditions);
     }
 
     $query .= " LIMIT $limit OFFSET $offset";
@@ -66,7 +67,8 @@ function countEmployees($search = "", $branch = "", $role = "")
     global $conn;
     $query = "SELECT COUNT(*) as total FROM nhan_vien nv 
               INNER JOIN tai_khoan tk ON nv.ID_TK = tk.ID_TK 
-              INNER JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN";
+              INNER JOIN chi_nhanh cn ON nv.ID_CN = cn.ID_CN
+              WHERE nv.IS_DELETED = 0";
     $conditions = [];
 
     if (!empty($search)) {
@@ -88,7 +90,7 @@ function countEmployees($search = "", $branch = "", $role = "")
     }
 
     if (!empty($conditions)) {
-        $query .= ' WHERE ' . implode(' AND ', $conditions);
+        $query .= ' AND ' . implode(' AND ', $conditions);
     }
 
     $result = mysqli_query($conn, $query);
@@ -139,252 +141,20 @@ function getEmployeeSummary()
     return $summary;
 }
 
-// Handle edit employee form submission
-if (isset($_POST['edit_employee'])) {
-    $id_tk = $_POST['ID_TK'];
-    $ho_ten = $_POST['HO_TEN'];
-    $ngay_sinh = $_POST['NGAY_SINH'];
-    $dia_chi = $_POST['DIA_CHI'];
-    $email = $_POST['EMAIL'];
-    $sdt = $_POST['SDT'];
-    $id_cn = $_POST['ID_CN'];
-    $chuyen_mon = $_POST['CHUYEN_MON'];
-    $mat_khau = trim($_POST['MAT_KHAU']); // Mật khẩu mới (có thể để trống)
-    $loai_nv = $_POST['LOAI_NV'] ?? 'chuyen_trach'; // 'chuyen_trach' mặc định
+// Form submissions moved to API (api_employees.php)
 
 
-    if (empty($ho_ten) || empty($ngay_sinh) || empty($dia_chi) || empty($email) || empty($sdt) || empty($id_cn) || empty($chuyen_mon)) {
-        $errorMessage = "Vui lòng điền đầy đủ thông tin.";
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $errorMessage = "Địa chỉ email không hợp lệ.";
-    } elseif (!preg_match("/^[0-9]{10}$/", $sdt)) {
-        $errorMessage = "Số điện thoại phải gồm 10 chữ số.";
-    } else {
-        $updateTaiKhoanQuery = "
-            UPDATE tai_khoan 
-            SET HO_TEN = '$ho_ten', NGAY_SINH = '$ngay_sinh', DIA_CHI = '$dia_chi', 
-                EMAIL = '$email', SDT = '$sdt'
-        ";
-
-        if ($mat_khau !== '') {
-            if (strlen($mat_khau) < 6) {
-                $errorMessage = "Mật khẩu phải ít nhất 6 ký tự.";
-            } else {
-                $hashedPassword = password_hash($mat_khau, PASSWORD_DEFAULT);
-                $updateTaiKhoanQuery .= ", MAT_KHAU = '$hashedPassword'";
-            }
-        }
-
-        $updateTaiKhoanQuery .= " WHERE ID_TK = '$id_tk'";
-
-        if (!isset($errorMessage) && mysqli_query($conn, $updateTaiKhoanQuery)) {
-            $updateNhanVienQuery = "
-    UPDATE nhan_vien
-    SET ID_CN = '$id_cn',
-        CHUYEN_MON = '$chuyen_mon',
-        LOAI_NV = '$loai_nv'
-    WHERE ID_TK = '$id_tk'
-";
-            if (mysqli_query($conn, $updateNhanVienQuery)) {
-                $successMessage = "Cập nhật thông tin nhân viên thành công!";
-            } else {
-                $errorMessage = "Không thể cập nhật bảng nhân viên. Lỗi: " . mysqli_error($conn);
-            }
-        } else if (!isset($errorMessage)) {
-            $errorMessage = "Không thể cập nhật bảng tài khoản. Lỗi: " . mysqli_error($conn);
-        }
-    }
-}
-
-
-// Hàm thêm nhân viên mới
-function handleAddEmployee($data)
-{
-    global $conn;
-    $id_tk = trim($data['ID_TK']);
-    $ho_ten = trim($data['HO_TEN']);
-    $ngay_sinh = trim($data['NGAY_SINH']);
-    $dia_chi = trim($data['DIA_CHI']);
-    $email = trim($data['EMAIL']);
-    $sdt = trim($data['SDT']);
-    $mat_khau = trim($data['MAT_KHAU']);
-    $id_cn = trim($data['ID_CN']);
-    $chuyen_mon = trim($data['CHUYEN_MON']);
-    $id_quyen = 2;
-    $loai_nv = isset($data['LOAI_NV']) ? trim($data['LOAI_NV']) : 'chuyen_trach';
-    if ($loai_nv !== 'chuyen_trach' && $loai_nv !== 'quan_ly') {
-        $loai_nv = 'chuyen_trach';
-    }
-
-
-    if (empty($id_tk) || empty($ho_ten) || empty($ngay_sinh) || empty($dia_chi) || empty($email) || empty($sdt) || empty($mat_khau) || empty($id_cn) || empty($chuyen_mon)) {
-        return ['error' => "Vui lòng điền đầy đủ thông tin."];
-    } elseif (!preg_match("/^[a-zA-Z0-9]+$/", $id_tk)) {
-        return ['error' => "ID tài khoản không hợp lệ."];
-    } elseif (!preg_match("/^[0-9]{10}$/", $sdt)) {
-        return ['error' => "Số điện thoại phải bao gồm 10 chữ số."];
-    } elseif (strlen($mat_khau) < 6 || strlen($mat_khau) > 22) {
-        return ['error' => "Mật khẩu phải có độ dài từ 6 đến 22 ký tự."];
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        return ['error' => "Địa chỉ email không hợp lệ."];
-    }
-
-    $checkIdQuery = "SELECT ID_TK FROM tai_khoan WHERE ID_TK = ?";
-    $stmt = $conn->prepare($checkIdQuery);
-    $stmt->bind_param("s", $id_tk);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    if ($result->num_rows > 0) {
-        return ['error' => "ID tài khoản đã tồn tại."];
-    }
-
-    $checkEmailQuery = "SELECT 1 FROM tai_khoan WHERE EMAIL = ?";
-    $stmtEmail = $conn->prepare($checkEmailQuery);
-    $stmtEmail->bind_param("s", $email);
-    $stmtEmail->execute();
-    $resultEmail = $stmtEmail->get_result();
-    if ($resultEmail->num_rows > 0) {
-        return ['error' => "Email đã được sử dụng."];
-    }
-
-    $mat_khau_encrypted = password_hash($mat_khau, PASSWORD_DEFAULT);
-    $insertTaiKhoan = $conn->prepare("INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    $insertTaiKhoan->bind_param("sissssss", $id_tk, $id_quyen, $ho_ten, $ngay_sinh, $dia_chi, $email, $sdt, $mat_khau_encrypted);
-
-    if (!$insertTaiKhoan->execute()) {
-        return ['error' => "Không thể thêm vào bảng tài khoản. Lỗi: " . $conn->error];
-    }
-
-    $insertNhanVien = $conn->prepare("
-    INSERT INTO nhan_vien (ID_TK, ID_CN, CHUYEN_MON, LOAI_NV)
-    VALUES (?, ?, ?, ?)
-");
-    $insertNhanVien->bind_param("ssss", $id_tk, $id_cn, $chuyen_mon, $loai_nv);
-
-    if (!$insertNhanVien->execute()) {
-        return ['error' => "Không thể thêm vào bảng nhân viên. Lỗi: " . $conn->error];
-    }
-
-    return ['success' => "Thêm nhân viên mới thành công!"];
-}
-
-// Gọi hàm khi submit thêm nhân viên
-if (isset($_POST['add_employee'])) {
-    $result = handleAddEmployee($_POST);
-    if (isset($result['error'])) {
-        $errorMessage = $result['error'];
-    } elseif (isset($result['success'])) {
-        $successMessage = $result['success'];
-    }
-}
+// Form submissions moved to API (api_employees.php)
 
 
 
 
-// Xử lý chỉnh sửa nhân viên
-$editEmployee = null;
-if (isset($_GET['edit'])) {
-    $id_tk = $_GET['edit'];
-    $editQuery = "SELECT nv.ID_TK,
-                     nv.ID_CN,
-                     nv.CHUYEN_MON,
-                     nv.LOAI_NV,      
-                     tk.HO_TEN,
-                     tk.NGAY_SINH,
-                     tk.DIA_CHI,
-                     tk.EMAIL,
-                     tk.SDT,
-                     tk.MAT_KHAU
-              FROM nhan_vien nv
-              INNER JOIN tai_khoan tk ON nv.ID_TK = tk.ID_TK
-              WHERE nv.ID_TK = '$id_tk'";
-    $result = mysqli_query($conn, $editQuery);
-    if ($result && mysqli_num_rows($result) > 0) {
-        $editEmployee = mysqli_fetch_assoc($result);
-    }
-}
-
-// Handle delete employee
-if (isset($_GET['delete']) && !isset($_GET['confirmed'])) {
-    $id_tk = $_GET['delete'];
-    echo "<script>
-        if (confirm('Bạn có chắc chắn muốn xóa nhân viên này không?')) {
-            window.location.href = '?page=employees&delete=$id_tk&confirmed=true';
-        } else {
-            window.location.href = '?page=employees';
-        }
-    </script>";
-    exit;
-}
-
-if (isset($_GET['delete']) && isset($_GET['confirmed']) && $_GET['confirmed'] === 'true') {
-    $id_tk = $_GET['delete'];
-
-    if (checkIfEmployeeHasAssignments($id_tk)) {
-        $message = "Không thể xóa nhân viên vì nhân viên này đang được phân công cho một lịch hẹn.";
-    } else {
-        $message = deleteEmployee($id_tk);
-    }
-
-    echo "<script>alert('$message'); window.location.href = '?page=employees';</script>";
-}
+// Delete employee logic moved to API
 
 
 
+// Delete functions moved to API
 
-
-// Delete employee function
-function deleteEmployee($idTk)
-{
-    global $conn; // Assuming $conn is your MySQL connection
-
-    // Start a transaction to ensure data consistency
-    mysqli_begin_transaction($conn);
-
-    try {
-        // Delete from phan_cong_nhan_vien (assignments table)
-        $deleteAssignmentsQuery = "DELETE FROM phan_cong_nhan_vien WHERE ID_TK = ?";
-        $stmt1 = mysqli_prepare($conn, $deleteAssignmentsQuery);
-        mysqli_stmt_bind_param($stmt1, "s", $idTk);
-        mysqli_stmt_execute($stmt1);
-
-        // Delete from nhan_vien (employee table)
-        $deleteNhanVienQuery = "DELETE FROM nhan_vien WHERE ID_TK = ?";
-        $stmt2 = mysqli_prepare($conn, $deleteNhanVienQuery);
-        mysqli_stmt_bind_param($stmt2, "s", $idTk);
-        mysqli_stmt_execute($stmt2);
-
-        // Delete from tai_khoan (account table)
-        $deleteTaiKhoanQuery = "DELETE FROM tai_khoan WHERE ID_TK = ?";
-        $stmt3 = mysqli_prepare($conn, $deleteTaiKhoanQuery);
-        mysqli_stmt_bind_param($stmt3, "s", $idTk);
-        mysqli_stmt_execute($stmt3);
-
-        // Commit transaction if all queries executed successfully
-        mysqli_commit($conn);
-
-        return "Nhân viên đã được xóa thành công.";
-    } catch (Exception $e) {
-        // Rollback transaction if any query fails
-        mysqli_rollback($conn);
-        return "Xóa nhân viên thất bại. Vui lòng thử lại.";
-    }
-}
-
-// Check if employee has any assignments in phan_cong_nhan_vien
-function checkIfEmployeeHasAssignments($idTk)
-{
-    global $conn; // Assuming $conn is your MySQL connection
-
-    // Query to check if the employee is assigned to any appointments
-    $checkAssignmentsQuery = "SELECT * FROM phan_cong_nhan_vien WHERE ID_TK = ?"; // Check in phan_cong_nhan_vien table for the employee's ID_TK
-    $stmt = mysqli_prepare($conn, $checkAssignmentsQuery);
-    mysqli_stmt_bind_param($stmt, "s", $idTk);
-    mysqli_stmt_execute($stmt);
-    $result = mysqli_stmt_get_result($stmt);
-
-    return mysqli_num_rows($result) > 0; // Return true if employee has assignments, false otherwise
-}
 
 $branches = getBranches();
 
@@ -416,7 +186,19 @@ if ($selectedBranch !== '') {
 
 <body class="bg-gray-100 p-6">
     <div class="max-w-7xl mx-auto">
-        <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 text-center">Quản lý nhân viên</h1>
+        <div class="flex justify-between items-center mb-6 flex-wrap gap-3">
+            <h1 class="text-3xl font-extrabold text-indigo-700">Quản lý nhân viên</h1>
+            <div class="flex gap-2 flex-wrap">
+                <a href="admin_dashboard.php?page=admin_accounts" class="inline-flex items-center gap-2 px-3 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg text-sm font-semibold transition-colors duration-200" title="Quản lý tài khoản admin">
+                    <i class="fas fa-shield-alt"></i>
+                    <span>Quản lý Admin</span>
+                </a>
+                <a href="admin_dashboard.php?page=deleted_employees" class="inline-flex items-center gap-2 px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors duration-200" title="Xem nhân viên đã bị xóa mềm">
+                    <i class="fas fa-trash-alt"></i>
+                    <span>Đã Xóa</span>
+                </a>
+            </div>
+        </div>
 
         <!-- Thông báo -->
         <?php if (isset($successMessage)): ?>
@@ -518,10 +300,10 @@ if ($selectedBranch !== '') {
                         <p class="text-sm font-semibold text-gray-500 mb-1">Tùy chọn nhanh</p>
                         <p class="text-lg font-bold text-gray-800">Thêm nhân viên mới</p>
                     </div>
-                    <a href="?page=employees&add"
+                    <button onclick="openAddEmployeeModal()"
                         class="inline-flex items-center justify-center bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold shadow">
                         Thêm nhân viên
-                    </a>
+                    </button>
                 </div>
             </div>
         </div>
@@ -532,7 +314,7 @@ if ($selectedBranch !== '') {
         </div>
 
         <!-- Danh sách nhân viên -->
-        <div class="overflow-x-auto bg-white rounded-xl shadow-lg">
+        <div id="employeesTable" class="overflow-x-auto bg-white rounded-xl shadow-lg">
             <table class="min-w-full table-auto text-sm">
                 <thead class="bg-indigo-100 text-indigo-700">
                     <tr>
@@ -548,7 +330,7 @@ if ($selectedBranch !== '') {
                 <tbody class="divide-y">
                     <?php if (mysqli_num_rows($employees) > 0): ?>
                         <?php while ($row = mysqli_fetch_assoc($employees)): ?>
-                            <tr class="hover:bg-gray-50">
+                            <tr class="hover:bg-gray-50" data-employee-id="<?= htmlspecialchars($row['ID_TK']) ?>">
                                 <td class="px-4 py-3 text-left md:text-center font-semibold text-gray-800"><?= htmlspecialchars($row['ID_TK']) ?></td>
                                 <td class="px-4 py-3 text-left">
                                     <p class="font-semibold text-gray-900"><?= htmlspecialchars($row['HO_TEN']) ?></p>
@@ -576,14 +358,14 @@ if ($selectedBranch !== '') {
 
                                 <td class="px-4 py-3">
                                     <div class="flex flex-wrap justify-center gap-2">
-                                        <a href="?page=employees&edit=<?= urlencode($row['ID_TK']) ?>"
+                                        <button onclick="openEditEmployeeModal('<?= htmlspecialchars($row['ID_TK']) ?>')"
                                             class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50">
                                             Sửa
-                                        </a>
-                                        <a href="?page=employees&delete=<?= urlencode($row['ID_TK']) ?>"
+                                        </button>
+                                        <button onclick="openDeleteModal('<?= htmlspecialchars($row['ID_TK']) ?>', '<?= htmlspecialchars($row['HO_TEN']) ?>')"
                                             class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
                                             Xóa
-                                        </a>
+                                        </button>
                                     </div>
                                 </td>
 
@@ -599,7 +381,7 @@ if ($selectedBranch !== '') {
         </div>
 
         <?php
-        echo '<div class="mt-6 flex flex-wrap justify-center gap-2">';
+        echo '<div class="mt-6 flex flex-wrap justify-center gap-2" id="paginationContainer">';
         for ($i = 1; $i <= $totalPages; $i++) {
             $queryString = http_build_query([
                 'page' => 'employees',
@@ -610,143 +392,427 @@ if ($selectedBranch !== '') {
                 'per_page' => $perPage,
             ]);
             $active = ($i == $page) ? 'bg-indigo-600 text-white' : 'bg-gray-200 hover:bg-gray-300';
-            echo "<a href='?$queryString' class='px-3 py-1 rounded $active'>$i</a>";
+            echo "<a href='?$queryString' class='px-3 py-1 rounded $active pagination-link' data-page='$i'>$i</a>";
         }
         echo '</div>';
         ?>
 
 
+        <div id="employeeModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <form id="employeeForm" class="p-6 space-y-6">
+            <div class="flex justify-between items-center border-b pb-4">
+                <h2 class="text-2xl font-bold text-indigo-700" id="modalTitle">Thêm nhân viên mới</h2>
+                <button type="button" onclick="closeEmployeeModal()" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+            </div>
+
+            <input type="hidden" id="modalAction" name="action" value="create">
+            <input type="hidden" id="modalIdTk" name="ID_TK">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- ID Tài khoản (chỉ hiển thị khi thêm) -->
+                <div id="idTkField">
+                    <label class="block mb-1 text-sm font-medium text-gray-700">ID Tài khoản</label>
+                    <input type="text" id="ID_TK" name="ID_TK" required
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Họ tên</label>
+                    <input type="text" id="HO_TEN" name="HO_TEN" required
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Ngày sinh</label>
+                    <input type="date" id="NGAY_SINH" name="NGAY_SINH"
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Địa chỉ</label>
+                    <input type="text" id="DIA_CHI" name="DIA_CHI" required
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Số điện thoại</label>
+                    <input type="text" id="SDT" name="SDT" required
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Email</label>
+                    <input type="email" id="EMAIL" name="EMAIL" required
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Chi nhánh</label>
+                    <select id="ID_CN" name="ID_CN" class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" required>
+                        <option value="">Chọn chi nhánh</option>
+                        <?php if (!empty($branches)): ?>
+                            <?php foreach ($branches as $branch): ?>
+                                <option value="<?= htmlspecialchars($branch['ID_CN']) ?>">
+                                    <?= htmlspecialchars($branch['TEN_CN']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Chuyên môn</label>
+                    <input type="text" id="CHUYEN_MON" name="CHUYEN_MON"
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700">Vai trò nội bộ</label>
+                    <select id="LOAI_NV" name="LOAI_NV"
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500">
+                        <option value="chuyen_trach">Nhân sự thường</option>
+                        <option value="quan_ly">Quản lý chi nhánh</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label class="block mb-1 text-sm font-medium text-gray-700" id="passwordLabel">Mật khẩu</label>
+                    <input type="password" id="MAT_KHAU" name="MAT_KHAU"
+                        class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                </div>
+            </div>
+
+            <div id="formError" class="hidden bg-red-100 text-red-700 px-4 py-3 rounded"></div>
+
+            <div class="flex justify-between items-center border-t pt-4">
+                <button type="button" onclick="closeEmployeeModal()"
+                    class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-2 rounded-lg shadow">
+                    Đóng
+                </button>
+                <button type="submit" id="submitBtn"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-lg shadow flex items-center gap-2">
+                    <span id="submitBtnText">Thêm mới</span>
+                    <span id="submitBtnSpinner" class="hidden animate-spin">⟳</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Xác nhận xóa -->
+<div id="deleteConfirmModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+        <div class="p-6 space-y-4">
+            <h3 class="text-xl font-bold text-gray-800">Xác nhận xóa nhân viên</h3>
+            <p class="text-gray-600">
+                Bạn có chắc chắn muốn xóa nhân viên <strong id="deleteEmployeeName"></strong> không? 
+            </p>
+            <div id="deleteError" class="hidden bg-red-100 text-red-700 px-4 py-3 rounded text-sm"></div>
+        </div>
+        <div class="flex gap-3 bg-gray-50 px-6 py-4 rounded-b-xl">
+            <button type="button" onclick="closeDeleteModal()"
+                class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-4 py-2 rounded">
+                Hủy
+            </button>
+            <button type="button" onclick="confirmDelete()"
+                class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded flex items-center justify-center gap-2">
+                <span id="deleteBtnText">Xóa</span>
+                <span id="deleteBtnSpinner" class="hidden animate-spin">⟳</span>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Notifications -->
+<div id="toastContainer" class="fixed top-4 right-4 z-[9999] space-y-3 max-w-md"></div>
+
         <!--  -->
-        <div id="form-container" class="<?= (isset($_GET['add']) || isset($_GET['edit'])) ? '' : 'hidden' ?>">
-            <form action="" method="POST" class="bg-white p-6 rounded-xl shadow-lg mt-8">
-                <div class="flex justify-end">
-                    <button type="button" onclick="closeForm()"
-                        class="text-gray-400 hover:text-gray-600 text-xl font-bold">&times;</button>
-                </div>
-                <h2 class="text-2xl font-bold text-indigo-700 mb-6">
-                    <?= isset($_GET['add']) ? 'Thêm nhân viên mới' : 'Sửa thông tin nhân viên' ?>
-                </h2>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- ID Tài khoản (chỉ hiển thị khi thêm) -->
-                    <?php if (isset($_GET['add'])): ?>
-                        <div>
-                            <label class="block mb-1 text-sm font-medium text-gray-700">ID Tài khoản</label>
-                            <input type="text" name="ID_TK" required
-                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                        </div>
-                    <?php else: ?>
-                        <input type="hidden" name="ID_TK" value="<?= htmlspecialchars($editEmployee['ID_TK']) ?>">
-                    <?php endif; ?>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Họ tên</label>
-                        <input type="text" name="HO_TEN" value="<?= htmlspecialchars($editEmployee['HO_TEN'] ?? '') ?>" required
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Ngày sinh</label>
-                        <input type="date" name="NGAY_SINH" value="<?= htmlspecialchars($editEmployee['NGAY_SINH'] ?? '') ?>"
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Địa chỉ</label>
-                        <input type="text" name="DIA_CHI" value="<?= htmlspecialchars($editEmployee['DIA_CHI'] ?? '') ?>" required
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Số điện thoại</label>
-                        <input type="text" name="SDT" value="<?= htmlspecialchars($editEmployee['SDT'] ?? '') ?>" required
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Email</label>
-                        <input type="email" name="EMAIL" value="<?= htmlspecialchars($editEmployee['EMAIL'] ?? '') ?>" required
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Chi nhánh</label>
-                        <select name="ID_CN" class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" required>
-                            <?php if (!empty($branches)): ?>
-                                <?php foreach ($branches as $branch): ?>
-                                    <option value="<?= htmlspecialchars($branch['ID_CN']) ?>"
-                                        <?= isset($editEmployee) && (string)$editEmployee['ID_CN'] === (string)$branch['ID_CN'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($branch['TEN_CN']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            <?php else: ?>
-                                <option value="" disabled>Chưa có dữ liệu chi nhánh</option>
-                            <?php endif; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Chuyên môn</label>
-                        <input type="text" name="CHUYEN_MON" value="<?= htmlspecialchars($editEmployee['CHUYEN_MON'] ?? '') ?>"
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">Vai trò nội bộ</label>
-                        <select name="LOAI_NV"
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500">
-                            <?php
-                            $currentRoleEdit = $editEmployee['LOAI_NV'] ?? 'chuyen_trach';
-                            ?>
-                            <option value="chuyen_trach" <?= $currentRoleEdit === 'chuyen_trach' ? 'selected' : '' ?>>
-                                Nhân sự thường
-                            </option>
-                            <option value="quan_ly" <?= $currentRoleEdit === 'quan_ly' ? 'selected' : '' ?>>
-                                Quản lý chi nhánh
-                            </option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block mb-1 text-sm font-medium text-gray-700">
-                            <?= isset($_GET['add']) ? 'Mật khẩu' : 'Mật khẩu mới (bỏ trống nếu không đổi)' ?>
-                        </label>
-                        <input type="<?= isset($_GET['add']) ? 'password' : 'text' ?>" name="MAT_KHAU"
-                            class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500"
-                            <?= isset($_GET['add']) ? 'required' : '' ?> />
-                    </div>
-
-                </div>
-
-                <div class="mt-6 flex justify-between items-center">
-                    <!-- Nút đóng form -->
-                    <button type="button"
-                        onclick="closeForm()"
-                        class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-2 rounded-lg shadow transition">
-                        Đóng form
-                    </button>
-
-                    <!-- Nút lưu -->
-                    <button type="submit" name="<?= isset($_GET['add']) ? 'add_employee' : 'edit_employee' ?>"
-                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-lg shadow transition">
-                        <?= isset($_GET['add']) ? 'Thêm mới' : 'Cập nhật' ?>
-                    </button>
-                </div>
-
-            </form>
+        <div id="form-container" class="hidden">
+            <!-- Old form container - hidden but kept for compatibility -->
         </div>
 
 </body>
 
 <script>
-    function closeForm() {
-        const formContainer = document.getElementById('form-container');
-        if (formContainer) formContainer.classList.add('hidden');
-
-        // Xóa các tham số ?add hoặc ?edit trên URL để không mở lại form khi reload
-        const url = new URL(window.location.href);
-        url.searchParams.delete('add');
-        url.searchParams.delete('edit');
-        window.history.replaceState({}, document.title, url);
+// ==================== SMOOTH SCROLL TO TABLE ON PAGE LOAD ====================
+document.addEventListener('DOMContentLoaded', function() {
+    // Cek nếu URL có tham số page_num (chuyển trang)
+    const urlParams = new URLSearchParams(window.location.search);
+    const pageNum = urlParams.get('page_num');
+    
+    if (pageNum && pageNum !== '1') {
+        // Smooth scroll đến bảng danh sách
+        const employeesTable = document.getElementById('employeesTable');
+        if (employeesTable) {
+            setTimeout(() => {
+                employeesTable.scrollIntoView({ 
+                    behavior: 'smooth',
+                    block: 'start'
+                });
+            }, 300); // Delay 300ms để trang load xong
+        }
     }
+});
+
+// ==================== PAGINATION LINKS SCROLL ====================
+document.querySelectorAll('.pagination-link').forEach(link => {
+    link.addEventListener('click', function(e) {
+        const pageNum = this.getAttribute('data-page');
+        // Nếu click vào trang khác (không phải trang hiện tại)
+        if (pageNum) {
+            // Store nhân điểm muốn scroll, page load sẽ tự động scroll
+            sessionStorage.setItem('scrollToTable', 'true');
+        }
+    });
+});
+
+// API base URL
+const API_BASE = './api/api_employees.php';
+let deleteConfirmData = { id_tk: null, name: null };
+
+// ==================== TOAST NOTIFICATIONS ====================
+function showToast(message, type = 'info', duration = 4000) {
+    const toastContainer = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    
+    const bgColor = {
+        'success': 'bg-green-500',
+        'error': 'bg-red-500',
+        'info': 'bg-blue-500',
+        'warning': 'bg-yellow-500'
+    }[type] || 'bg-blue-500';
+
+    toast.className = `${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex justify-between items-center animate-pulse`;
+    toast.innerHTML = `
+        <span>${message}</span>
+        <button onclick="this.parentElement.remove()" class="ml-4 text-lg font-bold">&times;</button>
+    `;
+    
+    toastContainer.appendChild(toast);
+    
+    if (duration > 0) {
+        setTimeout(() => toast.remove(), duration);
+    }
+}
+
+// ==================== MODAL: THÊM/SỬA NHÂN VIÊN ====================
+function openAddEmployeeModal() {
+    resetEmployeeForm();
+    document.getElementById('modalAction').value = 'create';
+    document.getElementById('modalTitle').textContent = 'Thêm nhân viên mới';
+    document.getElementById('submitBtnText').textContent = 'Thêm mới';
+    document.getElementById('passwordLabel').innerHTML = 'Mật khẩu <span class="text-red-500">*</span>';
+    document.getElementById('MAT_KHAU').required = true;
+    document.getElementById('idTkField').style.display = 'block';
+    document.getElementById('ID_TK').required = true;
+    document.getElementById('employeeModal').classList.remove('hidden');
+    document.getElementById('employeeModal').classList.add('flex');
+}
+
+function openEditEmployeeModal(idTk) {
+    // Tìm dữ liệu từ table HTML hiện có
+    const row = document.querySelector(`tr[data-employee-id="${idTk}"]`);
+    
+    if (!row) {
+        showToast('Không tìm thấy dữ liệu nhân viên', 'error');
+        return;
+    }
+
+    // Extract data từ table row
+    const cells = row.querySelectorAll('td');
+    const hoTen = cells[1]?.querySelector('.font-semibold')?.textContent?.trim() || '';
+    const chuyen_mon = cells[1]?.querySelector('.text-sm')?.textContent?.trim() || '';
+    const email = cells[3]?.querySelector('p:first-child')?.textContent?.trim() || '';
+    const sdt = cells[3]?.querySelector('.text-sm')?.textContent?.trim() || '';
+    const tenCN = cells[2]?.textContent?.trim() || '';
+    
+    // Fetch full employee data via API
+    fetch(`${API_BASE}?action=search&limit=1000`)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success || !data.data.employees) {
+                throw new Error('Invalid API response');
+            }
+            const employee = data.data.employees.find(e => e.ID_TK === idTk);
+            
+            if (employee) {
+                document.getElementById('modalAction').value = 'update';
+                document.getElementById('modalTitle').textContent = 'Sửa thông tin nhân viên';
+                document.getElementById('submitBtnText').textContent = 'Cập nhật';
+                document.getElementById('passwordLabel').innerHTML = 'Mật khẩu mới (bỏ trống nếu không đổi)';
+                document.getElementById('MAT_KHAU').required = false;
+                document.getElementById('idTkField').style.display = 'none';
+                
+                document.getElementById('modalIdTk').value = employee.ID_TK;
+                document.getElementById('ID_TK').value = employee.ID_TK;
+                document.getElementById('HO_TEN').value = employee.HO_TEN || '';
+                document.getElementById('NGAY_SINH').value = employee.NGAY_SINH || '';
+                document.getElementById('DIA_CHI').value = employee.DIA_CHI || '';
+                document.getElementById('EMAIL').value = employee.EMAIL || '';
+                document.getElementById('SDT').value = employee.SDT || '';
+                document.getElementById('ID_CN').value = employee.ID_CN || '';
+                document.getElementById('CHUYEN_MON').value = employee.CHUYEN_MON || '';
+                document.getElementById('LOAI_NV').value = employee.LOAI_NV || 'chuyen_trach';
+                document.getElementById('MAT_KHAU').value = '';
+                
+                document.getElementById('employeeModal').classList.remove('hidden');
+                document.getElementById('employeeModal').classList.add('flex');
+            } else {
+                showToast('Không tìm thấy dữ liệu nhân viên trong hệ thống', 'error');
+            }
+        })
+        .catch(err => {
+            console.error('Error:', err);
+            showToast('Lỗi khi tải dữ liệu: ' + err.message, 'error');
+        });
+}
+
+function closeEmployeeModal() {
+    document.getElementById('employeeModal').classList.add('hidden');
+    document.getElementById('employeeModal').classList.remove('flex');
+    resetEmployeeForm();
+}
+
+function resetEmployeeForm() {
+    document.getElementById('employeeForm').reset();
+    document.getElementById('formError').classList.add('hidden');
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('submitBtnSpinner').classList.add('hidden');
+}
+
+document.getElementById('employeeForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const action = document.getElementById('modalAction').value;
+    const submitBtn = document.getElementById('submitBtn');
+    const spinnerEl = document.getElementById('submitBtnSpinner');
+    const errorEl = document.getElementById('formError');
+    
+    submitBtn.disabled = true;
+    spinnerEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+
+    const formData = new FormData(document.getElementById('employeeForm'));
+    formData.set('action', action);
+    
+    try {
+        const res = await fetch(API_BASE, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+            const successMsg = result.message || 'Thao tác thành công';
+            sessionStorage.setItem('employeeSuccessMessage', successMsg);
+            showToast(successMsg, 'success');
+            closeEmployeeModal();
+            setTimeout(() => location.reload(), 1200);
+        } else {
+            errorEl.textContent = result.message;
+            errorEl.classList.remove('hidden');
+            showToast(result.message, 'error', 5000);
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        errorEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+        errorEl.classList.remove('hidden');
+        showToast('Lỗi kết nối', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        spinnerEl.classList.add('hidden');
+    }
+});
+
+// ==================== MODAL: XÁC NHẬN XÓA ====================
+function openDeleteModal(idTk, name) {
+    deleteConfirmData = { id_tk: idTk, name: name };
+    document.getElementById('deleteEmployeeName').textContent = name;
+    document.getElementById('deleteError').classList.add('hidden');
+    document.getElementById('deleteConfirmModal').classList.remove('hidden');
+    document.getElementById('deleteConfirmModal').classList.add('flex');
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteConfirmModal').classList.add('hidden');
+    document.getElementById('deleteConfirmModal').classList.remove('flex');
+    deleteConfirmData = { id_tk: null, name: null };
+}
+
+async function confirmDelete() {
+    if (!deleteConfirmData.id_tk) return;
+    
+    const deleteBtn = document.querySelector('#deleteConfirmModal button[onclick="confirmDelete()"]');
+    const spinnerEl = document.getElementById('deleteBtnSpinner');
+    const errorEl = document.getElementById('deleteError');
+    
+    deleteBtn.disabled = true;
+    spinnerEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+
+    const formData = new FormData();
+    formData.append('action', 'delete');
+    formData.append('ID_TK', deleteConfirmData.id_tk);
+
+    try {
+        const res = await fetch(API_BASE, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            closeDeleteModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            errorEl.textContent = result.message;
+            errorEl.classList.remove('hidden');
+            showToast(result.message, 'error', 5000);
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        errorEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+        errorEl.classList.remove('hidden');
+        showToast('Lỗi kết nối', 'error');
+    } finally {
+        deleteBtn.disabled = false;
+        spinnerEl.classList.add('hidden');
+    }
+}
+
+// ==================== MODAL: CLOSE ON ESCAPE ====================
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeEmployeeModal();
+        closeDeleteModal();
+    }
+});
+
+// Close modal when clicking outside
+document.getElementById('employeeModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('employeeModal')) {
+        closeEmployeeModal();
+    }
+});
+
+document.getElementById('deleteConfirmModal').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('deleteConfirmModal')) {
+        closeDeleteModal();
+    }
+});
+
+// Restore success toast after page reload
+document.addEventListener('DOMContentLoaded', () => {
+    const successMsg = sessionStorage.getItem('employeeSuccessMessage');
+    if (successMsg) {
+        showToast(successMsg, 'success');
+        sessionStorage.removeItem('employeeSuccessMessage');
+    }
+});
 </script>

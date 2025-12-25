@@ -60,18 +60,49 @@ if (!$row) {
 $tongTien = $row['TONG_TIEN'];
 $id_cn = $row['ID_CN'];
 
-$stmtInsert = $conn->prepare("
-    INSERT INTO tai_chinh (ID_HD, NGAY_GIAO_DICH, SO_TIEN, LOAI_GIAO_DICH, ID_CN)
-    VALUES (?, NOW(), ?, 'doanh thu', ?)
+// Cập nhật trạng thái doanh thu từ "chờ thanh toán" -> "đã thanh toán"
+// (Doanh thu đã được ghi nhận khi hoàn thành công việc, bây giờ chỉ cập nhật trạng thái)
+$stmtUpdateRevenue = $conn->prepare("
+    UPDATE tai_chinh 
+    SET TRANG_THAI = 'đã thanh toán' 
+    WHERE ID_HD = ? AND LOAI_GIAO_DICH = 'doanh thu'
 ");
-if (!$stmtInsert) {
-    respondAndExit(false, 'Lỗi khi ghi nhận doanh thu: ' . $conn->error);
+
+if (!$stmtUpdateRevenue) {
+    respondAndExit(false, 'Lỗi khi cập nhật trạng thái doanh thu: ' . $conn->error);
 }
-$stmtInsert->bind_param('idi', $id_hd, $tongTien, $id_cn);
-if (!$stmtInsert->execute()) {
-    respondAndExit(false, 'Không thể ghi nhận giao dịch tài chính.');
+
+$stmtUpdateRevenue->bind_param('i', $id_hd);
+if (!$stmtUpdateRevenue->execute()) {
+    respondAndExit(false, 'Không thể cập nhật trạng thái doanh thu.');
 }
-$stmtInsert->close();
+$stmtUpdateRevenue->close();
+
+// Nếu doanh thu chưa được ghi (legacy data), ghi vào bây giờ
+$stmtCheckRevenue = $conn->prepare("
+    SELECT ID_TC FROM tai_chinh 
+    WHERE ID_HD = ? AND LOAI_GIAO_DICH = 'doanh thu'
+    LIMIT 1
+");
+if ($stmtCheckRevenue) {
+    $stmtCheckRevenue->bind_param('i', $id_hd);
+    $stmtCheckRevenue->execute();
+    $checkResult = $stmtCheckRevenue->get_result();
+    
+    if ($checkResult->num_rows === 0) {
+        // Chưa có doanh thu, ghi vào ngay lập tức
+        $stmtInsertRevenue = $conn->prepare("
+            INSERT INTO tai_chinh (ID_HD, NGAY_GIAO_DICH, SO_TIEN, LOAI_GIAO_DICH, LOAI_CHI_TIET, ID_CN, TRANG_THAI)
+            VALUES (?, NOW(), ?, 'doanh thu', 'Dịch vụ chụp ảnh', ?, 'đã thanh toán')
+        ");
+        if ($stmtInsertRevenue) {
+            $stmtInsertRevenue->bind_param('idi', $id_hd, $tongTien, $id_cn);
+            $stmtInsertRevenue->execute();
+            $stmtInsertRevenue->close();
+        }
+    }
+    $stmtCheckRevenue->close();
+}
 
 respondAndExit(true, 'Xác nhận thanh toán thành công!', [
     'invoiceId' => $id_hd,

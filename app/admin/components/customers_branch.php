@@ -373,50 +373,7 @@ if (!$branchId) {
 
 ensureBranchCustomerNotesTable($conn);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_note') {
-    $customerId = trim($_POST['ID_TK'] ?? '');
-    $note = trim($_POST['NOTE'] ?? '');
-    $tag = $_POST['TAG'] ?? 'binh_thuong';
-    $lastContact = normalizeDate($_POST['LAST_CONTACT'] ?? null);
-    $nextAction = normalizeDate($_POST['NEXT_ACTION'] ?? null);
-    $allowedTags = ['binh_thuong','tiem_nang','vip','nguy_co','can_cham_soc'];
-    if (!in_array($tag, $allowedTags, true)) {
-        $tag = 'binh_thuong';
-    }
-
-    if ($customerId === '') {
-        branchCustomerFlash('error', 'Thiếu mã khách hàng.');
-        redirectToCustomers();
-    }
-
-    $checkStmt = $conn->prepare('SELECT 1 FROM lich_hen WHERE ID_TK = ? AND ID_CHINHANH = ? LIMIT 1');
-    if ($checkStmt) {
-        $checkStmt->bind_param('si', $customerId, $branchId);
-        $checkStmt->execute();
-        $checkStmt->store_result();
-        if ($checkStmt->num_rows === 0) {
-            $checkStmt->close();
-            branchCustomerFlash('error', 'Khách hàng không thuộc chi nhánh của bạn.');
-            redirectToCustomers();
-        }
-        $checkStmt->close();
-    }
-
-    $stmt = $conn->prepare('
-        INSERT INTO branch_customer_notes (ID_CN, ID_TK, NOTE, TAG, LAST_CONTACT, NEXT_ACTION)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE NOTE = VALUES(NOTE), TAG = VALUES(TAG), LAST_CONTACT = VALUES(LAST_CONTACT), NEXT_ACTION = VALUES(NEXT_ACTION)
-    ');
-    if (!$stmt) {
-        branchCustomerFlash('error', 'Không thể lưu ghi chú.');
-        redirectToCustomers();
-    }
-    $stmt->bind_param('isssss', $branchId, $customerId, $note, $tag, $lastContact, $nextAction);
-    $ok = $stmt->execute();
-    $stmt->close();
-    branchCustomerFlash($ok ? 'success' : 'error', $ok ? 'Đã lưu ghi chú khách hàng.' : 'Lưu ghi chú thất bại.');
-    redirectToCustomers();
-}
+// Note functionality removed
 
 $filters = [
     'keyword' => trim($_GET['keyword'] ?? ''),
@@ -432,8 +389,6 @@ $appointments = fetchAppointments($conn, (int) $branchId, $filters);
 $revenueMap = fetchRevenueMap($conn, (int) $branchId, $filters);
 $ratingMap = fetchRatingMap($conn, (int) $branchId, $filters);
 $customers = aggregateCustomers($appointments, $revenueMap, $ratingMap);
-$customerIds = array_column($customers, 'ID_TK');
-$notesMap = fetchNotes($conn, (int) $branchId, $customerIds);
 
 $summary = [
     'total'          => count($customers),
@@ -443,7 +398,6 @@ $summary = [
     'revenue'        => 0.0,
     'avg_rating'     => 0.0,
     'rating_count'   => 0,
-    'needs_follow'   => 0,
 ];
 
 foreach ($customers as &$customer) {
@@ -452,14 +406,6 @@ foreach ($customers as &$customer) {
     $customer['status_label'] = $statusLabel;
     $segment = determineSegment($customer);
     $customer['segment'] = $segment;
-    $note = $notesMap[$customer['ID_TK']] ?? null;
-    if ($note) {
-      $customer['note'] = $note;
-      if (($note['TAG'] ?? '') === 'vip') {
-        $segment = 'VIP (đánh dấu)';
-        $customer['segment'] = $segment;
-      }
-    }
     $summary['revenue'] += $customer['total_revenue'];
     if ($customer['avg_rating']) {
         $summary['avg_rating'] += $customer['avg_rating'];
@@ -474,17 +420,6 @@ foreach ($customers as &$customer) {
     $first = $customer['first_booking'] ? new DateTimeImmutable($customer['first_booking']) : null;
     if ($first && $first->format('Y-m') === $now->format('Y-m')) {
         $summary['new_this_month']++;
-    }
-    $needsFollow = false;
-    $nextActionDate = ($note && !empty($note['NEXT_ACTION'])) ? $note['NEXT_ACTION'] : null;
-    if ($nextActionDate && $nextActionDate <= $now->format('Y-m-d')) {
-      $needsFollow = true;
-    }
-    if ($statusCode === 'at-risk' || $statusCode === 'no-history') {
-        $needsFollow = true;
-    }
-    if ($needsFollow) {
-        $summary['needs_follow']++;
     }
 }
 unset($customer);
@@ -572,11 +507,6 @@ $serviceTrends = fetchServiceTrends($conn, (int) $branchId);
       <p class="text-3xl font-bold text-green-700"><?= $summary['total'] ? formatCurrency($summary['revenue'] / max(1, $summary['total'])) : '0 đ' ?></p>
       <p class="mt-1 text-xs text-green-600">Tổng <?= formatCurrency($summary['revenue']) ?></p>
     </div>
-    <div class="rounded-xl border border-orange-200 bg-orange-50 p-4 shadow">
-      <p class="text-xs uppercase text-orange-700">Cần chăm sóc</p>
-      <p class="text-3xl font-bold text-orange-700"><?= number_format($summary['needs_follow']) ?></p>
-      <p class="mt-1 text-xs text-orange-600">Điểm hài lòng TB: <?= $summary['avg_rating'] ?></p>
-    </div>
   </div>
 
   <form class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow text-sm" method="GET">
@@ -644,6 +574,13 @@ $serviceTrends = fetchServiceTrends($conn, (int) $branchId);
       </div>
       <div class="divide-y divide-gray-100">
         <?php if ($pagedCustomers): ?>
+          <div class="hidden lg:grid lg:grid-cols-12 gap-2 px-6 py-3 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase">
+            <div class="lg:col-span-3">Khách hàng</div>
+            <div class="lg:col-span-2">Liên hệ</div>
+            <div class="lg:col-span-2">Lịch gần nhất</div>
+            <div class="lg:col-span-2">Doanh thu</div>
+            <div class="lg:col-span-2">Trạng thái & Hành động</div>
+          </div>
           <?php foreach ($pagedCustomers as $customer): ?>
             <?php
               $payload = json_encode([
@@ -661,42 +598,86 @@ $serviceTrends = fetchServiceTrends($conn, (int) $branchId);
                 'status_label' => $customer['status_label'],
                 'segment' => $customer['segment'],
                 'avg_rating' => $customer['avg_rating'],
-                'note' => $customer['note']['NOTE'] ?? null,
-                'tag' => $customer['note']['TAG'] ?? null,
               ], JSON_UNESCAPED_UNICODE);
             ?>
-            <div class="flex flex-col gap-3 px-6 py-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <p class="text-base font-semibold text-gray-900"><?= htmlspecialchars($customer['HO_TEN']) ?></p>
-                <p class="text-sm text-gray-500">ID: <?= htmlspecialchars($customer['ID_TK']) ?> • <?= htmlspecialchars($customer['segment']) ?></p>
-                <p class="text-sm text-gray-500"><i class="fas fa-phone mr-1"></i><?= htmlspecialchars($customer['SDT']) ?> • <i class="fas fa-envelope ml-2 mr-1"></i><?= htmlspecialchars($customer['EMAIL']) ?></p>
+            <!-- Desktop View (Table-like) -->
+            <div class="hidden lg:grid lg:grid-cols-12 gap-2 px-6 py-4 items-start border-b border-gray-100 hover:bg-gray-50">
+              <!-- Column 1: Customer Info -->
+              <div class="lg:col-span-3">
+                <p class="font-semibold text-gray-900 text-sm"><?= htmlspecialchars($customer['HO_TEN']) ?></p>
+                <p class="text-xs text-gray-500">ID: <?= htmlspecialchars($customer['ID_TK']) ?></p>
+                <p class="text-xs text-gray-500"><?= htmlspecialchars($customer['segment']) ?></p>
               </div>
-              <div class="grid grid-cols-2 gap-3 text-sm text-gray-600">
-                <div>
-                  <p class="text-xs uppercase text-gray-400">Lịch gần nhất</p>
-                  <p class="font-semibold text-gray-800"><?= formatDateLabel($customer['last_booking']) ?></p>
-                  <p class="text-xs text-gray-400">Hoàn thành: <?= $customer['completed_count'] ?></p>
-                </div>
-                <div>
-                  <p class="text-xs uppercase text-gray-400">Doanh thu</p>
-                  <p class="font-semibold text-gray-800"><?= formatCurrency((float) $customer['total_revenue']) ?></p>
-                  <p class="text-xs text-gray-400">Lịch: <?= $customer['total_bookings'] ?></p>
-                </div>
+              
+              <!-- Column 2: Contact -->
+              <div class="lg:col-span-2">
+                <p class="text-xs text-gray-600"><i class="fas fa-phone mr-1 text-gray-400"></i><?= htmlspecialchars($customer['SDT']) ?></p>
+                <p class="text-xs text-gray-600"><i class="fas fa-envelope mr-1 text-gray-400"></i><?= htmlspecialchars($customer['EMAIL']) ?></p>
               </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700"><?= htmlspecialchars($customer['status_label']) ?></span>
+              
+              <!-- Column 3: Last Booking -->
+              <div class="lg:col-span-2">
+                <p class="text-sm font-semibold text-gray-800"><?= formatDateLabel($customer['last_booking']) ?></p>
+                <p class="text-xs text-gray-500">Hoàn thành: <?= $customer['completed_count'] ?> / <?= $customer['total_bookings'] ?></p>
+              </div>
+              
+              <!-- Column 4: Revenue -->
+              <div class="lg:col-span-2">
+                <p class="text-sm font-semibold text-green-700"><?= formatCurrency((float) $customer['total_revenue']) ?></p>
+                <p class="text-xs text-gray-500">Lịch: <?= $customer['total_bookings'] ?></p>
+              </div>
+              
+              <!-- Column 5: Status & Actions -->
+              <div class="lg:col-span-2 flex items-center gap-1 flex-wrap">
+                <span class="rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700"><?= htmlspecialchars($customer['status_label']) ?></span>
                 <?php if ($customer['avg_rating']): ?>
-                  <span class="rounded-full bg-yellow-50 px-3 py-1 text-xs font-semibold text-yellow-700"><i class="fas fa-star mr-1"></i><?= $customer['avg_rating'] ?></span>
+                  <span class="rounded-full bg-yellow-50 px-2 py-1 text-xs font-semibold text-yellow-700"><i class="fas fa-star mr-0.5"></i><?= $customer['avg_rating'] ?></span>
                 <?php endif; ?>
-                <button data-customer='<?= htmlspecialchars($payload, ENT_QUOTES, 'UTF-8') ?>' class="rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-600 hover:border-indigo-400 hover:text-indigo-600">Xem hồ sơ</button>
-                <button data-note='<?= htmlspecialchars(json_encode([
-                  'id' => $customer['ID_TK'],
-                  'name' => $customer['HO_TEN'],
-                  'note' => $customer['note']['NOTE'] ?? '',
-                  'tag' => $customer['note']['TAG'] ?? 'binh_thuong',
-                  'last_contact' => $customer['note']['LAST_CONTACT'] ?? '',
-                  'next_action' => $customer['note']['NEXT_ACTION'] ?? '',
-                ], JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8') ?>' class="rounded-full border border-orange-200 bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-700 hover:bg-orange-100">Ghi chú</button>
+                <button data-customer='<?= htmlspecialchars($payload, ENT_QUOTES, 'UTF-8') ?>' class="rounded px-2 py-1 text-xs font-semibold border border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50">Xem</button>
+              </div>
+            </div>
+
+            <!-- Mobile View (Card) -->
+            <div class="lg:hidden px-4 py-4 border-b border-gray-100">
+              <div class="flex justify-between items-start mb-3">
+                <div>
+                  <p class="font-semibold text-gray-900"><?= htmlspecialchars($customer['HO_TEN']) ?></p>
+                  <p class="text-xs text-gray-500">ID: <?= htmlspecialchars($customer['ID_TK']) ?> • <?= htmlspecialchars($customer['segment']) ?></p>
+                </div>
+                <span class="rounded-full bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 whitespace-nowrap"><?= htmlspecialchars($customer['status_label']) ?></span>
+              </div>
+              
+              <div class="grid grid-cols-2 gap-3 text-xs mb-3">
+                <div>
+                  <p class="text-gray-500 font-semibold">Liên hệ</p>
+                  <p class="text-gray-700"><i class="fas fa-phone mr-1"></i><?= htmlspecialchars($customer['SDT']) ?></p>
+                  <p class="text-gray-700"><i class="fas fa-envelope mr-1"></i><?= htmlspecialchars($customer['EMAIL']) ?></p>
+                </div>
+                <div>
+                  <p class="text-gray-500 font-semibold">Lịch gần nhất</p>
+                  <p class="text-gray-700"><?= formatDateLabel($customer['last_booking']) ?></p>
+                  <p class="text-gray-600">Hoàn thành: <?= $customer['completed_count'] ?></p>
+                </div>
+              </div>
+              
+              <div class="grid grid-cols-2 gap-3 text-xs mb-3">
+                <div>
+                  <p class="text-gray-500 font-semibold">Doanh thu</p>
+                  <p class="text-green-700 font-semibold"><?= formatCurrency((float) $customer['total_revenue']) ?></p>
+                  <p class="text-gray-600">Lịch: <?= $customer['total_bookings'] ?></p>
+                </div>
+                <div>
+                  <p class="text-gray-500 font-semibold">Đánh giá</p>
+                  <?php if ($customer['avg_rating']): ?>
+                    <p class="text-yellow-700"><i class="fas fa-star mr-1"></i><?= $customer['avg_rating'] ?></p>
+                  <?php else: ?>
+                    <p class="text-gray-500">Chưa có</p>
+                  <?php endif; ?>
+                </div>
+              </div>
+              
+              <div class="flex gap-2">
+                <button data-customer='<?= htmlspecialchars($payload, ENT_QUOTES, 'UTF-8') ?>' class="flex-1 rounded px-3 py-2 text-xs font-semibold border border-gray-200 text-gray-600 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50">Xem hồ sơ</button>
               </div>
             </div>
           <?php endforeach; ?>
@@ -719,7 +700,6 @@ $serviceTrends = fetchServiceTrends($conn, (int) $branchId);
         <h3 class="text-base font-semibold text-gray-800">Insight nhanh</h3>
         <ul class="mt-3 space-y-2 text-sm text-gray-600">
           <li>• Dịch vụ được đặt nhiều: <?= $serviceTrends ? htmlspecialchars($serviceTrends[0]['TEN_DV']) . ' (' . $serviceTrends[0]['total'] . ')' : 'Chưa có dữ liệu' ?></li>
-          <li>• Tỷ lệ khách cần chăm sóc: <?= $summary['total'] ? round($summary['needs_follow'] / max(1, $summary['total']) * 100) : 0 ?>%</li>
           <li>• Điểm hài lòng trung bình: <?= $summary['avg_rating'] ?></li>
         </ul>
         <?php if ($serviceTrends): ?>
@@ -755,52 +735,26 @@ $serviceTrends = fetchServiceTrends($conn, (int) $branchId);
   </div>
 </div>
 
-<div id="noteModal" class="fixed inset-0 z-40 hidden flex items-center justify-center bg-black/30 px-4">
-  <div class="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
-    <div class="flex items-center justify-between">
-      <h3 class="text-lg font-semibold text-gray-800">Ghi chú khách hàng</h3>
-      <button id="closeNoteModal" class="text-gray-500 hover:text-gray-700"><i class="fas fa-times"></i></button>
-    </div>
-    <form method="POST" class="mt-4 space-y-4">
-      <input type="hidden" name="action" value="save_note">
-      <input type="hidden" name="ID_TK" id="noteCustomerId">
-      <div>
-        <label class="text-xs font-semibold text-gray-500">Khách hàng</label>
-        <p id="noteCustomerName" class="text-sm font-medium text-gray-800"></p>
-      </div>
-      <div>
-        <label class="text-xs font-semibold text-gray-500">Ghi chú</label>
-        <textarea name="NOTE" id="noteContent" rows="4" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500"></textarea>
-      </div>
-      <div class="grid grid-cols-2 gap-3 text-sm">
-        <div>
-          <label class="text-xs font-semibold text-gray-500">Phân loại</label>
-          <select name="TAG" id="noteTag" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500">
-            <option value="binh_thuong">Bình thường</option>
-            <option value="tiem_nang">Tiềm năng</option>
-            <option value="vip">VIP</option>
-            <option value="nguy_co">Nguy cơ rời đi</option>
-            <option value="can_cham_soc">Cần chăm sóc</option>
-          </select>
-        </div>
-        <div>
-          <label class="text-xs font-semibold text-gray-500">Ngày liên hệ cuối</label>
-          <input type="date" name="LAST_CONTACT" id="noteLastContact" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500">
-        </div>
-        <div>
-          <label class="text-xs font-semibold text-gray-500">Ngày nhắc lại</label>
-          <input type="date" name="NEXT_ACTION" id="noteNextAction" class="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:border-indigo-500">
-        </div>
-      </div>
-      <div class="flex justify-end gap-3 pt-2">
-        <button type="button" id="cancelNoteModal" class="rounded-lg bg-gray-100 px-4 py-2 text-gray-600">Hủy</button>
-        <button type="submit" class="rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700">Lưu ghi chú</button>
-      </div>
-    </form>
-  </div>
-</div>
-
 <script>
+// Utility: Get base API path - detect from document root
+function getApiPath(endpoint) {
+  const pathname = window.location.pathname;
+  console.log('[getApiPath] pathname:', pathname);
+  
+  // Detect base path from URL
+  // If URL contains /StygianBlue/, use absolute path /StygianBlue/api/
+  // Otherwise use relative path
+  let basePath = '../../../api/';
+  
+  if (pathname.includes('/StygianBlue/')) {
+    basePath = '/StygianBlue/api/';
+  }
+  
+  const fullPath = basePath + endpoint;
+  console.log('[getApiPath] returning:', fullPath);
+  return fullPath;
+}
+
 const profile = document.getElementById('customerProfile');
 const profileName = document.getElementById('profileName');
 const profileContact = document.getElementById('profileContact');
@@ -824,28 +778,6 @@ document.querySelectorAll('[data-customer]').forEach(btn => {
   });
 });
 
-const noteModal = document.getElementById('noteModal');
-const noteCustomerId = document.getElementById('noteCustomerId');
-const noteCustomerName = document.getElementById('noteCustomerName');
-const noteContent = document.getElementById('noteContent');
-const noteTag = document.getElementById('noteTag');
-const noteLastContact = document.getElementById('noteLastContact');
-const noteNextAction = document.getElementById('noteNextAction');
-const closeNoteModal = () => noteModal.classList.add('hidden');
-
-document.querySelectorAll('[data-note]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const payload = JSON.parse(btn.dataset.note);
-    noteCustomerId.value = payload.id;
-    noteCustomerName.textContent = payload.name;
-    noteContent.value = payload.note || '';
-    noteTag.value = payload.tag || 'binh_thuong';
-    noteLastContact.value = payload.last_contact || '';
-    noteNextAction.value = payload.next_action || '';
-    noteModal.classList.remove('hidden');
-  });
-});
-
 document.getElementById('closeNoteModal').addEventListener('click', closeNoteModal);
 document.getElementById('cancelNoteModal').addEventListener('click', closeNoteModal);
 noteModal.addEventListener('click', (e) => {
@@ -853,4 +785,53 @@ noteModal.addEventListener('click', (e) => {
     closeNoteModal();
   }
 });
+
+// Handle note form submission via AJAX
+const noteFormElement = noteModal.querySelector('form');
+if (noteFormElement) {
+  noteFormElement.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(noteFormElement);
+    formData.append('action', 'save_note');
+    
+    try {
+      const response = await fetch(getApiPath('branch-customers.php'), {
+        method: 'POST',
+        body: formData
+      });
+      
+      const result = await response.json();
+      
+      if (result.success) {
+        // Show success message
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 z-50 rounded-lg bg-green-50 text-green-700 border border-green-200 px-4 py-3';
+        toast.textContent = result.message || 'Đã lưu ghi chú khách hàng.';
+        document.body.appendChild(toast);
+        
+        setTimeout(() => {
+          toast.remove();
+          closeNoteModal();
+        }, 2000);
+      } else {
+        // Show error message
+        const toast = document.createElement('div');
+        toast.className = 'fixed top-4 right-4 z-50 rounded-lg bg-red-50 text-red-700 border border-red-200 px-4 py-3';
+        toast.textContent = result.message || 'Lưu ghi chú thất bại.';
+        document.body.appendChild(toast);
+        
+        setTimeout(() => toast.remove(), 3000);
+      }
+    } catch (err) {
+      console.error('Error:', err);
+      const toast = document.createElement('div');
+      toast.className = 'fixed top-4 right-4 z-50 rounded-lg bg-red-50 text-red-700 border border-red-200 px-4 py-3';
+      toast.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+      document.body.appendChild(toast);
+      
+      setTimeout(() => toast.remove(), 3000);
+    }
+  });
+}
 </script>

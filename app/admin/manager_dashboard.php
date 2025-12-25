@@ -1,5 +1,7 @@
 <?php
 session_start();
+// Buffer output so included components can safely redirect with header()
+if (!ob_get_level()) { ob_start(); }
 require_once __DIR__ . '/../../middlewares/require_staff_manager.php';
 
 // XỬ LÝ POST TRƯỚC KHI CÓ BẤT KỲ OUTPUT HTML NÀO
@@ -222,12 +224,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'reports'           => 'manager_reports.php',
             'assignments'       => 'manager_assignments.php',
             'appointments'      => 'manager_appointments.php',
+            'employees'         => 'manager_employees.php',
+            'deleted_employees' => 'manager_deleted_employees.php',
             'invoices'          => 'manager_invoices.php',
             'hoa_don_chi_tiet'  => 'hoa_don_chi_tiet.php',
-            'expenses'          => 'manager_expenses.php',
+            'expenses'          => 'manager_expenses_v2.php',
             'costumes'          => 'manage_costumes.php',
             'costume_rentals'   => 'manage_costume_rentals.php',
-            'salaries'          => 'manager_salaries.php',
+            'salaries'          => 'manage_salaries.php',
             'equipment'         => 'equipment_branch.php',     // có thể dùng chung với admin nếu bạn muốn
             'customers'         => 'customers_branch.php',
             'feedback'          => 'manage_feedback.php',      // file này có thể đã tồn tại

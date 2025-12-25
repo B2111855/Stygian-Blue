@@ -48,9 +48,11 @@ class VNPayService
             'vnp_IpAddr' => $payload['ipAddress'] ?? '127.0.0.1',
             'vnp_CreateDate' => $now->format('YmdHis'),
             'vnp_ExpireDate' => $expireDate,
-            'vnp_ReturnUrl' => $this->config->returnUrl,
+            'vnp_ReturnUrl' => $payload['returnUrl'] ?? $this->config->returnUrl,
             'vnp_CurrCode' => 'VND'
         ];
+
+        // Note: vnp_IpnUrl không được truyền qua params vì VNPay sandbox yêu cầu cấu hình trong dashboard
 
         if (!empty($payload['bankCode'])) {
             $params['vnp_BankCode'] = $payload['bankCode'];

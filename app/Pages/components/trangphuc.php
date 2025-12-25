@@ -153,18 +153,17 @@ $defaultImagePath = 'public/images/bg01.png';
 $kw        = trim($_GET['q'] ?? '');
 $branch    = $_GET['cn'] ?? '';
 $category  = $_GET['loai'] ?? '';
-$size      = $_GET['size'] ?? '';
-$color     = $_GET['mau'] ?? '';
 $minPrice  = $_GET['min'] ?? '';
 $maxPrice  = $_GET['max'] ?? '';
 $sort      = $_GET['sort'] ?? 'price_desc';
 
-$rentFrom  = $_GET['from'] ?? '';
-$rentTo    = $_GET['to'] ?? '';
-$qty       = (int)($_GET['qty'] ?? 1);
-if ($qty < 1) $qty = 1;
+// Debug: log giá trị để kiểm tra
+// error_log("DEBUG trangphuc.php - URL: " . $_SERVER['REQUEST_URI']);
+// error_log("DEBUG trangphuc.php - minPrice: " . var_export($minPrice, true));
+// error_log("DEBUG trangphuc.php - maxPrice: " . var_export($maxPrice, true));
+// error_log("DEBUG trangphuc.php - GET: " . print_r($_GET, true));
 
-// ==== Lấy danh sách chi nhánh, loại, size, màu cho bộ lọc ====
+// ==== Lấy danh sách chi nhánh, loại cho bộ lọc ====
 $branches = [];
 if ($brs = $conn->query("SELECT ID_CN, TEN_CN FROM CHI_NHANH ORDER BY TEN_CN ASC")) {
   while ($r = $brs->fetch_assoc()) $branches[] = $r;
@@ -177,24 +176,12 @@ if ($cats = $conn->query("SELECT ID_LOAI, TEN_LOAI FROM trang_phuc_loai ORDER BY
   $cats->free();
 }
 
-$sizes = [];
-if ($sz = $conn->query("SELECT DISTINCT SIZE FROM trang_phuc WHERE SIZE IS NOT NULL AND SIZE <> '' ORDER BY SIZE")) {
-  while ($r = $sz->fetch_row()) $sizes[] = $r[0];
-  $sz->free();
-}
-
-$colors = [];
-if ($cl = $conn->query("SELECT DISTINCT MAU_SAC FROM trang_phuc WHERE MAU_SAC IS NOT NULL AND MAU_SAC <> '' ORDER BY MAU_SAC")) {
-  while ($r = $cl->fetch_row()) $colors[] = $r[0];
-  $cl->free();
-}
-
 // ==== New schema: GIA_THUE trực tiếp trong bảng trang_phuc ====
 $priceExpr = 'COALESCE(tp.GIA_THUE, 0)';
 
 $imageJoin = "LEFT JOIN (\n  SELECT ID_TP, SUBSTRING_INDEX(GROUP_CONCAT(URL ORDER BY IS_COVER DESC, THU_TU ASC, ID_HA ASC SEPARATOR '||'), '||', 1) AS URL\n  FROM trang_phuc_hinh_anh\n  WHERE IS_ACTIVE = 1\n  GROUP BY ID_TP\n) ha ON ha.ID_TP = tp.ID_TRANG_PHUC";
 
-$sql = "SELECT\n  tp.ID_TRANG_PHUC AS ID_TP,\n  tp.TEN AS TEN_TP,\n  tp.SIZE,\n  tp.MAU_SAC AS MAU,\n  tp.TRANG_THAI AS TINH_TRANG,\n  tp.GHI_CHU,\n  tp.ID_CN,\n  cn.TEN_CN,\n  COALESCE(tp.GIA_THUE, 0) AS DON_GIA,\n  ha.URL AS HINH_ANH,\n  loai.TEN_LOAI,\n  loai.ID_LOAI\nFROM trang_phuc tp\nJOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\nLEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI\n$imageJoin";
+$sql = "SELECT\n  tp.ID_TRANG_PHUC AS ID_TP,\n  tp.TEN AS TEN_TP,\n  tp.SIZE,\n  tp.MAU_SAC AS MAU,\n  tp.TRANG_THAI AS TINH_TRANG,\n  tp.GHI_CHU,\n  tp.ID_CN,\n  tp.SCOPE_TYPE,\n  tp.ID_CN_OWNER,\n  cn.TEN_CN,\n  COALESCE(tp.GIA_THUE, 0) AS DON_GIA,\n  ha.URL AS HINH_ANH,\n  loai.TEN_LOAI,\n  loai.ID_LOAI\nFROM trang_phuc tp\nLEFT JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN\nLEFT JOIN trang_phuc_loai loai ON loai.ID_LOAI = tp.ID_LOAI\n$imageJoin";
 
 $params = [];
 $types  = '';
@@ -205,21 +192,17 @@ if ($kw !== '') {
   $params[] = $kw;
 }
 if ($branch !== '' && ctype_digit($branch)) {
-  $sql .= " AND tp.ID_CN = ?";
+  // Lọc theo chi nhánh: bao gồm cả trang phục global
+  $sql .= " AND (tp.ID_CN = ? OR tp.SCOPE_TYPE = 'global')";
   $types .= 'i';
   $params[] = (int)$branch;
 }
+if ($category !== '' && ctype_digit($category)) {
+  $sql .= " AND tp.ID_LOAI = ?";
+  $types .= 'i';
+  $params[] = (int)$category;
+}
 $sql .= " AND tp.TRANG_THAI = 'available'";
-if ($size !== '') {
-  $sql .= " AND tp.SIZE = ?";
-  $types .= 's';
-  $params[] = $size;
-}
-if ($color !== '') {
-  $sql .= " AND tp.MAU_SAC = ?";
-  $types .= 's';
-  $params[] = $color;
-}
 if ($minPrice !== '' && is_numeric($minPrice)) {
   $sql .= " AND $priceExpr >= ?";
   $types .= 'i';
@@ -298,7 +281,9 @@ foreach ($rawRows as $row) {
       'TOTAL_ITEMS' => 0,
       'AVAILABLE_ITEMS' => 0,
       'MIN_PRICE_AVAILABLE' => null,
+      'MAX_PRICE_AVAILABLE' => null,
       'MIN_PRICE_OVERALL' => null,
+      'MAX_PRICE_OVERALL' => null,
       'REP_IMAGE' => $row['HINH_ANH'] ?? '',
       'REP_ITEM_ID' => $row['ID_TP'] ?? null,
     ];
@@ -309,6 +294,9 @@ foreach ($rawRows as $row) {
     $typeMap[$idLoai]['MIN_PRICE_OVERALL'] = $priceInt;
     // Cập nhật representative item ngay cả khi chưa khả dụng để có ID chi tiết
     $typeMap[$idLoai]['REP_ITEM_ID'] = $row['ID_TP'] ?? $typeMap[$idLoai]['REP_ITEM_ID'];
+  }
+  if ($typeMap[$idLoai]['MAX_PRICE_OVERALL'] === null || $priceInt > $typeMap[$idLoai]['MAX_PRICE_OVERALL']) {
+    $typeMap[$idLoai]['MAX_PRICE_OVERALL'] = $priceInt;
   }
   $status = $row['TINH_TRANG'] ?? '';
   $isAvail = in_array($status, ['available','san_sang']);
@@ -323,20 +311,25 @@ foreach ($rawRows as $row) {
       // Luôn cập nhật representative item id sang item khả dụng rẻ nhất
       $typeMap[$idLoai]['REP_ITEM_ID'] = $row['ID_TP'] ?? $typeMap[$idLoai]['REP_ITEM_ID'];
     }
+    if ($typeMap[$idLoai]['MAX_PRICE_AVAILABLE'] === null || $priceInt > $typeMap[$idLoai]['MAX_PRICE_AVAILABLE']) {
+      $typeMap[$idLoai]['MAX_PRICE_AVAILABLE'] = $priceInt;
+    }
   }
 }
 
 // Chuyển sang mảng để render
 $catalogItems = [];
 foreach ($typeMap as $g) {
-  // Giá hiển thị: ưu tiên giá thấp nhất của item khả dụng, nếu không dùng giá thấp nhất chung
-  $displayPrice = $g['MIN_PRICE_AVAILABLE'] !== null ? $g['MIN_PRICE_AVAILABLE'] : ($g['MIN_PRICE_OVERALL'] ?? 0);
+  // Giá hiển thị: ưu tiên giá của item khả dụng, nếu không dùng giá chung
+  $minPrice = $g['MIN_PRICE_AVAILABLE'] !== null ? $g['MIN_PRICE_AVAILABLE'] : ($g['MIN_PRICE_OVERALL'] ?? 0);
+  $maxPrice = $g['MAX_PRICE_AVAILABLE'] !== null ? $g['MAX_PRICE_AVAILABLE'] : ($g['MAX_PRICE_OVERALL'] ?? 0);
   $catalogItems[] = [
     'ID_LOAI' => $g['ID_LOAI'],
     'TEN_LOAI' => $g['TEN_LOAI'],
     'TOTAL_ITEMS' => $g['TOTAL_ITEMS'],
     'AVAILABLE_ITEMS' => $g['AVAILABLE_ITEMS'],
-    'DON_GIA' => $displayPrice,
+    'MIN_PRICE' => $minPrice,
+    'MAX_PRICE' => $maxPrice,
     'HINH_ANH' => $g['REP_IMAGE'],
     'REP_ITEM_ID' => $g['REP_ITEM_ID'],
   ];
@@ -371,29 +364,14 @@ if ($category !== '' && ctype_digit($category)) {
     }
   }
 }
-if ($size !== '') {
-  $activeFilters[] = 'Size: ' . h($size);
-}
-if ($color !== '') {
-  $activeFilters[] = 'Màu: ' . h($color);
-}
-if ($minPrice !== '') {
+if ($minPrice !== '' && (int)$minPrice > 0) {
   $activeFilters[] = 'Giá từ: ' . number_format((int)$minPrice, 0, ',', '.') . '₫';
 }
-if ($maxPrice !== '') {
+if ($maxPrice !== '' && (int)$maxPrice > 0) {
   $activeFilters[] = 'Giá đến: ' . number_format((int)$maxPrice, 0, ',', '.') . '₫';
 }
-if ($rentFrom !== '') {
-  $activeFilters[] = 'Thuê từ: ' . h($rentFrom);
-}
-if ($rentTo !== '') {
-  $activeFilters[] = 'Đến: ' . h($rentTo);
-}
-if ($qty > 1) {
-  $activeFilters[] = 'Số lượng: ' . h($qty);
-}
 
-$advancedOpen = $size !== '' || $color !== '' || $minPrice !== '' || $maxPrice !== '' || $rentFrom !== '' || $rentTo !== '' || $qty > 1;
+$advancedOpen = ($minPrice !== '' && (int)$minPrice > 0) || ($maxPrice !== '' && (int)$maxPrice > 0);
 
 $currentCustomerId = $_SESSION['user']['ID_TK'] ?? null;
 
@@ -547,7 +525,7 @@ $heroBackgroundUrl = $defaultImageUrl;
         align-self: flex-start;
       }
     }
-    .square-img {
+    .portrait-img {
       width: 100%;
       aspect-ratio: 3 / 4;
       object-fit: cover;
@@ -586,18 +564,7 @@ $heroBackgroundUrl = $defaultImageUrl;
       transform: translateY(-4px);
       box-shadow: 0 28px 60px -28px rgba(46, 64, 161, 0.35);
     }
-    .status-badge {
-      position: absolute;
-      top: 0.65rem;
-      left: 0.65rem;
-      border-radius: 999px;
-      padding: 0.3rem 0.75rem;
-      font-size: 0.65rem;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      box-shadow: 0 10px 25px -18px rgba(17, 24, 39, 0.5);
-    }
+    /* status-badge removed per UX request */
     .card-attributes {
       display: flex;
       flex-wrap: wrap;
@@ -633,51 +600,33 @@ $heroBackgroundUrl = $defaultImageUrl;
 </head>
 <body class="min-h-screen text-slate-800">
   <div class="page-shell">
+    <nav class="mb-6 flex items-center gap-2">
+      <?php $tabActive = ($_GET['tab'] ?? 'items') === 'items'; ?>
+      <a href="?tab=items" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold border <?php echo $tabActive ? 'bg-white text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200'; ?>">Trang phục</a>
+      <a href="?tab=packages" class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold border <?php echo !$tabActive ? 'bg-white text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200'; ?>">Gói trang phục</a>
+    </nav>
+    <?php $currentTab = ($_GET['tab'] ?? 'items'); ?>
+    <?php if ($currentTab === 'items'): ?>
     <header class="hero-grid mb-12">
       <div class="space-y-6">
         <div class="space-y-3">
           <p class="text-sm font-medium uppercase tracking-[0.3em] text-indigo-500">Stygian Blue Studio</p>
-          <h1 class="hero-title text-4xl md:text-5xl font-semibold text-slate-900">Khám phá tủ đồ phù hợp cho từng khoảnh khắc</h1>
+          <h1 class="hero-title text-4xl md:text-5xl font-semibold text-slate-900">Khám phá các loại trang phục phù hợp</h1>
           <p class="text-base text-slate-600 max-w-2xl">
-            Lọc nhanh, xem thông tin rõ ràng và đặt lịch thuê chỉ trong một bước để bạn luôn sẵn sàng cho mọi sự kiện.
+            Duyệt theo loại trang phục, xem khoảng giá và số lượng khả dụng. Sau đó chọn item cụ thể với size và màu bạn thích.
           </p>
-        </div>
-        <div class="hero-quick-actions">
-          <div class="hero-pill">
-            <span>Nhập từ khóa yêu thích</span>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-slate-800"
-              data-scroll-to="filters"
-            >
-              Bắt đầu lọc
-              <svg width="16" height="16" fill="none" stroke="currentColor" class="opacity-80">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m11 11 4 4m-2.5-7a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11 0Z" />
-              </svg>
-            </button>
-          </div>
-          <div class="hero-pill">
-            <span>Mở bộ lọc nâng cao</span>
-            <button
-              type="button"
-              class="inline-flex items-center gap-2 rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 bg-white hover:border-slate-300"
-              data-scroll-to="filters"
-            >
-              Xem bộ lọc
-            </button>
-          </div>
         </div>
         <div class="hero-metrics">
           <div class="hero-metric">
-            <p class="text-sm font-medium text-slate-500">Trang phục sẵn sàng</p>
+            <p class="text-sm font-medium text-slate-500">Loại có sẵn</p>
             <p class="text-3xl font-semibold text-slate-900"><?= number_format($readyCount, 0, ',', '.') ?></p>
           </div>
           <div class="hero-metric">
-            <p class="text-sm font-medium text-slate-500">Chi nhánh phục vụ</p>
+            <p class="text-sm font-medium text-slate-500">Chi nhánh</p>
             <p class="text-3xl font-semibold text-slate-900"><?= number_format(count($branches), 0, ',', '.') ?></p>
           </div>
           <div class="hero-metric">
-            <p class="text-sm font-medium text-slate-500">Nhóm trang phục</p>
+            <p class="text-sm font-medium text-slate-500">Tổng loại</p>
             <p class="text-3xl font-semibold text-slate-900"><?= number_format(count($categories), 0, ',', '.') ?></p>
           </div>
         </div>
@@ -686,129 +635,20 @@ $heroBackgroundUrl = $defaultImageUrl;
         <div class="absolute inset-0 bg-gradient-to-br from-indigo-500/40 via-transparent to-slate-900/80"></div>
         <div class="absolute bottom-6 left-6 right-6 rounded-2xl border border-white/20 bg-white/15 p-5 backdrop-blur-md">
           <p class="text-xs uppercase tracking-[0.3em] text-white/70">Lookbook</p>
-          <p class="text-2xl font-semibold leading-tight">98% khách hàng chọn được trang phục trong <span class="text-indigo-200">dưới 3 phút</span></p>
-          <p class="text-sm text-white/80 mt-2">Bộ lọc thông minh giúp đề xuất đúng size, đúng chi nhánh còn hàng.</p>
+          <p class="text-2xl font-semibold leading-tight">Tìm loại trang phục yêu thích trong <span class="text-indigo-200">dưới 1 phút</span></p>
+          <p class="text-sm text-white/80 mt-2">Duyệt theo loại, xem khoảng giá và số lượng còn. Sau đó chọn item với size & màu phù hợp.</p>
         </div>
       </div>
     </header>
-
-    <?php if ($activeFilters): ?>
-      <section class="info-card px-6 py-5 mb-8">
-        <p class="text-sm font-semibold text-indigo-900 mb-2">Bộ lọc đang áp dụng</p>
-        <div>
-          <?php foreach ($activeFilters as $label): ?>
-            <span class="filter-chip"><?= $label ?></span>
-          <?php endforeach; ?>
-        </div>
-      </section>
+    <?php else: ?>
+    <header class="mb-8">
+      <p class="text-sm font-medium uppercase tracking-[0.3em] text-indigo-600">Stygian Blue Studio</p>
+      <h1 class="text-3xl md:text-4xl font-bold text-slate-900">Gói trang phục</h1>
+      <p class="text-slate-600">Chọn gói đã được kurate để phù hợp concept, đặt nhanh với một bước.</p>
+    </header>
     <?php endif; ?>
 
-    <div class="grid gap-8 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)]">
-      <aside class="filter-shell p-6 space-y-6">
-        <div class="space-y-1">
-          <h2 class="text-lg font-semibold text-slate-900">Tìm kiếm nhanh</h2>
-          <p class="text-sm text-slate-500">Điền các tiêu chí chính, sau đó mở rộng bộ lọc nâng cao nếu cần chi tiết hơn.</p>
-        </div>
-        <form id="filterForm" class="space-y-4">
-          <div class="space-y-1">
-            <label class="text-sm font-semibold text-slate-700" for="q">Từ khóa</label>
-            <input id="q" type="text" name="q" value="<?=h($kw)?>" placeholder="Áo cưới, cosplay, vest..." class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 text-sm shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-          </div>
-
-          <div class="grid gap-4">
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="font-semibold text-slate-700">Chi nhánh</span>
-              <select name="cn" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                <option value="">Tất cả</option>
-                <?php foreach($branches as $b): ?>
-                  <option value="<?=$b['ID_CN']?>" <?=selected($branch,(string)$b['ID_CN'])?>><?=h($b['TEN_CN'])?></option>
-                <?php endforeach; ?>
-              </select>
-            </label>
-
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="font-semibold text-slate-700">Loại trang phục</span>
-              <select name="loai" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                <option value="">Tất cả</option>
-                <?php foreach($categories as $c): ?>
-                  <option value="<?=$c['ID_LOAI']?>" <?=selected($category,(string)$c['ID_LOAI'])?>><?=h($c['TEN_LOAI'])?></option>
-                <?php endforeach; ?>
-              </select>
-            </label>
-
-            <label class="flex flex-col gap-1 text-sm">
-              <span class="font-semibold text-slate-700">Sắp xếp</span>
-              <select name="sort" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                <option value="price_desc" <?=selected($sort,'price_desc')?>>Giá giảm dần</option>
-                <option value="price_asc"  <?=selected($sort,'price_asc')?>>Giá tăng dần</option>
-                <option value="name_asc"   <?=selected($sort,'name_asc')?>>Tên A → Z</option>
-                <option value="name_desc"  <?=selected($sort,'name_desc')?>>Tên Z → A</option>
-              </select>
-            </label>
-          </div>
-
-          <div>
-            <button type="button" id="toggleAdvanced" class="w-full rounded-xl border border-indigo-200 bg-indigo-50/80 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100" data-open="<?= $advancedOpen ? 'true' : 'false' ?>" aria-expanded="<?= $advancedOpen ? 'true' : 'false' ?>">
-              <?= $advancedOpen ? 'Ẩn bộ lọc nâng cao' : 'Hiện bộ lọc nâng cao' ?>
-            </button>
-            <div id="advancedFilters" class="advanced-panel <?= $advancedOpen ? 'visible' : 'hidden' ?> mt-4 space-y-4">
-              <div class="grid gap-3">
-                <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-semibold text-slate-700">Size</span>
-                  <select name="size" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                    <option value="">Tất cả</option>
-                    <?php foreach($sizes as $s): ?>
-                      <option value="<?=h($s)?>" <?=selected($size,$s)?>><?=h($s)?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </label>
-
-                <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-semibold text-slate-700">Màu sắc</span>
-                  <select name="mau" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                    <option value="">Tất cả</option>
-                    <?php foreach($colors as $c): ?>
-                      <option value="<?=h($c)?>" <?=selected($color,$c)?>><?=h($c)?></option>
-                    <?php endforeach; ?>
-                  </select>
-                </label>
-
-                <div class="grid grid-cols-2 gap-3">
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="font-semibold text-slate-700">Giá từ (₫/ngày)</span>
-                    <input type="number" name="min" value="<?=h($minPrice)?>" min="0" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                  </label>
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="font-semibold text-slate-700">Đến (₫/ngày)</span>
-                    <input type="number" name="max" value="<?=h($maxPrice)?>" min="0" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                  </label>
-                </div>
-
-                <div class="grid grid-cols-2 gap-3">
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="font-semibold text-slate-700">Thuê từ</span>
-                    <input type="date" name="from" value="<?=h($rentFrom)?>" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                  </label>
-                  <label class="flex flex-col gap-1 text-sm">
-                    <span class="font-semibold text-slate-700">Đến</span>
-                    <input type="date" name="to" value="<?=h($rentTo)?>" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                  </label>
-                </div>
-
-                <label class="flex flex-col gap-1 text-sm">
-                  <span class="font-semibold text-slate-700">Số lượng</span>
-                  <input type="number" name="qty" value="<?=h($qty)?>" min="1" class="w-full rounded-xl border border-slate-200 bg-white/70 px-4 py-2.5 shadow-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-200">
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="flex flex-col gap-3 pt-2">
-            <button type="submit" class="w-full rounded-xl bg-gradient-to-r from-indigo-600 via-sky-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:shadow-lg">Áp dụng bộ lọc</button>
-            <a href="?" class="w-full text-center rounded-xl border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 transition hover:border-indigo-200 hover:text-indigo-600">Làm mới lựa chọn</a>
-          </div>
-        </form>
-      </aside>
+    <div class="space-y-6">
 
       <section class="space-y-6">
         <?php if ($errorMessage): ?>
@@ -816,65 +656,49 @@ $heroBackgroundUrl = $defaultImageUrl;
         <?php elseif (!empty($catalogItems)): ?>
           <div class="results-grid grid gap-4 lg:gap-5">
             <?php foreach ($catalogItems as $type):
-              $price = (int)$type['DON_GIA'];
+              $minPrice = (int)$type['MIN_PRICE'];
+              $maxPrice = (int)$type['MAX_PRICE'];
               $image = $type['HINH_ANH'] ?: $defaultImageUrl;
               $avail = (int)$type['AVAILABLE_ITEMS'];
               $total = (int)$type['TOTAL_ITEMS'];
               $utilPercent = $total > 0 ? round(($total - $avail) * 100 / $total) : 0; // phần trăm đang dùng
               $statusKey = $avail > 0 ? 'available' : 'rented';
               $badge = $statusMap[$statusKey] ?? ['Loại', 'bg-slate-100/90 text-slate-600 border border-slate-200/80'];
-              $typeBookingQuery = http_build_query([
-                'mode' => 'type',
-                'loai' => $type['ID_LOAI'],
-                'from' => $rentFrom,
-                'to'   => $rentTo,
-                'qty'  => $qty,
-              ]);
               $detailId = $type['REP_ITEM_ID'] ?? null;
               $detailHref = $detailId ? ('trangphuc_chitiet.php?id=' . urlencode($detailId)) : '#';
+              
+              // Hiển thị giá dạng khoảng nếu min != max
+              $priceDisplay = $minPrice === $maxPrice 
+                ? number_format($minPrice, 0, ',', '.') 
+                : number_format($minPrice, 0, ',', '.') . ' - ' . number_format($maxPrice, 0, ',', '.');
             ?>
-              <article class="result-card flex h-full flex-col gap-3 cursor-pointer group" data-detail-id="<?=h($detailId)?>">
+              <article class="result-card flex h-full flex-col gap-3" data-type-id="<?=(int)$type['ID_LOAI']?>">
                 <div class="relative">
-                  <img src="<?=h($image)?>" alt="<?=h($type['TEN_LOAI'])?>" class="square-img shadow-sm" loading="lazy" onerror="this.onerror=null;this.src='<?=h($defaultImageUrl)?>';">
-                  <div class="status-badge <?=h($badge[1])?>">
-                    <?=h($badge[0])?>
-                  </div>
-                  <?php if ($detailId): ?>
-                  <a href="<?=h($detailHref)?>" class="absolute inset-0" aria-label="Xem chi tiết loại trang phục"></a>
-                  <?php endif; ?>
+                  <img src="<?=h($image)?>" alt="<?=h($type['TEN_LOAI'])?>" class="portrait-img shadow-sm" loading="lazy" onerror="this.onerror=null;this.src='<?=h($defaultImageUrl)?>';">
                 </div>
                 <div class="space-y-2">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0 space-y-1">
-                      <h2 class="text-base font-semibold leading-snug text-slate-900 line-clamp-2"><?=h($type['TEN_LOAI'])?></h2>
-                      <p class="text-xs text-slate-500">Còn <span class="font-semibold text-emerald-600"><?=$avail?></span> / <?=$total?> bộ</p>
+                  <div class="space-y-1">
+                    <h2 class="text-base font-semibold leading-snug text-slate-900 line-clamp-2"><?=h($type['TEN_LOAI'])?></h2>
+                    <p class="text-xs text-slate-500">Còn <span class="font-semibold text-emerald-600"><?=$avail?></span> / <?=$total?> bộ</p>
+                  </div>
+                  <div class="flex items-baseline justify-between gap-2 pt-1">
+                    <div class="text-left">
+                      <p class="text-xl font-bold text-indigo-700 leading-tight" data-min-price="<?= $minPrice ?>" data-max-price="<?= $maxPrice ?>"><?= $priceDisplay ?></p>
+                      <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500">VND/NGÀY</p>
                     </div>
-                    <div class="shrink-0 text-right">
-                      <p class="text-xl font-bold text-indigo-700" data-price="<?= (int)$price ?>"><?= number_format($price, 0, ',', '.') ?></p>
-                      <p class="text-[11px] font-medium uppercase tracking-wide text-slate-500">VND/ngày từ</p>
-                      <p class="text-[11px] text-slate-400">Đang dùng: <?=$utilPercent?>%</p>
+                    <div class="text-right text-[11px] text-slate-400">
+                      Đang dùng: <?=$utilPercent?>%
                     </div>
                   </div>
                 </div>
                 <div class="text-xs text-slate-500 space-y-1">
-                  <p>Thuê theo loại: <span class="estimate-text font-semibold text-emerald-600" data-estimate-for-type="<?= (int)$type['ID_LOAI'] ?>">Chọn ngày để tính</span></p>
-                  <p>Giá hiển thị là mức thấp nhất hiện khả dụng.</p>
+                  <p class="estimate-text font-semibold text-indigo-600" data-estimate-for-type="<?= (int)$type['ID_LOAI'] ?>">Click "Xem trang phục" để chọn item</p>
+                  <p>Giá hiển thị là khoảng giá thuê/ngày của các item trong loại này.</p>
                 </div>
                 <div class="card-actions mt-auto">
-                  <?php if ($detailId): ?>
-                    <a href="<?=h($detailHref)?>" class="inline-flex items-center justify-center rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-700 bg-white transition hover:border-indigo-300 hover:text-indigo-600">Chi tiết</a>
-                  <?php endif; ?>
-                  <?php if ($avail > 0): ?>
-                    <a
-                      href="trangphuc_datthue.php?<?= h($typeBookingQuery) ?>"
-                      class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-800"
-                      data-book-btn="true"
-                    >
-                      Thuê theo loại
-                    </a>
-                  <?php else: ?>
-                    <span class="inline-flex flex-1 items-center justify-center rounded-lg bg-slate-200 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Tạm hết</span>
-                  <?php endif; ?>
+                  <button type="button" class="btn-view-items inline-flex flex-1 items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-slate-800" data-type-id="<?=(int)$type['ID_LOAI']?>" data-type-name="<?=h($type['TEN_LOAI'])?>">
+                    Xem trang phục
+                  </button>
                 </div>
               </article>
             <?php endforeach; ?>
@@ -886,88 +710,145 @@ $heroBackgroundUrl = $defaultImageUrl;
     </div>
   </div>
 
+  <!-- Modal Xem Trang Phục Theo Loại -->
+  <div id="itemsModal" class="fixed inset-0 hidden" style="position: fixed !important; z-index: 99999 !important;">
+    <div class="fixed inset-0 bg-black/60 backdrop-blur-sm" style="z-index: 99999;" onclick="document.getElementById('closeModal').click()"></div>
+    <div class="fixed inset-0 flex items-center justify-center p-4 md:p-6 lg:p-8" style="z-index: 100000; pointer-events: none;">
+      <div class="relative bg-white rounded-3xl shadow-2xl w-full my-4" style="max-width: 95vw; max-height: 92vh; pointer-events: auto;">
+        <div class="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between rounded-t-3xl">
+          <div>
+            <h2 id="modalTypeName" class="text-2xl font-bold text-slate-900"></h2>
+            <p class="text-sm text-slate-600">Chọn trang phục bạn muốn thuê</p>
+          </div>
+          <button type="button" id="closeModal" class="rounded-full p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        
+        <div id="modalContent" class="p-6 overflow-y-auto" style="max-height: calc(92vh - 100px);">
+          <div class="flex items-center justify-center py-12">
+            <div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-200 border-t-indigo-600"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     (function(){
-      const advanced = document.getElementById('advancedFilters');
-      const toggleBtn = document.getElementById('toggleAdvanced');
-
-      if (advanced && toggleBtn) {
-        const setState = (open) => {
-          advanced.classList.toggle('hidden', !open);
-          advanced.classList.toggle('visible', open);
-          toggleBtn.dataset.open = open ? 'true' : 'false';
-          toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-          toggleBtn.textContent = open ? 'Ẩn bộ lọc nâng cao' : 'Hiện bộ lọc nâng cao';
-        };
-
-        if (toggleBtn.dataset.open === 'true') {
-          setState(true);
-        }
-
-        toggleBtn.addEventListener('click', () => {
-          const next = toggleBtn.dataset.open !== 'true';
-          setState(next);
-        });
-      }
-
-      document.querySelectorAll('[data-scroll-to="filters"]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const form = document.getElementById('filterForm');
-          if (form && form.scrollIntoView) {
-            form.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
-          const keyword = document.getElementById('q');
-          if (keyword) {
-            keyword.focus();
-          }
-        });
-      });
-
-      const fromInput = document.querySelector('input[name="from"]');
-      const toInput = document.querySelector('input[name="to"]');
-      const qtyInput = document.querySelector('input[name="qty"]');
-
-      const from = fromInput ? fromInput.value : '';
-      const to = toInput ? toInput.value : '';
-      const qty = Math.max(1, qtyInput ? parseInt(qtyInput.value || '1', 10) : 1);
-
-      function daysBetween(a, b){
-        const start = new Date(a);
-        const end = new Date(b);
-        if (isNaN(start) || isNaN(end)) return 0;
-        const ms = end.setHours(12,0,0,0) - start.setHours(12,0,0,0);
-        return Math.max(0, Math.ceil(ms / 86400000));
-      }
-
-      const days = daysBetween(from, to);
-
-      // Estimate cho từng loại (dựa trên giá thấp nhất khả dụng hiện có)
+      // Chuyển hướng người dùng chọn item để xem chi tiết giá
       document.querySelectorAll('[data-estimate-for-type]').forEach(span => {
-        if (days <= 0) {
-          span.textContent = 'Chọn ngày để tính';
-          return;
-        }
-        const card = span.closest('article');
-        if (!card) return;
-        const priceText = card.querySelector('[data-price]');
-        if (!priceText) return;
-        const raw = priceText.dataset.price || priceText.textContent.replace(/[^\d]/g, '');
-        const price = parseInt(raw || '0', 10);
-        const estimate = price * days * qty;
-        span.textContent = new Intl.NumberFormat('vi-VN').format(estimate) + ' VND (' + days + ' ngày x ' + qty + ')';
+        span.textContent = 'Chọn item để xem chi tiết giá';
       });
 
-      // Click toàn bộ card mở chi tiết (trừ khi nhấn nút đặt thuê hoặc nút chi tiết riêng)
-      document.querySelectorAll('article.result-card[data-detail-id]').forEach(card => {
-        card.addEventListener('click', function(e){
-          const target = e.target;
-          if (target.closest('a')) { return; } // để anchor hoạt động bình thường
-          const detailId = card.getAttribute('data-detail-id');
-            if (detailId) {
-              window.location.href = 'trangphuc_chitiet.php?id=' + encodeURIComponent(detailId);
+      // Modal functionality
+      const modal = document.getElementById('itemsModal');
+      const modalContent = document.getElementById('modalContent');
+      const modalTypeName = document.getElementById('modalTypeName');
+      const closeModalBtn = document.getElementById('closeModal');
+
+      function openModal(typeId, typeName) {
+        modalTypeName.textContent = typeName;
+        modal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        
+        // Show loading
+        modalContent.innerHTML = '<div class="flex items-center justify-center py-12"><div class="animate-spin rounded-full h-12 w-12 border-4 border-indigo-200 border-t-indigo-600"></div></div>';
+        
+        // Fetch items - use absolute path from root
+        const apiUrl = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '') + '/../api/get_items_by_type.php?loai=' + typeId;
+        console.log('Fetching from:', apiUrl); // Debug log
+        
+        fetch(apiUrl)
+          .then(res => {
+            console.log('Response status:', res.status); // Debug log
+            return res.json();
+          })
+          .then(data => {
+            console.log('Response data:', data); // Debug log
+            if (!data.success) {
+              modalContent.innerHTML = '<div class="text-center py-12 text-rose-600 font-semibold">' + (data.message || 'Có lỗi xảy ra') + '</div>';
+              return;
             }
+            
+            if (!data.items || data.items.length === 0) {
+              modalContent.innerHTML = '<div class="text-center py-12 text-slate-600">Không có trang phục nào trong loại này. (Tìm thấy: ' + (data.count || 0) + ')</div>';
+              return;
+            }
+            
+            // Render items
+            let html = '<div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">';
+            data.items.forEach(item => {
+              const isAvailable = item.TRANG_THAI === 'available';
+              const statusClass = isAvailable ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500';
+              const statusText = isAvailable ? 'Sẵn sàng' : 'Đang thuê';
+              
+              html += `
+                <article class="rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm hover:shadow-md transition">
+                  <div class="relative">
+                    <img src="${item.HINH_ANH || data.defaultImage}" alt="${item.TEN}" class="w-full aspect-[3/4] object-cover" onerror="this.onerror=null;this.src='${data.defaultImage}'">
+                    <span class="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-semibold ${statusClass}">
+                      ${statusText}
+                    </span>
+                  </div>
+                  <div class="p-4 space-y-3">
+                    <h3 class="text-base font-semibold text-slate-900 line-clamp-2">${item.TEN}</h3>
+                    <div class="flex items-center gap-3 text-sm text-slate-600">
+                      ${item.SIZE ? '<span class="px-2 py-1 bg-slate-100 rounded-lg">Size: ' + item.SIZE + '</span>' : ''}
+                      ${item.MAU_SAC ? '<span class="px-2 py-1 bg-slate-100 rounded-lg">' + item.MAU_SAC + '</span>' : ''}
+                    </div>
+                    <p class="text-sm text-slate-500">${item.TEN_CN}</p>
+                    <div class="flex items-baseline gap-2">
+                      <p class="text-2xl font-bold text-indigo-600">${new Intl.NumberFormat('vi-VN').format(item.GIA_THUE)}</p>
+                      <p class="text-xs text-slate-500">₫/ngày</p>
+                    </div>
+                    ${isAvailable 
+                      ? `<div class="flex gap-2">
+                          <a href="trangphuc_chitiet.php?id=${item.ID_TRANG_PHUC}" class="flex-1 text-center rounded-lg border-2 border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-indigo-500 hover:text-indigo-600 hover:bg-indigo-50">Xem chi tiết</a>
+                          <a href="trangphuc_datthue.php?id=${item.ID_TRANG_PHUC}" class="flex-1 text-center rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Đặt thuê</a>
+                        </div>`
+                      : `<button disabled class="block w-full text-center rounded-lg bg-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-400 cursor-not-allowed">Đang được thuê</button>`
+                    }
+                  </div>
+                </article>
+              `;
+            });
+            html += '</div>';
+            modalContent.innerHTML = html;
+          })
+          .catch(err => {
+            modalContent.innerHTML = '<div class="text-center py-12 text-rose-600 font-semibold">Không thể tải dữ liệu. Vui lòng thử lại.</div>';
+            console.error('Error fetching items:', err);
+          });
+      }
+
+      function closeModal() {
+        modal.classList.add('hidden');
+        document.body.style.overflow = ''; // Restore scrolling
+      }
+
+      // Event listeners for modal buttons
+      document.querySelectorAll('.btn-view-items').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const typeId = btn.dataset.typeId;
+          const typeName = btn.dataset.typeName;
+          openModal(typeId, typeName);
         });
       });
+
+      closeModalBtn.addEventListener('click', closeModal);
+      
+      // Close modal with Escape key
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+          closeModal();
+        }
+      });
+
+      // Remove old card click handler
+      // (commented out the old one above)
     })();
   </script>
 </body>

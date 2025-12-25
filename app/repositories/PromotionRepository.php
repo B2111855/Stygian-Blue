@@ -137,7 +137,8 @@ class PromotionRepository {
         $active = isset($data['ACTIVE']) ? (int)$data['ACTIVE'] : 1;
         $id_km = (int)$promotionId;
         
-        $stmt->bind_param("sssddssi", 
+        // Bind 9 placeholders: 3 strings, 2 doubles, 2 strings, 2 ints
+        $stmt->bind_param("sssddssii", 
             $ten, $mo_ta, $loai, $gia_tri, $giam_toi_da, $tu_ngay, $den_ngay, $active, $id_km
         );
         
@@ -190,47 +191,55 @@ class PromotionRepository {
     }
 
     /**
-     * Lấy khuyến mãi đang hiệu lực tốt nhất cho gói
+     * CRITICAL FIX #S2: Calculate final package price with promotion applied
      * @param int $packageId
-     * @param float $originalPrice Giá gốc để tính toán
-     * @return array|null
+     * @param float $basePrice Total package price before promotion
+     * @return array ['base_price'=>int, 'discount'=>int, 'final_price'=>int, 'promotion'=>array|null]
      */
-    public function getActivePromotionForPackage($packageId, $originalPrice = 0) {
-        $sql = "SELECT 
-                    km.ID_KM,
-                    km.TEN_CHUONG_TRINH,
-                    km.LOAI_GIAM,
-                    km.GIA_TRI_GIAM,
-                    km.GIAM_TOI_DA,
-                    km.TU_NGAY,
-                    km.DEN_NGAY,
-                    CASE 
-                        WHEN km.LOAI_GIAM = 'phan_tram' THEN 
-                            LEAST(? * km.GIA_TRI_GIAM / 100, COALESCE(km.GIAM_TOI_DA, 999999999))
-                        WHEN km.LOAI_GIAM = 'so_tien' THEN km.GIA_TRI_GIAM
-                        ELSE 0
-                    END AS SO_TIEN_GIAM
-                FROM goi_dich_vu_khuyen_mai km
-                WHERE km.ID_GOI = ?
-                  AND km.ACTIVE = 1
-                  AND NOW() BETWEEN km.TU_NGAY AND km.DEN_NGAY
-                ORDER BY SO_TIEN_GIAM DESC
-                LIMIT 1";
+    public function calculatePackagePriceWithPromotion(int $packageId, float $basePrice): array {
+        $promotion = $this->getActivePromotionForPackage($packageId, $basePrice);
         
-        $stmt = $this->conn->prepare($sql);
-        if (!$stmt) {
-            throw new Exception("Prepare failed: " . $this->conn->error);
+        $discount = 0;
+        if ($promotion) {
+            $discount = (int)($promotion['SO_TIEN_GIAM'] ?? 0);
         }
         
-        $price = (float)$originalPrice;
-        $id_goi = (int)$packageId;
-        $stmt->bind_param("di", $price, $id_goi);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $promotion = $result->fetch_assoc();
-        $stmt->close();
+        $finalPrice = max(0, (int)$basePrice - $discount);
         
-        return $promotion;
+        return [
+            'base_price' => (int)$basePrice,
+            'discount' => $discount,
+            'final_price' => $finalPrice,
+            'promotion' => $promotion
+        ];
+    }
+    
+    /**
+     * Format promotion display text for UI
+     * Example: "20% off - max 500,000 VNĐ" or "Giảm 200,000 VNĐ"
+     */
+    public function formatPromotionDisplay(?array $promotion): string {
+        if (!$promotion) {
+            return '';
+        }
+        
+        $type = $promotion['LOAI_GIAM'] ?? '';
+        $value = (float)($promotion['GIA_TRI_GIAM'] ?? 0);
+        $maxDiscount = (float)($promotion['GIAM_TOI_DA'] ?? 0);
+        $name = $promotion['TEN_CHUONG_TRINH'] ?? 'Khuyến mãi';
+        
+        if ($type === 'phan_tram') {
+            $text = (int)$value . '% off';
+            if ($maxDiscount > 0) {
+                $text .= ' (max ' . number_format((int)$maxDiscount, 0, ',', '.') . ' VNĐ)';
+            }
+        } elseif ($type === 'so_tien') {
+            $text = 'Giảm ' . number_format((int)$value, 0, ',', '.') . ' VNĐ';
+        } else {
+            $text = 'Khuyến mãi';
+        }
+        
+        return $name . ': ' . $text;
     }
 
     /**

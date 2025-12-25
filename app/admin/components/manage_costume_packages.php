@@ -41,10 +41,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $createError = 'Tên gói không được trống.';
       } elseif ($ownerBranch <= 0) {
         $createError = 'Phải chọn chi nhánh sở hữu.';
-      } elseif ($role !== '1') {
-        $createError = 'Chỉ admin được tạo gói trang phục.';
+      } elseif ($isBranchManager && $ownerBranch !== $branchId) {
+        $createError = 'Manager chỉ có thể tạo gói cho chi nhánh của mình.';
       } else {
-        $id = $masterRepo->create($pkgName, $pkgDesc !== '' ? $pkgDesc : null, $ownerBranch, $discountPercent);
+        // Manager creates local packages automatically; Admin can create local or global
+        $actualOwner = $isBranchManager ? $branchId : $ownerBranch;
+        // create($name, $description, $discountPercent, $scopeType, $branchId, $createdBy)
+        $id = $masterRepo->create($pkgName, $pkgDesc !== '' ? $pkgDesc : null, $discountPercent, 'local', $actualOwner, '');
         if ($id) {
           $newCostumePackageId = $id;
         } else {
@@ -52,27 +55,99 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
       }
     }
-  } elseif ($action === 'toggle_status' && $role === '1') {
+  } elseif ($action === 'toggle_status') {
     if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
       $createError = 'CSRF token không hợp lệ';
     } else {
       $goiId = (int)($_POST['ID_GOI'] ?? 0);
       $newStatus = ($_POST['NEW_STATUS'] ?? '') === 'inactive' ? 'inactive' : 'active';
+      
+      // Permission check: admin can toggle any package; manager can toggle own local packages only
       if ($goiId > 0) {
-        $masterRepo->updateStatus($goiId, $newStatus);
-        $redirectAfterToggle = true;
+        if ($isBranchManager) {
+          // Manager must own the package locally
+          $pkgCheckStmt = $conn->prepare("SELECT ID_CN_OWNER FROM goi_trang_phuc_master WHERE ID_GOI = ?");
+          $pkgCheckStmt->bind_param('i', $goiId);
+          $pkgCheckStmt->execute();
+          $pkgCheckRes = $pkgCheckStmt->get_result();
+          $pkgCheck = $pkgCheckRes->fetch_assoc();
+          if (!$pkgCheck || (int)($pkgCheck['ID_CN_OWNER'] ?? 0) !== $branchId) {
+            $createError = 'Bạn chỉ có thể đổi trạng thái gói local của chi nhánh mình.';
+          } else {
+            $masterRepo->updateStatus($goiId, $newStatus);
+            header('Location: ?page=package_costumes');
+            exit;
+          }
+        } else if ($role === '1') {
+          // Admin can toggle any package
+          $masterRepo->updateStatus($goiId, $newStatus);
+          header('Location: ?page=package_costumes');
+          exit;
+        } else {
+          $createError = 'Bạn không có quyền đổi trạng thái gói này.';
+        }
       }
     }
-  } elseif ($action === 'delete_costume_package' && $role === '1') {
+  } elseif ($action === 'delete_costume_package') {
+    error_log("DELETE ACTION TRIGGERED - ID_GOI: " . ($_POST['ID_GOI'] ?? 'not set'));
+    error_log("CSRF Token Match: " . (hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '') ? 'YES' : 'NO'));
+    error_log("User Role: $role, IsBranchManager: " . ($isBranchManager ? 'YES' : 'NO'));
+    
     if (!hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
       $createError = 'CSRF token không hợp lệ';
+      error_log("CSRF TOKEN FAILED");
     } else {
       $goiId = (int)($_POST['ID_GOI'] ?? 0);
+      error_log("Processing delete for package ID: $goiId");
+      
+      // Permission check: admin can delete any package; manager can delete own local packages only
       if ($goiId > 0) {
-        if ($masterRepo->delete($goiId)) {
-          $deleteSuccess = true;
+        if ($isBranchManager) {
+          // Manager must own the package locally
+          $pkgCheckStmt = $conn->prepare("SELECT ID_CN_OWNER FROM goi_trang_phuc_master WHERE ID_GOI = ?");
+          $pkgCheckStmt->bind_param('i', $goiId);
+          $pkgCheckStmt->execute();
+          $pkgCheckRes = $pkgCheckStmt->get_result();
+          $pkgCheck = $pkgCheckRes->fetch_assoc();
+          error_log("Manager check - Package owner: " . ($pkgCheck['ID_CN_OWNER'] ?? 'not found') . ", Branch: $branchId");
+          if (!$pkgCheck || (int)($pkgCheck['ID_CN_OWNER'] ?? 0) !== $branchId) {
+            $createError = 'Bạn chỉ có thể xóa gói local của chi nhánh mình.';
+            error_log("PERMISSION DENIED - Manager doesn't own package");
+          } else {
+            try {
+              error_log("Calling hardDelete for package $goiId");
+              if ($masterRepo->hardDelete($goiId)) {
+                error_log("DELETE SUCCESS - Redirecting");
+                header('Location: ?page=package_costumes');
+                exit;
+              } else {
+                $createError = 'Không xóa được gói.';
+                error_log("DELETE FAILED - hardDelete returned false");
+              }
+            } catch (Exception $e) {
+              $createError = 'Lỗi: ' . $e->getMessage();
+              error_log("DELETE EXCEPTION: " . $e->getMessage());
+            }
+          }
+        } else if ($role === '1') {
+          // Admin can delete any package
+          try {
+            error_log("Admin calling hardDelete for package $goiId");
+            if ($masterRepo->hardDelete($goiId)) {
+              error_log("ADMIN DELETE SUCCESS - Redirecting");
+              header('Location: ?page=package_costumes');
+              exit;
+            } else {
+              $createError = 'Không xóa được gói.';
+              error_log("ADMIN DELETE FAILED - hardDelete returned false");
+            }
+          } catch (Exception $e) {
+            $createError = 'Lỗi: ' . $e->getMessage();
+            error_log("ADMIN DELETE EXCEPTION: " . $e->getMessage());
+          }
         } else {
-          $createError = 'Không xóa được gói.';
+          $createError = 'Bạn không có quyền xóa gói này.';
+          error_log("PERMISSION DENIED - Not admin or manager");
         }
       }
     }
@@ -130,6 +205,11 @@ if (empty($_SESSION['csrf_token'])) {
 $csrfToken = $_SESSION['csrf_token'];
 ?>
 <body class="bg-gray-50 p-6">
+  <!-- API Client JS -->
+  <script src="/StygianBlue/public/assets/js/api-client.js"></script>
+  <!-- Page-specific API Integration -->
+  <script src="/StygianBlue/public/assets/js/manage-costume-packages.js"></script>
+
   <div class="max-w-6xl mx-auto space-y-6">
     <header class="flex flex-col gap-3">
       <h1 class="text-3xl font-bold text-indigo-700">Quản lý gói trang phục</h1>
@@ -149,7 +229,7 @@ $csrfToken = $_SESSION['csrf_token'];
             <option value="inactive" <?= $filterStatus==='inactive'?'selected':'' ?>>Inactive</option>
           </select>
           <button class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">Lọc</button>
-          <?php if ($role === '1'): ?>
+          <?php if ($role === '1' || $isBranchManager): ?>
             <button
               type="button"
               id="open-create-modal"
@@ -164,16 +244,19 @@ $csrfToken = $_SESSION['csrf_token'];
       </div>
     </header>
 
+    <?php if (!empty($createError)): ?>
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+        <div class="text-red-600 text-lg">⚠️</div>
+        <div class="flex-1">
+          <p class="text-sm font-semibold text-red-800">Lỗi</p>
+          <p class="text-sm text-red-700"><?= htmlspecialchars($createError) ?></p>
+        </div>
+      </div>
+    <?php endif; ?>
 
     <?php if (!empty($newCostumePackageId)): ?>
       <script>
         window.location.href = '?page=edit_costume_package&id_goi=<?= (int)$newCostumePackageId ?>';
-      </script>
-    <?php endif; ?>
-
-    <?php if (!empty($redirectAfterToggle)): ?>
-      <script>
-        window.location.href = '?page=package_costumes';
       </script>
     <?php endif; ?>
 
@@ -192,14 +275,14 @@ $csrfToken = $_SESSION['csrf_token'];
           <?php endif; ?>
         </div>
         <div class="flex flex-wrap gap-3 justify-center">
-          <?php if ($role === '1' && $search === ''): ?>
+          <?php if (($role === '1' || $isBranchManager) && $search === ''): ?>
             <button type="button" id="open-create-modal-empty" class="px-5 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium shadow hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">+ Tạo gói đầu tiên</button>
           <?php endif; ?>
           <?php if ($search !== ''): ?>
             <a href="<?= $baseUrl ?>" class="px-4 py-2 rounded-lg border text-sm text-gray-600 hover:bg-gray-50">Xóa bộ lọc</a>
           <?php endif; ?>
         </div>
-        <?php if ($role !== '1' && $search === ''): ?>
+        <?php if ($role !== '1' && !$isBranchManager && $search === ''): ?>
           <p class="text-xs text-gray-400">Liên hệ quản trị viên để tạo gói mới cho chi nhánh này.</p>
         <?php endif; ?>
       </div>
@@ -236,13 +319,28 @@ $csrfToken = $_SESSION['csrf_token'];
                 <p class="text-xs text-gray-500">Chi nhánh: <strong><?= htmlspecialchars($branchNames[(int)$pkg['ID_CN_OWNER']] ?? ('#'.(int)$pkg['ID_CN_OWNER'])) ?></strong> &middot; <?= htmlspecialchars($pkg['MO_TA'] ?? 'Không mô tả') ?></p>
               </div>
               <div class="flex items-center gap-4 text-xs uppercase tracking-wide text-gray-500">
-                <span class="px-3 py-1 rounded-full bg-indigo-50 text-indigo-700">LOCAL PACKAGE</span>
-                <?php if ($role === '1'): ?>
+                <?php
+                // Show branch owner
+                $pkgOwner = (int)($pkg['ID_CN_OWNER'] ?? 0);
+                $ownerName = $branchNames[$pkgOwner] ?? "CN#{$pkgOwner}";
+                $scopeBadgeHtml = '<span class="px-3 py-1 rounded-full bg-cyan-50 text-cyan-700">🏢 ' . htmlspecialchars($ownerName) . '</span>';
+                echo $scopeBadgeHtml;
+                
+                // Permission check for buttons
+                $canEditDeletePackage = !$isBranchManager || ($pkgOwner === $branchId);
+                ?>
+                <?php if ($role === '1' || $isBranchManager): ?>
                   <form method="post" class="m-0 p-0">
                     <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" />
                     <input type="hidden" name="action" value="toggle_status" />
                     <input type="hidden" name="ID_GOI" value="<?= (int)$pkg['ID_GOI'] ?>" />
-                    <button class="text-[10px] font-semibold px-2 py-1 rounded border <?= $status === 'active' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-gray-300 text-gray-600 hover:bg-gray-100' ?>" name="NEW_STATUS" value="<?= $status === 'active' ? 'inactive' : 'active' ?>" title="Đổi trạng thái">
+                    <button 
+                      class="text-[10px] font-semibold px-2 py-1 rounded border <?= $status === 'active' ? 'border-emerald-300 text-emerald-700 hover:bg-emerald-50' : 'border-gray-300 text-gray-600 hover:bg-gray-100' ?>" 
+                      name="NEW_STATUS" 
+                      value="<?= $status === 'active' ? 'inactive' : 'active' ?>" 
+                      title="<?= $canEditDeletePackage ? 'Đổi trạng thái' : 'Bạn không có quyền sửa gói này' ?>"
+                      <?= !$canEditDeletePackage ? 'style="opacity:0.5; cursor:not-allowed;" disabled' : '' ?>
+                    >
                       <?= $status === 'active' ? 'Tắt' : 'Bật' ?>
                     </button>
                   </form>
@@ -256,15 +354,27 @@ $csrfToken = $_SESSION['csrf_token'];
               <?php if (!empty($pkg['DISCOUNT_PERCENT']) && (int)$pkg['DISCOUNT_PERCENT'] > 0): ?>
                 <span class="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">Khuyến mãi: <?= (int)$pkg['DISCOUNT_PERCENT'] ?>%</span>
               <?php endif; ?>
-              <a href="?page=edit_costume_package&id_goi=<?= (int)$pkg['ID_GOI'] ?>" class="ml-auto text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+              <a 
+                href="?page=edit_costume_package&id_goi=<?= (int)$pkg['ID_GOI'] ?>" 
+                class="ml-auto text-xs px-3 py-1 rounded-full border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                title="<?= $canEditDeletePackage ? 'Chỉnh sửa gói' : 'Bạn không có quyền sửa gói này' ?>"
+                <?= !$canEditDeletePackage ? 'style="opacity:0.5; cursor:not-allowed; pointer-events:none;" onclick="return false;"' : '' ?>
+              >
                 Quản lý chi tiết gói trang phục
               </a>
-              <?php if ($role === '1' && $totalCount === 0): ?>
-                <form method="post" class="inline-block ml-2" onsubmit="return confirm('Xóa gói này?');">
+              <?php if (($role === '1' || $isBranchManager) && $totalCount === 0): ?>
+                <form method="post" class="inline-block ml-2" onsubmit="console.log('Delete form submitting', {ID_GOI: this.querySelector('[name=ID_GOI]').value}); <?php if ($canEditDeletePackage) { ?>if(!confirm('⚠️ CẢNH BÁO: Bạn chắc chắn muốn xóa vĩnh viễn gói này?\n\nHành động này KHÔNG THỂ KHÔI PHỤC!')){return false;}<?php } else { ?>alert('Bạn không có quyền xóa gói này'); return false;<?php } ?>">
                   <input type="hidden" name="action" value="delete_costume_package" />
                   <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" />
                   <input type="hidden" name="ID_GOI" value="<?= (int)$pkg['ID_GOI'] ?>" />
-                  <button type="submit" class="text-xs px-3 py-1 rounded-full border border-red-200 text-red-700 hover:bg-red-50" title="Xóa gói này">Xóa</button>
+                  <button 
+                    type="submit" 
+                    class="text-xs px-3 py-1 rounded-full border border-red-200 text-red-700 hover:bg-red-50" 
+                    title="<?= $canEditDeletePackage ? 'Xóa vĩnh viễn gói này (không thể khôi phục)' : 'Bạn không có quyền xóa gói này' ?>"
+                    <?= !$canEditDeletePackage ? 'style="opacity:0.5; cursor:not-allowed;" disabled' : '' ?>
+                  >
+                    🗑️ Xóa vĩnh viễn
+                  </button>
                 </form>
               <?php endif; ?>
             </div>
@@ -310,7 +420,7 @@ $csrfToken = $_SESSION['csrf_token'];
       <?php endif; ?>
     <?php endif; ?>
   </div>
-  <?php if ($role === '1'): ?>
+  <?php if ($role === '1' || $isBranchManager): ?>
   <!-- Modal tạo gói -->
   <div id="create-modal" class="fixed inset-0 hidden flex items-center justify-center bg-black/40 backdrop-blur-sm z-50" role="dialog" aria-modal="true" aria-labelledby="create-modal-title">
     <div class="bg-white w-full max-w-md rounded-xl shadow-lg p-6 space-y-4 relative animate-fade-in">
@@ -332,14 +442,20 @@ $csrfToken = $_SESSION['csrf_token'];
         </div>
         <div>
           <label class="text-xs font-semibold text-gray-600">Chi nhánh sở hữu</label>
-          <select name="ID_CN_OWNER" class="mt-1 w-full border rounded px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required>
-            <option value="">-- Chọn chi nhánh --</option>
-            <?php
-            $branchRes = $conn->query("SELECT ID_CN, TEN_CN FROM chi_nhanh ORDER BY TEN_CN");
-            while ($b = $branchRes->fetch_assoc()): ?>
-              <option value="<?= (int)$b['ID_CN'] ?>"><?= htmlspecialchars($b['TEN_CN']) ?></option>
-            <?php endwhile; ?>
-          </select>
+          <?php if ($isBranchManager): ?>
+            <input type="hidden" name="ID_CN_OWNER" value="<?= (int)$branchId ?>" />
+            <input type="text" class="mt-1 w-full border rounded px-2 py-2 text-sm bg-gray-100" value="<?= htmlspecialchars($branchNames[$branchId] ?? "Chi nhánh #{$branchId}") ?>" disabled />
+            <p class="text-xs text-gray-500 mt-1">Manager chỉ có thể tạo gói cho chi nhánh của mình</p>
+          <?php else: ?>
+            <select name="ID_CN_OWNER" class="mt-1 w-full border rounded px-2 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none" required>
+              <option value="">-- Chọn chi nhánh --</option>
+              <?php
+              $branchRes = $conn->query("SELECT ID_CN, TEN_CN FROM chi_nhanh ORDER BY TEN_CN");
+              while ($b = $branchRes->fetch_assoc()): ?>
+                <option value="<?= (int)$b['ID_CN'] ?>"><?= htmlspecialchars($b['TEN_CN']) ?></option>
+              <?php endwhile; ?>
+            </select>
+          <?php endif; ?>
         </div>
         <div>
           <label class="text-xs font-semibold text-gray-600">Khuyến mãi toàn gói (%)</label>

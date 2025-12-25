@@ -18,42 +18,81 @@ if (empty($_SESSION['ID_TK'])) {
 $userId = $_SESSION['ID_TK'];
 
 // Handle cancel action before any HTML output
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel') {
-    if (empty($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
-        $_SESSION['error'] = 'Phiên không hợp lệ. Vui lòng thử lại.';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+    if ($action === 'cancel' || $action === 'cancel_rental') {
+        if (empty($_POST['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+            $_SESSION['error'] = 'Phiên không hợp lệ. Vui lòng thử lại.';
+            header('Location: xemLichhen.php');
+            exit();
+        }
+    }
+
+    if ($action === 'cancel') {
+        $lichHenId = $_POST['id_lichhen'] ?? null;
+        if ($lichHenId && ctype_digit((string) $lichHenId)) {
+            $sqlCancel = "
+                UPDATE lich_hen
+                SET TRANGTHAI = 'Đã hủy'
+                WHERE ID_LICHHEN = ?
+                  AND ID_TK = ?
+                  AND TRANGTHAI = 'Đang chờ'
+            ";
+            $stmtCancel = $conn->prepare($sqlCancel);
+            if ($stmtCancel) {
+                $stmtCancel->bind_param('is', $lichHenId, $userId);
+                $stmtCancel->execute();
+
+                if ($stmtCancel->affected_rows > 0) {
+                    $_SESSION['success'] = "Đã hủy lịch hẹn #$lichHenId.";
+                } else {
+                    $_SESSION['error'] = 'Không thể hủy lịch này (có thể đã được xác nhận hoặc không thuộc về bạn).';
+                }
+                $stmtCancel->close();
+            } else {
+                $_SESSION['error'] = 'Không thể hủy lịch lúc này.';
+            }
+        } else {
+            $_SESSION['error'] = 'Yêu cầu không hợp lệ.';
+        }
+
+        $_SESSION['active_view_schedule_tab'] = 'appointments';
         header('Location: xemLichhen.php');
         exit();
     }
 
-    $lichHenId = $_POST['id_lichhen'] ?? null;
-    if ($lichHenId && ctype_digit((string) $lichHenId)) {
-        $sqlCancel = "
-            UPDATE lich_hen
-            SET TRANGTHAI = 'Đã hủy'
-            WHERE ID_LICHHEN = ?
-              AND ID_TK = ?
-              AND TRANGTHAI = 'Đang chờ'
-        ";
-        $stmtCancel = $conn->prepare($sqlCancel);
-        if ($stmtCancel) {
-            $stmtCancel->bind_param('is', $lichHenId, $userId);
-            $stmtCancel->execute();
+    if ($action === 'cancel_rental') {
+        $rentalId = $_POST['id_ttp'] ?? null;
+        if ($rentalId && ctype_digit((string) $rentalId)) {
+            $sqlCancelRental = "
+                UPDATE don_thue_trang_phuc
+                SET TRANG_THAI = 'huy'
+                WHERE ID_TTP = ?
+                  AND ID_TK = ?
+                  AND TRANG_THAI = 'cho_duyet'
+            ";
+            $stmtCancelRental = $conn->prepare($sqlCancelRental);
+            if ($stmtCancelRental) {
+                $stmtCancelRental->bind_param('is', $rentalId, $userId);
+                $stmtCancelRental->execute();
 
-            if ($stmtCancel->affected_rows > 0) {
-                $_SESSION['success'] = "Đã hủy lịch hẹn #$lichHenId.";
+                if ($stmtCancelRental->affected_rows > 0) {
+                    $_SESSION['success'] = "Đã hủy yêu cầu thuê #$rentalId.";
+                } else {
+                    $_SESSION['error'] = 'Không thể hủy đơn thuê này (có thể đã được duyệt hoặc không thuộc về bạn).';
+                }
+                $stmtCancelRental->close();
             } else {
-                $_SESSION['error'] = 'Không thể hủy lịch này (có thể đã được xác nhận hoặc không thuộc về bạn).';
+                $_SESSION['error'] = 'Không thể hủy đơn thuê lúc này.';
             }
-            $stmtCancel->close();
         } else {
-            $_SESSION['error'] = 'Không thể hủy lịch lúc này.';
+            $_SESSION['error'] = 'Yêu cầu không hợp lệ.';
         }
-    } else {
-        $_SESSION['error'] = 'Yêu cầu không hợp lệ.';
-    }
 
-    header('Location: xemLichhen.php');
-    exit();
+        $_SESSION['active_view_schedule_tab'] = 'rentals';
+        header('Location: xemLichhen.php');
+        exit();
+    }
 }
 
 $sqlMain = "
@@ -122,6 +161,7 @@ if (empty($lichIds)) {
     $staffMap = [];
     $deviceMap = [];
     $quoteMap  = [];
+    $multiServiceMap = [];
 } else {
     $inClause = implode(',', array_map('intval', $lichIds));
 
@@ -236,6 +276,177 @@ if (empty($lichIds)) {
             ];
         }
     }
+
+    // Multi-service support: tổng hợp dịch vụ bổ sung từ BOOKING_ITEM
+    $multiServiceMap = [];
+        $sqlMultiSvc = "SELECT bi.ID_LICHHEN,
+                      GROUP_CONCAT(dv.TEN_DV ORDER BY bi.ID_ITEM SEPARATOR ' + ') AS SERVICE_LIST,
+                      COUNT(DISTINCT bi.REF_ID) AS SERVICE_COUNT
+                  FROM BOOKING_ITEM bi
+                  JOIN DICH_VU dv ON dv.ID_DV = bi.REF_ID
+                  WHERE bi.ID_LICHHEN IN ($inClause) AND bi.ITEM_TYPE='service'
+                  GROUP BY bi.ID_LICHHEN";
+    $rsMultiSvc = $conn->query($sqlMultiSvc);
+    if ($rsMultiSvc) {
+        while ($r = $rsMultiSvc->fetch_assoc()) {
+            $lid = (int)$r['ID_LICHHEN'];
+            $multiServiceMap[$lid] = [
+                'SERVICE_LIST'  => $r['SERVICE_LIST'],
+                'SERVICE_COUNT' => (int)$r['SERVICE_COUNT'],
+            ];
+        }
+        $rsMultiSvc->free();
+    }
+}
+
+$rentalOrders   = [];
+$rentalItemsMap = [];
+$rentalIds      = [];
+
+$sqlRentals = "
+    SELECT ttp.ID_TTP,
+           ttp.NGAY_DAT,
+           ttp.NGAY_NHAN,
+           ttp.NGAY_TRA_DK,
+           ttp.NGAY_TRA_TT,
+           ttp.TRANG_THAI,
+           ttp.TIEN_COC,
+           ttp.TONG_TIEN_DU_KIEN,
+           ttp.TONG_TIEN_THUC_TE,
+           ttp.GHI_CHU,
+           cn.TEN_CN
+    FROM don_thue_trang_phuc ttp
+    LEFT JOIN chi_nhanh cn ON cn.ID_CN = ttp.ID_CN
+    WHERE ttp.ID_TK = ?
+    ORDER BY ttp.NGAY_DAT DESC, ttp.ID_TTP DESC
+";
+
+$stmtRentals = $conn->prepare($sqlRentals);
+if ($stmtRentals) {
+    $stmtRentals->bind_param('s', $userId);
+    $stmtRentals->execute();
+    $rsRentals = $stmtRentals->get_result();
+    while ($row = $rsRentals->fetch_assoc()) {
+        $orderId = (int)$row['ID_TTP'];
+        $rentalOrders[$orderId] = $row;
+        $rentalIds[] = $orderId;
+    }
+    $stmtRentals->close();
+}
+
+$rentalInvoicesRaw = [];
+$rentalInvoiceStatus = [];
+
+if (!empty($rentalIds)) {
+    $inClause = implode(',', array_map('intval', $rentalIds));
+
+    $invoiceSql = "
+        SELECT ID_HD, ID_TTP, TONG_TIEN, TRANGTHAI_THANHTOAN, PHUONGTHUC_THANHTOAN, NGAY_GIO
+        FROM hoa_don
+        WHERE ID_TTP IN ($inClause)
+        ORDER BY NGAY_GIO DESC, ID_HD DESC
+    ";
+    $rsInvoices = $conn->query($invoiceSql);
+    $invoiceIds = [];
+    if ($rsInvoices) {
+        while ($row = $rsInvoices->fetch_assoc()) {
+            $orderId = (int)$row['ID_TTP'];
+            if (!isset($rentalInvoicesRaw[$orderId])) {
+                $rentalInvoicesRaw[$orderId] = [];
+            }
+            $rentalInvoicesRaw[$orderId][] = $row;
+            $invoiceIds[] = (int)$row['ID_HD'];
+        }
+        $rsInvoices->free();
+    }
+
+    $invoiceIds = array_values(array_unique(array_filter($invoiceIds)));
+    if (!empty($invoiceIds)) {
+        $invoiceIdClause = implode(',', $invoiceIds);
+         $statusSql = "
+             SELECT t1.ID_HD,
+                 t1.TRANG_THAI,
+                 t1.MA_THAM_CHIEU,
+                 t1.CREATED_AT
+             FROM thanh_toan_truc_tuyen t1
+            JOIN (
+                SELECT ID_HD, MAX(CREATED_AT) AS latest_created
+                FROM thanh_toan_truc_tuyen
+                WHERE GATEWAY = 'vnpay' AND ID_HD IN ($invoiceIdClause)
+                GROUP BY ID_HD
+            ) latest ON latest.ID_HD = t1.ID_HD AND latest.latest_created = t1.CREATED_AT
+            WHERE t1.GATEWAY = 'vnpay'
+        ";
+        $rsStatus = $conn->query($statusSql);
+        if ($rsStatus) {
+            while ($row = $rsStatus->fetch_assoc()) {
+                $rentalInvoiceStatus[(int)$row['ID_HD']] = $row;
+            }
+            $rsStatus->free();
+        }
+    }
+
+    $itemSql = "
+        SELECT ct.ID_TTP,
+               tp.TEN,
+               tp.SIZE,
+               tp.MAU_SAC,
+               ct.SO_LUONG,
+               ct.DON_GIA_AP_DUNG
+        FROM don_thue_trang_phuc_ct ct
+        LEFT JOIN trang_phuc tp ON tp.ID_TRANG_PHUC = ct.ID_TP
+        WHERE ct.ID_TTP IN ($inClause)
+        ORDER BY ct.ID_TTP, tp.TEN
+    ";
+    $rsItems = $conn->query($itemSql);
+    if ($rsItems) {
+        while ($row = $rsItems->fetch_assoc()) {
+            $orderId = (int)$row['ID_TTP'];
+            if (!isset($rentalItemsMap[$orderId])) {
+                $rentalItemsMap[$orderId] = [];
+            }
+            $rentalItemsMap[$orderId][] = $row;
+        }
+        $rsItems->free();
+    }
+}
+
+if (!empty($rentalOrders)) {
+    foreach ($rentalOrders as $orderId => &$orderRow) {
+        $selectedInvoice = null;
+        if (!empty($rentalInvoicesRaw[$orderId])) {
+            foreach ($rentalInvoicesRaw[$orderId] as $invoiceRow) {
+                if (($invoiceRow['TRANGTHAI_THANHTOAN'] ?? '') !== 'Đã thanh toán') {
+                    $selectedInvoice = $invoiceRow;
+                    break;
+                }
+            }
+            if ($selectedInvoice === null) {
+                $selectedInvoice = $rentalInvoicesRaw[$orderId][0];
+            }
+        }
+
+        if ($selectedInvoice) {
+            $invoiceId = (int)$selectedInvoice['ID_HD'];
+            $gatewayInfo = $rentalInvoiceStatus[$invoiceId] ?? [];
+            $orderRow['ID_HD']                 = $invoiceId;
+            $orderRow['TONG_TIEN']             = $selectedInvoice['TONG_TIEN'];
+            $orderRow['TRANGTHAI_THANHTOAN']   = $selectedInvoice['TRANGTHAI_THANHTOAN'];
+            $orderRow['PHUONGTHUC_THANHTOAN']  = $selectedInvoice['PHUONGTHUC_THANHTOAN'];
+            $orderRow['VNPAY_TRANG_THAI']      = $gatewayInfo['TRANG_THAI'] ?? null;
+            $orderRow['VNPAY_MA_THAM_CHIEU']   = $gatewayInfo['MA_THAM_CHIEU'] ?? null;
+            $orderRow['VNPAY_UPDATED_AT']      = $gatewayInfo['CREATED_AT'] ?? null;
+        } else {
+            $orderRow['ID_HD']                 = null;
+            $orderRow['TONG_TIEN']             = null;
+            $orderRow['TRANGTHAI_THANHTOAN']   = null;
+            $orderRow['PHUONGTHUC_THANHTOAN']  = null;
+            $orderRow['VNPAY_TRANG_THAI']      = null;
+            $orderRow['VNPAY_MA_THAM_CHIEU']   = null;
+            $orderRow['VNPAY_UPDATED_AT']      = null;
+        }
+    }
+    unset($orderRow);
 }
 
 if (!function_exists('renderStatusBadge')) {
@@ -266,6 +477,40 @@ if (!function_exists('renderPaymentBadge')) {
             return '<span class="bg-rose-100 text-rose-700 px-2 py-1 text-xs rounded-md font-medium whitespace-nowrap">Giao dịch lỗi</span>';
         }
         return '<span class="bg-rose-100 text-rose-700 px-2 py-1 text-xs rounded-md font-medium whitespace-nowrap">Chưa thanh toán</span>';
+    }
+}
+
+if (!function_exists('sb_get_rental_status_meta')) {
+    function sb_get_rental_status_meta($status) {
+        static $map = [
+            'cho_duyet' => ['label' => 'Chờ duyệt',   'badge' => 'bg-amber-100 text-amber-700'],
+            'da_duyet'  => ['label' => 'Đã duyệt',    'badge' => 'bg-blue-100 text-blue-700'],
+            'dang_thue' => ['label' => 'Đang thuê',   'badge' => 'bg-indigo-100 text-indigo-700'],
+            'da_tra'    => ['label' => 'Đã trả',      'badge' => 'bg-emerald-100 text-emerald-700'],
+            'tre_hen'   => ['label' => 'Trễ hẹn',     'badge' => 'bg-rose-100 text-rose-700'],
+            'huy'       => ['label' => 'Đã hủy',      'badge' => 'bg-gray-100 text-gray-600'],
+        ];
+        $fallback = $status ?: 'Không rõ';
+        return $map[$status] ?? ['label' => $fallback, 'badge' => 'bg-gray-100 text-gray-600'];
+    }
+}
+
+if (!function_exists('renderRentalStatusBadge')) {
+    function renderRentalStatusBadge($status) {
+        $meta = sb_get_rental_status_meta($status);
+        return "<span class=\"{$meta['badge']} px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap\">{$meta['label']}</span>";
+    }
+}
+
+if (!function_exists('sb_format_vnd')) {
+    function sb_format_vnd($value) {
+        if ($value === null || $value === '') {
+            return '—';
+        }
+        if (!is_numeric($value)) {
+            return $value;
+        }
+        return number_format((float)$value, 0, ',', '.') . ' VND';
     }
 }
 

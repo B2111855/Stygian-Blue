@@ -3,7 +3,7 @@
 // Security: ensure only authenticated admin/authorized roles (basic check here; improve later)
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
-require_once __DIR__ . '/../../database/config.php';
+require_once __DIR__ . '/../../../database/config.php';
 header('Content-Type: application/json; charset=utf-8');
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;

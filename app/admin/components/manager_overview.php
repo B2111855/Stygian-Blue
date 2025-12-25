@@ -1,8 +1,12 @@
 <?php
 include '../../database/config.php';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
 $branchId   = isset($_SESSION['branch_id']) ? intval($_SESSION['branch_id']) : 0;
 $branchName = isset($_SESSION['branch_name']) ? $_SESSION['branch_name'] : 'Chi nhánh của tôi';
+$managerName = isset($_SESSION['HO_TEN']) ? $_SESSION['HO_TEN'] : 'Quản lý chi nhánh';
 
 if ($branchId <= 0) {
   $branchId = 1;
@@ -22,8 +26,8 @@ $currentMonth = date('Y-m');
       <div class="relative z-10 space-y-6">
         <div class="flex flex-wrap items-center justify-between gap-6">
           <div>
-            <p class="text-xs uppercase tracking-[0.3em] text-white/70">Branch overview</p>
-            <h1 class="text-3xl sm:text-4xl font-bold leading-tight"><?= htmlspecialchars($branchName) ?></h1>
+            <p class="text-xs uppercase tracking-[0.3em] text-white/70">Xin chào, <?= htmlspecialchars($managerName) ?></p>
+            <h1 class="text-3xl sm:text-4xl font-bold leading-tight">Chi nhánh <?= htmlspecialchars($branchName) ?></h1>
             <p class="text-sm text-white/80 mt-1">ID chi nhánh: CN<?= $branchId ?></p>
           </div>
           <div class="text-right">
@@ -34,24 +38,24 @@ $currentMonth = date('Y-m');
 
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div class="rounded-2xl bg-white/10 p-4 backdrop-blur">
-            <p class="text-xs uppercase text-white/70">Doanh thu kỳ gần nhất</p>
+            <p class="text-xs uppercase text-white/70">Doanh thu thực tế (tháng)</p>
             <p id="kpiRevenueCurrent" class="text-xl font-semibold mt-1">0 VND</p>
-            <p class="text-xs text-white/60">So với kỳ liền trước</p>
+            <p class="text-xs text-white/60">Đã thanh toán</p>
           </div>
           <div class="rounded-2xl bg-white/10 p-4 backdrop-blur">
-            <p class="text-xs uppercase text-white/70">Chi phí kỳ gần nhất</p>
-            <p id="kpiExpenseCurrent" class="text-xl font-semibold mt-1">0 VND</p>
-            <p class="text-xs text-white/60">Đã gồm thuế</p>
+            <p class="text-xs uppercase text-white/70">Chi phí lương (tháng)</p>
+            <p id="kpiSalaryCurrent" class="text-xl font-semibold mt-1">0 VND</p>
+            <p class="text-xs text-white/60">Lương nhân viên</p>
           </div>
           <div class="rounded-2xl bg-white/10 p-4 backdrop-blur">
-            <p class="text-xs uppercase text-white/70">Lợi nhuận ròng</p>
+            <p class="text-xs uppercase text-white/70">Chi phí phát sinh (tháng)</p>
+            <p id="kpiIncidentalCurrent" class="text-xl font-semibold mt-1">0 VND</p>
+            <p class="text-xs text-white/60">Điện, nước, mặt bằng...</p>
+          </div>
+          <div class="rounded-2xl bg-white/10 p-4 backdrop-blur">
+            <p class="text-xs uppercase text-white/70">Lợi nhuận ròng (tháng)</p>
             <p id="kpiMonthProfit" class="text-xl font-semibold mt-1">0 VND</p>
             <p class="text-xs text-white/60" id="profitRate">--</p>
-          </div>
-          <div class="rounded-2xl bg-white/10 p-4 backdrop-blur">
-            <p class="text-xs uppercase text-white/70">Xu hướng</p>
-            <p id="trendBadge" class="text-xl font-semibold mt-1">--</p>
-            <p class="text-xs text-white/60" id="trendLabel">Đang phân tích...</p>
           </div>
         </div>
       </div>
@@ -68,7 +72,7 @@ $currentMonth = date('Y-m');
       <ul id="branchPulseList" class="mt-5 space-y-3 text-sm text-gray-600">
         <li class="flex items-center justify-between"><span>Biên lợi nhuận</span><span>--</span></li>
         <li class="flex items-center justify-between"><span>Quỹ lương</span><span>--</span></li>
-        <li class="flex items-center justify-between"><span>Thuế ước tính</span><span>--</span></li>
+        <li class="flex items-center justify-between"><span>Chi phí vận hành</span><span>--</span></li>
         <li class="flex items-center justify-between"><span>Chu kỳ dữ liệu</span><span>--</span></li>
       </ul>
     </article>
@@ -286,6 +290,9 @@ $currentMonth = date('Y-m');
       revenueProgressText: $('revenueProgressText'),
       expenseProgressText: $('expenseProgressText'),
       profitProgressText: $('profitProgressText'),
+      monthProfit: $('kpiMonthProfit'),
+      salaryCurrent: $('kpiSalaryCurrent'),
+      incidentalCurrent: $('kpiIncidentalCurrent'),
       serviceShareCaption: $('serviceShareCaption'),
       serviceShareEmpty: $('serviceShareEmpty'),
       timeSlotEmpty: $('timeSlotEmpty'),
@@ -296,6 +303,23 @@ $currentMonth = date('Y-m');
     };
 
     const formatCurrency = (value = 0) => `${Number(value || 0).toLocaleString('vi-VN')} VND`;
+    const safeSeries = (series) => Array.isArray(series) ? series : [];
+      async function fetchCurrentMonthSnapshot(branch) {
+        const res = await fetch(`./components/get_financial_data.php?filter=month&branch=${branch}`);
+        const data = await res.json();
+        const revenue = safeSeries(data.revenue_actual);
+        const expense = safeSeries(data.expense);
+        const salary = safeSeries(data.salary_expense);
+        const revenueVal = revenue.at(-1) || 0;
+        const expenseVal = expense.at(-1) || 0;
+        const salaryVal = salary.at(-1) || 0;
+        return {
+          revenue: revenueVal,
+          expense: expenseVal,
+          salary: salaryVal,
+          profit: revenueVal - (expenseVal + salaryVal)
+        };
+      }
 
     function updateClock() {
       $('nowText').textContent = new Date().toLocaleString('vi-VN');
@@ -343,24 +367,30 @@ $currentMonth = date('Y-m');
         const filter = timeFilter.value;
         const res = await fetch(`./components/get_financial_data.php?filter=${filter}&branch=${branch}`);
         const data = await res.json();
+          const monthSnapshot = await fetchCurrentMonthSnapshot(branch);
 
         if (!data || !Array.isArray(data.labels)) {
           throw new Error('Không thể tải dữ liệu tài chính');
         }
 
-        const labels = data.labels;
-        const revenue = data.revenue || [];
-        const expense = data.expense || [];
-        const salaryExpense = Number(data.salary_expense || 0);
+        const labels = safeSeries(data.labels);
+        const revenue = safeSeries(data.revenue_actual);
+        const expense = safeSeries(data.expense); // Chi phí vận hành (phát sinh)
+        const salary = safeSeries(data.salary_expense); // Chi phí lương
+        const totalExpenseSeries = expense.map((val, idx) => Number(val || 0) + Number(salary[idx] || 0));
 
         const totalRevenue = revenue.reduce((sum, val) => sum + Number(val || 0), 0);
         const totalExpense = expense.reduce((sum, val) => sum + Number(val || 0), 0);
-        const totalWithSalary = totalExpense + salaryExpense;
-        const profit = totalRevenue - totalWithSalary;
+        const salaryTotal = salary.reduce((sum, val) => sum + Number(val || 0), 0);
+        const totalCost = totalExpense + salaryTotal;
+        const profit = totalRevenue - totalCost;
 
         const latestRevenue = revenue.at(-1) || 0;
         const previousRevenue = revenue.length > 1 ? revenue.at(-2) : latestRevenue;
         const latestExpense = expense.at(-1) || 0;
+        const latestSalary = salary.at(-1) || 0;
+        const latestTotalExpense = latestExpense + latestSalary;
+          const latestProfit = latestRevenue - latestTotalExpense;
 
         const trend = previousRevenue === 0 ? 0 : ((latestRevenue - previousRevenue) / previousRevenue) * 100;
         const profitMargin = totalRevenue === 0 ? 0 : (profit / totalRevenue) * 100;
@@ -373,7 +403,7 @@ $currentMonth = date('Y-m');
             labels,
             datasets: [
               {
-                label: 'Doanh thu',
+                label: 'Doanh thu thực tế',
                 data: revenue,
                 borderColor: '#059669',
                 backgroundColor: 'rgba(5,150,105,0.1)',
@@ -382,8 +412,8 @@ $currentMonth = date('Y-m');
                 pointRadius: 3
               },
               {
-                label: 'Chi phí',
-                data: expense,
+                label: 'Tổng chi phí',
+                data: totalExpenseSeries,
                 borderColor: '#dc2626',
                 backgroundColor: 'rgba(220,38,38,0.1)',
                 fill: true,
@@ -405,38 +435,89 @@ $currentMonth = date('Y-m');
         });
 
         els.summary.innerHTML = `
-          <div id="financialReport" class="grid gap-3 text-sm">
-            <div class="flex items-center justify-between" data-field="revenue"><span>💰 Tổng doanh thu</span><strong>${formatCurrency(totalRevenue)}</strong></div>
-            <div class="flex items-center justify-between" data-field="expense"><span>🧾 Chi phí vận hành</span><strong>${formatCurrency(totalExpense)}</strong></div>
-            <div class="flex items-center justify-between" data-field="salary"><span>💼 Quỹ lương</span><strong>${formatCurrency(salaryExpense)}</strong></div>
-            <div class="flex items-center justify-between" data-field="profit"><span>📈 Lợi nhuận ròng</span><strong>${formatCurrency(profit)}</strong></div>
+          <div id="financialReport" class="grid gap-3 text-sm space-y-4">
+            <div class="rounded-lg bg-blue-50 border border-blue-200 p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span>💰 Tổng doanh thu</span>
+                <strong class="text-blue-900">${formatCurrency(totalRevenue)}</strong>
+              </div>
+              <div class="text-xs text-blue-600 bg-white p-2 rounded font-mono">
+                = SUM(Doanh thu đã thanh toán)
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-orange-50 border border-orange-200 p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span>🧾 Chi phí vận hành</span>
+                <strong class="text-orange-900">${formatCurrency(totalExpense)}</strong>
+              </div>
+              <div class="text-xs text-orange-600 bg-white p-2 rounded font-mono">
+                = Chi phí phát sinh (điện, nước, mặt bằng...)
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-sky-50 border border-sky-200 p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span>👥 Lương nhân viên</span>
+                <strong class="text-sky-900">${formatCurrency(salaryTotal)}</strong>
+              </div>
+              <div class="text-xs text-sky-600 bg-white p-2 rounded font-mono">
+                = SUM(LOAI_CHI_TIET='Lương nhân viên')
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-emerald-50 border border-emerald-200 p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span>📈 Lợi nhuận ròng</span>
+                <strong class="text-emerald-900">${formatCurrency(profit)}</strong>
+              </div>
+              <div class="text-xs text-emerald-600 bg-white p-2 rounded font-mono">
+                = Doanh thu thực tế - (Chi phí vận hành + Lương)
+              </div>
+            </div>
+
+            <div class="rounded-lg bg-indigo-50 border border-indigo-200 p-3">
+              <div class="flex items-center justify-between mb-2">
+                <span>📊 Biên lợi nhuận</span>
+                <strong class="text-indigo-900">${profitMargin.toFixed(2)}%</strong>
+              </div>
+              <div class="text-xs text-indigo-600 bg-white p-2 rounded font-mono">
+                = (Lợi nhuận ÷ Doanh thu) × 100%
+              </div>
+            </div>
           </div>
         `;
 
-        els.revenueCurrent.textContent = formatCurrency(latestRevenue);
-        els.expenseCurrent.textContent = formatCurrency(latestExpense);
+        els.revenueCurrent.textContent = formatCurrency(monthSnapshot.revenue);
+        els.salaryCurrent.textContent = formatCurrency(monthSnapshot.salary);
+        els.incidentalCurrent.textContent = formatCurrency(monthSnapshot.expense);
+        els.monthProfit.textContent = formatCurrency(monthSnapshot.profit);
+        const monthMargin = monthSnapshot.revenue === 0 ? 0 : (monthSnapshot.profit / monthSnapshot.revenue) * 100;
+        els.profitRate.textContent = `${monthMargin.toFixed(1)}% biên lợi nhuận tháng`;
+        els.salaryCurrent.textContent = formatCurrency(latestSalary);
+        els.incidentalCurrent.textContent = formatCurrency(latestExpense);
+        els.monthProfit.textContent = formatCurrency(latestProfit);
         els.totalRevenue.textContent = formatCurrency(totalRevenue);
         els.revenueInfo.textContent = `${labels.length} chu kỳ được thống kê`;
-        els.totalExpense.textContent = formatCurrency(totalExpense);
-        els.expenseInfo.textContent = `Đã gồm thuế ước tính 10%`;
-        els.salaryFund.textContent = formatCurrency(salaryExpense);
+        els.totalExpense.textContent = formatCurrency(totalCost);
+        els.expenseInfo.textContent = `Gồm chi phí vận hành + lương`;
+        els.salaryFund.textContent = formatCurrency(salaryTotal);
         els.status.textContent = profit < 0 ? 'Lỗ - cần hành động' : (profitMargin < 8 ? 'Biên lợi nhuận thấp' : 'Khỏe mạnh');
         els.statusSub.textContent = profit < 0 ? 'Ưu tiên rà soát chi phí cố định' : `Biên lợi nhuận ${profitMargin.toFixed(1)}%`;
         els.statusBanner.textContent = profit < 0 ? 'Cảnh báo: tổng chi vượt doanh thu, hãy lập kế hoạch tiết giảm.' : 'Dòng tiền ổn định, có thể đề xuất mở rộng dịch vụ.';
         els.trendBadge.textContent = `${trend >= 0 ? '+' : ''}${trend.toFixed(1)}%`;
         els.trendLabel.textContent = trend >= 0 ? 'Doanh thu tăng so với kỳ trước' : 'Doanh thu giảm - theo dõi sát';
-        els.profitRate.textContent = `${profitMargin.toFixed(1)}% biên lợi nhuận`;
-        els.profitRate.className = `text-xs font-medium ${profitMargin < 0 ? 'text-rose-100' : profitMargin < 8 ? 'text-amber-100' : 'text-emerald-100'}`;
+        els.profitRate.className = `text-xs font-medium ${monthMargin < 0 ? 'text-rose-100' : monthMargin < 8 ? 'text-amber-100' : 'text-emerald-100'}`;
 
-        const maxValue = Math.max(totalRevenue, totalExpense, Math.abs(profit));
+        const maxValue = Math.max(totalRevenue, totalCost, Math.abs(profit));
         setProgress(els.revenueProgress, els.revenueProgressText, totalRevenue, maxValue);
-        setProgress(els.expenseProgress, els.expenseProgressText, totalExpense, maxValue);
+        setProgress(els.expenseProgress, els.expenseProgressText, totalCost, maxValue);
         setProgress(els.profitProgress, els.profitProgressText, profit > 0 ? profit : 0, maxValue);
 
         renderPulse([
           { label: 'Biên lợi nhuận', value: `${profitMargin.toFixed(1)}%`, tone: profitMargin < 0 ? 'bad' : profitMargin < 8 ? 'warn' : 'good' },
-          { label: 'Quỹ lương', value: formatCurrency(salaryExpense), tone: 'warn' },
-          { label: 'Trạng thái lợi nhuận', value: profit >= 0 ? 'Dương' : 'Âm', tone: profit >= 0 ? 'good' : 'bad' },
+          { label: 'Chi phí vận hành', value: formatCurrency(totalExpense), tone: 'warn' },
+          { label: 'Quỹ lương', value: formatCurrency(salaryTotal), tone: 'warn' },
           { label: 'Chu kỳ', value: timeFilter.options[timeFilter.selectedIndex].text, tone: 'good' }
         ]);
 
@@ -445,13 +526,13 @@ $currentMonth = date('Y-m');
           activityRows.push({
             title: `Chốt số liệu ${labels.at(-1)}`,
             badge: profit >= 0 ? 'Ổn định' : 'Cảnh báo',
-            detail: `Doanh thu ${formatCurrency(latestRevenue)} | Chi phí ${formatCurrency(latestExpense)}`,
+            detail: `Doanh thu ${formatCurrency(latestRevenue)} | Chi phí ${formatCurrency(latestTotalExpense)}`,
             tone: profit >= 0 ? 'good' : 'bad'
           });
         }
         activityRows.push({
           title: 'Cập nhật KPI quỹ lương',
-          badge: `${(salaryExpense / (totalExpense || 1) * 100).toFixed(1)}%`,
+          badge: `${(salaryTotal / (totalCost || 1) * 100).toFixed(1)}%`,
           detail: 'Tỷ trọng quỹ lương trên tổng chi',
           tone: 'warn'
         });

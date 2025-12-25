@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Sequence Diagram</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; }
+    .container { max-width: 1000px; margin: 0 auto; }
+    .notes { color: #444; margin-top: 24px; }
+    pre { background: #f6f8fa; padding: 12px; border-radius: 8px; overflow: auto; }
+  </style>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  </script>
+</head>
+<body>
+  <div class="container">
+    <h1>Mô hình tuần tự đăng nhập (Tiếng Việt)</h1>
+    <div class="mermaid">
+sequenceDiagram
+  autonumber
+  participant N as Người dùng
+  participant G as Giao diện
+  participant H as Hệ thống
+
+  N->>G: Nhập mã người dùng (username) và mật khẩu
+  G->>H: Gửi yêu cầu đăng nhập {username, password}
+  H->>H: Tìm tài khoản theo username và kiểm tra mật khẩu
+  alt Tồn tại & mật khẩu đúng
+    H->>H: Lấy quyền truy cập của người dùng
+    H-->>G: Trả về đăng nhập thành công
+    G-->>N: Điều hướng đến giao diện chính theo quyền
+  else Không tồn tại hoặc mật khẩu sai
+    H-->>G: Yêu cầu nhập lại thông tin đăng nhập
+    G-->>N: Hiển thị thông báo lỗi
+  end
+    </div>
+
+    <div class="notes">
+      <h3>Lưu ý bảo mật</h3>
+      <ul>
+        <li>Sử dụng HTTPS; lưu mật khẩu dạng hash (bcrypt/Argon2).</li>
+        <li>Giới hạn số lần thử; ghi log thành công/thất bại.</li>
+        <li>Dùng phiên phía máy chủ hoặc JWT + refresh token.</li>
+      </ul>
+    </div>
+
+    <h2 style="margin-top:32px;">Mô hình hoạt động đăng nhập (Tiếng Việt)</h2>
+    <div class="mermaid">
+flowchart TD
+  A([Bắt đầu]) --> B[Nhập mã người dùng và mật khẩu]
+  B --> C{Thông tin đầy đủ?}
+  C -- Không --> B
+  C -- Có --> D[Kiểm tra tài khoản theo username]
+  D --> E{Tài khoản tồn tại?}
+  E -- Không --> F[Thông báo lỗi: Tài khoản không tồn tại]
+  F --> B
+  E -- Có --> G[Kiểm tra mật khẩu]
+  G --> H{Mật khẩu đúng?}
+  H -- Không --> I[Thông báo lỗi: Mật khẩu sai]
+  I --> B
+  H -- Đúng --> J[Gán phiên/role: admin/manager/staff/customer]
+  J --> K{Role là admin/manager/staff?}
+  K -- Có --> L[Điều hướng tới dashboard tương ứng]
+  K -- Không --> M{Có redirect trước đó?}
+  M -- Có --> N[Điều hướng tới trang được yêu cầu]
+  M -- Không --> O[Điều hướng tới trang chủ]
+  L --> P([Kết thúc])
+  N --> P
+  O --> P
+    </div>
+
+    <h3>Nếu không thấy sơ đồ:</h3>
+    <ul>
+      <li>Kiểm tra kết nối Internet (tải Mermaid từ CDN).</li>
+      <li>Thử tải lại trang (Ctrl+R).</li>
+      <li>Đảm bảo XAMPP/Apache đang chạy.</li>
+    </ul>
+  </div>
+</body>
+</html>

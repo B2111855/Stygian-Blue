@@ -24,335 +24,6 @@ function clean_input($value)
     return '';
 }
 
-function normalize_phone($phone)
-{
-    return preg_replace('/\D/', '', (string) $phone);
-}
-
-function collectCustomerPayload(array $source)
-{
-    return [
-        'ID_TK' => clean_input($source['ID_TK'] ?? ''),
-        'HO_TEN' => clean_input($source['HO_TEN'] ?? ''),
-        'NGAY_SINH' => clean_input($source['NGAY_SINH'] ?? ''),
-        'DIA_CHI' => clean_input($source['DIA_CHI'] ?? ''),
-        'EMAIL' => strtolower(clean_input($source['EMAIL'] ?? '')),
-        'SDT' => normalize_phone($source['SDT'] ?? ''),
-        'MAT_KHAU' => (string) ($source['MAT_KHAU'] ?? ''),
-    ];
-}
-
-function validateCustomerPayload(array $data, $isNew = false)
-{
-    if ($isNew) {
-        if ($data['ID_TK'] === '') {
-            return 'ID tài khoản không được để trống.';
-        }
-        if (!preg_match('/^[A-Za-z0-9_]+$/', $data['ID_TK'])) {
-            return 'ID tài khoản chỉ được chứa chữ, số hoặc dấu gạch dưới.';
-        }
-    }
-
-    if ($data['HO_TEN'] === '') {
-        return 'Vui lòng nhập họ tên khách hàng.';
-    }
-
-    if ($data['NGAY_SINH'] === '') {
-        return 'Vui lòng chọn ngày sinh.';
-    }
-
-    $dob = strtotime($data['NGAY_SINH']);
-    if ($dob === false) {
-        return 'Ngày sinh không hợp lệ.';
-    }
-
-    if ($dob > strtotime('-18 years')) {
-        return 'Khách hàng phải đủ 18 tuổi trở lên.';
-    }
-
-    if ($data['DIA_CHI'] === '') {
-        return 'Vui lòng nhập địa chỉ.';
-    }
-
-    if ($data['EMAIL'] === '' || !filter_var($data['EMAIL'], FILTER_VALIDATE_EMAIL)) {
-        return 'Địa chỉ email không hợp lệ.';
-    }
-
-    if (!preg_match('/^0[0-9]{9}$/', $data['SDT'])) {
-        return 'Số điện thoại phải bắt đầu bằng 0 và có 10 chữ số.';
-    }
-
-    if ($isNew && $data['MAT_KHAU'] === '') {
-        return 'Vui lòng nhập mật khẩu.';
-    }
-
-    if ($data['MAT_KHAU'] !== '' && strlen($data['MAT_KHAU']) < 8) {
-        return 'Mật khẩu phải có ít nhất 8 ký tự.';
-    }
-
-    return null;
-}
-
-function ensureUniqueContact($email, $sdt, $currentId = null)
-{
-    global $conn;
-
-    $sql = 'SELECT ID_TK, EMAIL, SDT FROM tai_khoan WHERE (EMAIL = ? OR SDT = ?)';
-    $types = 'ss';
-
-    if ($currentId !== null) {
-        $sql .= ' AND ID_TK <> ?';
-        $types .= 's';
-    }
-
-    $sql .= ' LIMIT 1';
-
-    $stmt = mysqli_prepare($conn, $sql);
-    if ($currentId !== null) {
-        mysqli_stmt_bind_param($stmt, $types, $email, $sdt, $currentId);
-    } else {
-        mysqli_stmt_bind_param($stmt, $types, $email, $sdt);
-    }
-
-    mysqli_stmt_execute($stmt);
-    $result = mysqli_stmt_get_result($stmt);
-    $duplicate = $result ? mysqli_fetch_assoc($result) : null;
-    mysqli_stmt_close($stmt);
-
-    if (!$duplicate) {
-        return null;
-    }
-
-    if ($duplicate['EMAIL'] === $email) {
-        return 'Email đã được sử dụng bởi tài khoản khác.';
-    }
-
-    return 'Số điện thoại đã được sử dụng bởi tài khoản khác.';
-}
-
-function redirectWithMessage($type, $message)
-{
-    $normalizedType = $type === 'success' ? 'success' : 'error';
-    $url = '?page=customers&notice=' . $normalizedType . '&msg=' . urlencode($message);
-    header("Location: $url");
-    exit;
-}
-
-function fetchCustomerById($idTk)
-{
-    global $conn;
-
-    $query = "SELECT kh.ID_TK, kh.HO_TEN, kh.NGAY_SINH, kh.DIA_CHI, kh.EMAIL, kh.SDT
-              FROM khach_hang kh
-              INNER JOIN tai_khoan tk ON kh.ID_TK = tk.ID_TK
-              WHERE kh.ID_TK = ?";
-
-    $stmt = mysqli_prepare($conn, $query);
-    mysqli_stmt_bind_param($stmt, 's', $idTk);
-    mysqli_stmt_execute($stmt);
-    $result = mysqli_stmt_get_result($stmt);
-    $customer = $result ? mysqli_fetch_assoc($result) : null;
-    mysqli_stmt_close($stmt);
-
-    return $customer;
-}
-
-function checkIfCustomerHasAppointments($idTk)
-{
-    global $conn;
-
-    $query = 'SELECT 1 FROM lich_hen WHERE ID_TK = ? LIMIT 1';
-    $stmt = mysqli_prepare($conn, $query);
-    mysqli_stmt_bind_param($stmt, 's', $idTk);
-    mysqli_stmt_execute($stmt);
-    $result = mysqli_stmt_get_result($stmt);
-    $hasAppointment = $result && mysqli_fetch_assoc($result);
-    mysqli_stmt_close($stmt);
-
-    return (bool) $hasAppointment;
-}
-
-function deleteCustomer($idTk)
-{
-    global $conn;
-
-    mysqli_begin_transaction($conn);
-
-    $deleteCustomerSql = 'DELETE FROM khach_hang WHERE ID_TK = ?';
-    $stmtCustomer = mysqli_prepare($conn, $deleteCustomerSql);
-    mysqli_stmt_bind_param($stmtCustomer, 's', $idTk);
-    $customerResult = mysqli_stmt_execute($stmtCustomer);
-    mysqli_stmt_close($stmtCustomer);
-
-    $deleteAccountSql = 'DELETE FROM tai_khoan WHERE ID_TK = ?';
-    $stmtAccount = mysqli_prepare($conn, $deleteAccountSql);
-    mysqli_stmt_bind_param($stmtAccount, 's', $idTk);
-    $accountResult = mysqli_stmt_execute($stmtAccount);
-    mysqli_stmt_close($stmtAccount);
-
-    if ($customerResult && $accountResult) {
-        mysqli_commit($conn);
-        return ['ok' => true, 'message' => 'Khách hàng đã được xóa thành công.'];
-    }
-
-    mysqli_rollback($conn);
-    return ['ok' => false, 'message' => 'Xóa khách hàng thất bại. Vui lòng thử lại.'];
-}
-
-function addCustomer(array $data)
-{
-    global $conn;
-
-    $idCheckSql = 'SELECT 1 FROM tai_khoan WHERE ID_TK = ? LIMIT 1';
-    $idStmt = mysqli_prepare($conn, $idCheckSql);
-    mysqli_stmt_bind_param($idStmt, 's', $data['ID_TK']);
-    mysqli_stmt_execute($idStmt);
-    $idResult = mysqli_stmt_get_result($idStmt);
-    $idExists = $idResult && mysqli_fetch_assoc($idResult);
-    mysqli_stmt_close($idStmt);
-
-    if ($idExists) {
-        return ['ok' => false, 'message' => 'ID tài khoản đã tồn tại. Vui lòng chọn ID khác.'];
-    }
-
-    $contactMessage = ensureUniqueContact($data['EMAIL'], $data['SDT']);
-    if ($contactMessage) {
-        return ['ok' => false, 'message' => $contactMessage];
-    }
-
-    $roleId = 3;
-    $hashedPassword = password_hash($data['MAT_KHAU'], PASSWORD_DEFAULT);
-
-    mysqli_begin_transaction($conn);
-
-    $accountSql = 'INSERT INTO tai_khoan (ID_TK, ID_QUYEN, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT, MAT_KHAU)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-    $accountStmt = mysqli_prepare($conn, $accountSql);
-    mysqli_stmt_bind_param(
-        $accountStmt,
-        'sissssss',
-        $data['ID_TK'],
-        $roleId,
-        $data['HO_TEN'],
-        $data['NGAY_SINH'],
-        $data['DIA_CHI'],
-        $data['EMAIL'],
-        $data['SDT'],
-        $hashedPassword
-    );
-    $accountInserted = mysqli_stmt_execute($accountStmt);
-    mysqli_stmt_close($accountStmt);
-
-    if (!$accountInserted) {
-        mysqli_rollback($conn);
-        return ['ok' => false, 'message' => 'Không thể thêm vào bảng tài khoản. Vui lòng thử lại.'];
-    }
-
-    $customerSql = 'INSERT INTO khach_hang (ID_TK, HO_TEN, NGAY_SINH, DIA_CHI, EMAIL, SDT)
-                    VALUES (?, ?, ?, ?, ?, ?)';
-    $customerStmt = mysqli_prepare($conn, $customerSql);
-    mysqli_stmt_bind_param(
-        $customerStmt,
-        'ssssss',
-        $data['ID_TK'],
-        $data['HO_TEN'],
-        $data['NGAY_SINH'],
-        $data['DIA_CHI'],
-        $data['EMAIL'],
-        $data['SDT']
-    );
-    $customerInserted = mysqli_stmt_execute($customerStmt);
-    mysqli_stmt_close($customerStmt);
-
-    if (!$customerInserted) {
-        mysqli_rollback($conn);
-        return ['ok' => false, 'message' => 'Không thể thêm vào bảng khách hàng. Vui lòng thử lại.'];
-    }
-
-    mysqli_commit($conn);
-    return ['ok' => true, 'message' => 'Thêm khách hàng mới thành công.'];
-}
-
-function updateCustomer(array $data)
-{
-    global $conn;
-
-    $contactMessage = ensureUniqueContact($data['EMAIL'], $data['SDT'], $data['ID_TK']);
-    if ($contactMessage) {
-        return ['ok' => false, 'message' => $contactMessage];
-    }
-
-    mysqli_begin_transaction($conn);
-
-    $shouldUpdatePassword = $data['MAT_KHAU'] !== '';
-    $accountSql = 'UPDATE tai_khoan SET HO_TEN = ?, NGAY_SINH = ?, DIA_CHI = ?, EMAIL = ?, SDT = ?';
-
-    if ($shouldUpdatePassword) {
-        $accountSql .= ', MAT_KHAU = ?';
-    }
-
-    $accountSql .= ' WHERE ID_TK = ?';
-    $accountStmt = mysqli_prepare($conn, $accountSql);
-
-    if ($shouldUpdatePassword) {
-        $hashedPassword = password_hash($data['MAT_KHAU'], PASSWORD_DEFAULT);
-        mysqli_stmt_bind_param(
-            $accountStmt,
-            'sssssss',
-            $data['HO_TEN'],
-            $data['NGAY_SINH'],
-            $data['DIA_CHI'],
-            $data['EMAIL'],
-            $data['SDT'],
-            $hashedPassword,
-            $data['ID_TK']
-        );
-    } else {
-        mysqli_stmt_bind_param(
-            $accountStmt,
-            'ssssss',
-            $data['HO_TEN'],
-            $data['NGAY_SINH'],
-            $data['DIA_CHI'],
-            $data['EMAIL'],
-            $data['SDT'],
-            $data['ID_TK']
-        );
-    }
-
-    $accountUpdated = mysqli_stmt_execute($accountStmt);
-    mysqli_stmt_close($accountStmt);
-
-    if (!$accountUpdated) {
-        mysqli_rollback($conn);
-        return ['ok' => false, 'message' => 'Không thể cập nhật bảng tài khoản. Vui lòng thử lại.'];
-    }
-
-    $customerSql = 'UPDATE khach_hang SET HO_TEN = ?, NGAY_SINH = ?, DIA_CHI = ?, EMAIL = ?, SDT = ? WHERE ID_TK = ?';
-    $customerStmt = mysqli_prepare($conn, $customerSql);
-    mysqli_stmt_bind_param(
-        $customerStmt,
-        'ssssss',
-        $data['HO_TEN'],
-        $data['NGAY_SINH'],
-        $data['DIA_CHI'],
-        $data['EMAIL'],
-        $data['SDT'],
-        $data['ID_TK']
-    );
-    $customerUpdated = mysqli_stmt_execute($customerStmt);
-    mysqli_stmt_close($customerStmt);
-
-    if (!$customerUpdated) {
-        mysqli_rollback($conn);
-        return ['ok' => false, 'message' => 'Không thể cập nhật bảng khách hàng. Vui lòng thử lại.'];
-    }
-
-    mysqli_commit($conn);
-    return ['ok' => true, 'message' => 'Cập nhật khách hàng thành công.'];
-}
-
-// Returns paginated customer data and metadata.
 function getPaginatedCustomers($search, $page, $limit = CUSTOMER_PAGE_SIZE)
 {
     global $conn;
@@ -362,11 +33,11 @@ function getPaginatedCustomers($search, $page, $limit = CUSTOMER_PAGE_SIZE)
     $offset = ($page - 1) * $limit;
     $search = clean_input($search);
 
-    $whereClause = '';
+    $whereClause = 'WHERE kh.IS_DELETED = 0';
     $keyword = null;
 
     if ($search !== '') {
-        $whereClause = 'WHERE kh.HO_TEN LIKE ? OR kh.EMAIL LIKE ? OR kh.SDT LIKE ?';
+        $whereClause .= ' AND (kh.ID_TK LIKE ? OR kh.HO_TEN LIKE ? OR kh.EMAIL LIKE ? OR kh.SDT LIKE ?)';
         $keyword = '%' . $search . '%';
     }
 
@@ -376,8 +47,13 @@ function getPaginatedCustomers($search, $page, $limit = CUSTOMER_PAGE_SIZE)
                  $whereClause";
     $countStmt = mysqli_prepare($conn, $countSql);
 
+    if (!$countStmt) {
+        error_log("Prepare error: " . $conn->error);
+        return ['rows' => [], 'totalPages' => 1, 'total' => 0, 'limit' => $limit, 'page' => 1];
+    }
+
     if ($keyword !== null) {
-        mysqli_stmt_bind_param($countStmt, 'sss', $keyword, $keyword, $keyword);
+        mysqli_stmt_bind_param($countStmt, 'ssss', $keyword, $keyword, $keyword, $keyword);
     }
 
     mysqli_stmt_execute($countStmt);
@@ -400,11 +76,17 @@ function getPaginatedCustomers($search, $page, $limit = CUSTOMER_PAGE_SIZE)
                 INNER JOIN tai_khoan tk ON kh.ID_TK = tk.ID_TK
                 $whereClause
                 ORDER BY kh.HO_TEN ASC
-                LIMIT $limit OFFSET $offset";
+                LIMIT " . intval($limit) . " OFFSET " . intval($offset);
+    
     $listStmt = mysqli_prepare($conn, $listSql);
 
+    if (!$listStmt) {
+        error_log("Prepare error: " . $conn->error);
+        return ['rows' => [], 'totalPages' => $totalPages, 'total' => $total, 'limit' => $limit, 'page' => $page];
+    }
+
     if ($keyword !== null) {
-        mysqli_stmt_bind_param($listStmt, 'sss', $keyword, $keyword, $keyword);
+        mysqli_stmt_bind_param($listStmt, 'ssss', $keyword, $keyword, $keyword, $keyword);
     }
 
     mysqli_stmt_execute($listStmt);
@@ -421,20 +103,6 @@ function getPaginatedCustomers($search, $page, $limit = CUSTOMER_PAGE_SIZE)
     ];
 }
 
-function formatDateForInput($date)
-{
-    if (!$date) {
-        return '';
-    }
-
-    $timestamp = strtotime($date);
-    if ($timestamp === false) {
-        return '';
-    }
-
-    return date('Y-m-d', $timestamp);
-}
-
 function formatDateForDisplay($date)
 {
     if (!$date) {
@@ -449,81 +117,55 @@ function formatDateForDisplay($date)
     return date('d/m/Y', $timestamp);
 }
 
-$successMessage = null;
-$errorMessage = null;
-
-if (isset($_GET['notice'], $_GET['msg'])) {
-    $noticeType = $_GET['notice'] === 'success' ? 'success' : ($_GET['notice'] === 'error' ? 'error' : null);
-    $messageText = clean_input($_GET['msg']);
-
-    if ($noticeType === 'success') {
-        $successMessage = $messageText;
-    } elseif ($noticeType === 'error') {
-        $errorMessage = $messageText;
+function formatDateForInput($date)
+{
+    if (!$date) {
+        return '';
     }
+
+    $timestamp = strtotime($date);
+    if ($timestamp === false) {
+        return '';
+    }
+
+    return date('Y-m-d', $timestamp);
 }
 
-if (isset($_GET['delete'])) {
-    $deleteId = clean_input($_GET['delete']);
+function countCustomers($search = '')
+{
+    global $conn;
+    $search = clean_input($search);
+    $whereClause = 'WHERE kh.IS_DELETED = 0';
 
-    if ($deleteId === '') {
-        redirectWithMessage('error', 'Thông tin khách hàng không hợp lệ.');
-    }
+    if ($search !== '') {
+        $whereClause .= ' AND (kh.ID_TK LIKE ? OR kh.HO_TEN LIKE ? OR kh.EMAIL LIKE ? OR kh.SDT LIKE ?)';
+        $keyword = '%' . $search . '%';
 
-    if (checkIfCustomerHasAppointments($deleteId)) {
-        redirectWithMessage('error', 'Không thể xóa khách hàng vì đang có lịch hẹn.');
-    }
-
-    $deleteResult = deleteCustomer($deleteId);
-    $type = $deleteResult['ok'] ? 'success' : 'error';
-    redirectWithMessage($type, $deleteResult['message']);
-}
-
-$editCustomer = null;
-if (isset($_GET['edit'])) {
-    $editId = clean_input($_GET['edit']);
-    if ($editId !== '') {
-        $editCustomer = fetchCustomerById($editId);
-        if (!$editCustomer && !$errorMessage) {
-            $errorMessage = 'Không tìm thấy khách hàng yêu cầu.';
+        $countSql = "SELECT COUNT(*) AS total FROM khach_hang kh INNER JOIN tai_khoan tk ON kh.ID_TK = tk.ID_TK $whereClause";
+        $countStmt = mysqli_prepare($conn, $countSql);
+        
+        if (!$countStmt) {
+            error_log("Prepare error: " . $conn->error);
+            return 0;
         }
+        
+        mysqli_stmt_bind_param($countStmt, 'ssss', $keyword, $keyword, $keyword, $keyword);
     } else {
-        $errorMessage = 'Không tìm thấy khách hàng yêu cầu.';
-    }
-}
-
-if (isset($_POST['edit_customer'])) {
-    $payload = collectCustomerPayload($_POST);
-    $validationError = validateCustomerPayload($payload, false);
-
-    if ($validationError) {
-        $errorMessage = $validationError;
-        $editCustomer = array_merge($editCustomer ?? [], $payload);
-    } else {
-        $result = updateCustomer($payload);
-        if ($result['ok']) {
-            redirectWithMessage('success', $result['message']);
+        $countSql = "SELECT COUNT(*) AS total FROM khach_hang kh INNER JOIN tai_khoan tk ON kh.ID_TK = tk.ID_TK $whereClause";
+        $countStmt = mysqli_prepare($conn, $countSql);
+        
+        if (!$countStmt) {
+            error_log("Prepare error: " . $conn->error);
+            return 0;
         }
-
-        $errorMessage = $result['message'];
-        $editCustomer = array_merge($editCustomer ?? [], $payload);
     }
-}
 
-if (isset($_POST['add_customer'])) {
-    $payload = collectCustomerPayload($_POST);
-    $validationError = validateCustomerPayload($payload, true);
+    mysqli_stmt_execute($countStmt);
+    $countResult = mysqli_stmt_get_result($countStmt);
+    $total = $countResult ? (int) mysqli_fetch_assoc($countResult)['total'] : 0;
+    mysqli_stmt_close($countStmt);
 
-    if ($validationError) {
-        $errorMessage = $validationError;
-    } else {
-        $result = addCustomer($payload);
-        if ($result['ok']) {
-            redirectWithMessage('success', $result['message']);
-        }
-
-        $errorMessage = $result['message'];
-    }
+    return $total;
 }
 
 $search = isset($_GET['search']) ? clean_input($_GET['search']) : '';
@@ -536,176 +178,464 @@ $totalCustomers = $pagination['total'];
 $perPage = $pagination['limit'];
 $firstItemIndex = $totalCustomers ? (($pageNumber - 1) * $perPage) + 1 : 0;
 $lastItemIndex = $totalCustomers ? min($totalCustomers, $pageNumber * $perPage) : 0;
+$showingStart = $firstItemIndex;
+$showingEnd = $lastItemIndex;
 $maxAllowedBirthDate = date('Y-m-d', strtotime('-18 years'));
+$customerSummary = countCustomers();
 ?>
 <body class="bg-gray-100 min-h-screen p-6">
-    <div class="max-w-6xl mx-auto">
-        <h1 class="text-3xl font-bold text-indigo-700 mb-6 text-center">Quản lý khách hàng</h1>
+    <div class="max-w-7xl mx-auto">
+        <div class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-extrabold text-indigo-700">Quản lý khách hàng</h1>
+            <a href="admin_dashboard.php?page=deleted_customers" class="inline-flex items-center gap-2 px-3 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-semibold transition-colors duration-200" title="Xem khách hàng đã bị xóa mềm">
+                <i class="fas fa-trash-alt"></i>
+                <span>Đã Xóa</span>
+            </a>
+        </div>
 
-        <?php if ($successMessage) : ?>
-            <div class="mb-4 rounded-lg border border-green-200 bg-green-50 p-4 text-green-800">
-                <?= escape($successMessage) ?>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white rounded-xl shadow p-4">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Tổng khách hàng</p>
+                <p class="text-3xl font-bold text-indigo-700 mt-2"><?= number_format($totalCustomers) ?></p>
+                <p class="text-sm text-gray-500 mt-1">Tất cả khách hàng đã đăng ký trong hệ thống.</p>
             </div>
-        <?php elseif ($errorMessage) : ?>
-            <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
-                <?= escape($errorMessage) ?>
-            </div>
-        <?php endif; ?>
+        </div>
 
-        <?php if (isset($_GET['edit']) && $editCustomer) : ?>
-            <form method="POST" class="mb-6 rounded-lg bg-white p-6 shadow">
-                <h2 class="text-xl font-semibold text-indigo-600 mb-4">Cập nhật khách hàng</h2>
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">ID tài khoản</label>
-                        <input type="text" name="ID_TK" value="<?= escape($editCustomer['ID_TK'] ?? '') ?>" readonly class="w-full rounded border border-gray-300 bg-gray-100 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Họ tên</label>
-                        <input type="text" name="HO_TEN" value="<?= escape($editCustomer['HO_TEN'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Ngày sinh</label>
-                        <input type="date" name="NGAY_SINH" max="<?= escape($maxAllowedBirthDate) ?>" value="<?= escape(formatDateForInput($editCustomer['NGAY_SINH'] ?? '')) ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Địa chỉ</label>
-                        <input type="text" name="DIA_CHI" value="<?= escape($editCustomer['DIA_CHI'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Email</label>
-                        <input type="email" name="EMAIL" value="<?= escape($editCustomer['EMAIL'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Số điện thoại</label>
-                        <input type="text" name="SDT" value="<?= escape($editCustomer['SDT'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div class="md:col-span-2">
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Mật khẩu mới</label>
-                        <input type="password" name="MAT_KHAU" placeholder="Để trống nếu không thay đổi" class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                </div>
-                <div class="mt-6 flex justify-end gap-3">
-                    <a href="?page=customers" class="rounded border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-100">Hủy</a>
-                    <button type="submit" name="edit_customer" class="rounded bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700">Lưu thay đổi</button>
+        <!-- Search + Add button -->
+        <div class="flex flex-wrap gap-4 mb-6">
+            <form action="admin_dashboard.php" method="GET" class="w-full md:flex-1 bg-white rounded-xl shadow-lg p-4">
+                <input type="hidden" name="page" value="customers">
+                <div class="flex flex-wrap gap-3">
+                    <input type="text" name="search" placeholder="Tìm theo ID, tên, email, số điện thoại" 
+                        value="<?= escape($search) ?>"
+                        class="flex-1 min-w-64 border border-gray-300 rounded-lg px-4 py-2 shadow-sm focus:ring-indigo-500">
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow">Tìm kiếm</button>
+                    <a href="?page=customers" class="border border-gray-300 text-gray-700 px-4 py-2 rounded-lg shadow hover:bg-gray-50">Đặt lại</a>
                 </div>
             </form>
-
-        <?php elseif (isset($_GET['edit']) && !$editCustomer) : ?>
-            <div class="rounded-lg bg-white p-6 text-center shadow">
-                <p class="text-gray-700">Không tìm thấy thông tin khách hàng.</p>
-                <a href="?page=customers" class="mt-4 inline-flex rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700">Quay lại danh sách</a>
+            <div class="w-full md:w-64">
+                <button onclick="openAddCustomerModal()"
+                    class="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-semibold shadow">
+                    Thêm khách hàng
+                </button>
             </div>
+        </div>
 
-        <?php elseif (isset($_GET['add'])) : ?>
-            <form method="POST" class="mb-6 rounded-lg bg-white p-6 shadow">
-                <h2 class="text-xl font-semibold text-indigo-600 mb-4">Thêm khách hàng mới</h2>
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">ID tài khoản</label>
-                        <input type="text" name="ID_TK" value="<?= escape($_POST['ID_TK'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Họ tên</label>
-                        <input type="text" name="HO_TEN" value="<?= escape($_POST['HO_TEN'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Ngày sinh</label>
-                        <input type="date" name="NGAY_SINH" max="<?= escape($maxAllowedBirthDate) ?>" value="<?= escape($_POST['NGAY_SINH'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Địa chỉ</label>
-                        <input type="text" name="DIA_CHI" value="<?= escape($_POST['DIA_CHI'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Email</label>
-                        <input type="email" name="EMAIL" value="<?= escape($_POST['EMAIL'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Số điện thoại</label>
-                        <input type="text" name="SDT" value="<?= escape($_POST['SDT'] ?? '') ?>" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                    <div class="md:col-span-2">
-                        <label class="mb-1 block text-sm font-medium text-gray-600">Mật khẩu</label>
-                        <input type="password" name="MAT_KHAU" required class="w-full rounded border border-gray-300 p-2" />
-                    </div>
-                </div>
-                <div class="mt-6 flex justify-end gap-3">
-                    <a href="?page=customers" class="rounded border border-gray-300 px-4 py-2 text-gray-700 hover:bg-gray-100">Hủy</a>
-                    <button type="submit" name="add_customer" class="rounded bg-green-600 px-4 py-2 font-medium text-white hover:bg-green-700">Thêm mới</button>
-                </div>
-            </form>
+        <div class="flex flex-wrap justify-between items-center text-sm text-gray-600 bg-white px-4 py-3 rounded-xl shadow mb-6">
+            <p>Hiển thị <?= $showingStart ?> - <?= $showingEnd ?> trên tổng <?= $totalCustomers ?> khách hàng</p>
+            <p>Trang <?= $pageNumber ?> / <?= $totalPages ?></p>
+        </div>
 
-        <?php else : ?>
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <form method="GET" class="flex flex-wrap items-center gap-2">
-                    <input type="hidden" name="page" value="customers">
-                    <input type="text" name="search" placeholder="Tìm theo tên, email, số điện thoại" value="<?= escape($search) ?>" class="w-64 rounded border border-gray-300 p-2 shadow-sm focus:border-indigo-500 focus:outline-none" />
-                    <button type="submit" class="rounded bg-indigo-600 px-4 py-2 font-medium text-white hover:bg-indigo-700">Tìm kiếm</button>
-                </form>
-                <a href="?page=customers&add=true" class="rounded bg-green-600 px-4 py-2 font-medium text-white hover:bg-green-700">Thêm khách hàng</a>
-            </div>
+        <!-- Customer table -->
+        <div id="customersTable" class="overflow-x-auto bg-white rounded-xl shadow-lg">
+            <table class="min-w-full table-auto text-sm">
+                <thead class="bg-indigo-100 text-indigo-700">
+                    <tr>
+                        <th class="px-4 py-3">ID</th>
+                        <th class="px-4 py-3">Họ tên</th>
+                        <th class="px-4 py-3">Ngày sinh</th>
+                        <th class="px-4 py-3">Địa chỉ</th>
+                        <th class="px-4 py-3">Email</th>
+                        <th class="px-4 py-3">Số điện thoại</th>
+                        <th class="px-4 py-3">Hành động</th>
+                    </tr>
+                </thead>
 
-            <div class="mb-4 rounded-lg bg-white p-4 shadow">
-                <?php if ($totalCustomers > 0) : ?>
-                    <p class="text-sm text-gray-600">
-                        Đang hiển thị <?= escape($firstItemIndex) ?> - <?= escape($lastItemIndex) ?> trên tổng số <?= escape($totalCustomers) ?> khách hàng.
-                    </p>
-                <?php else : ?>
-                    <p class="text-sm text-gray-600">Không tìm thấy khách hàng phù hợp với từ khóa hiện tại.</p>
-                <?php endif; ?>
-            </div>
-
-            <div class="overflow-x-auto rounded-lg bg-white shadow">
-                <table class="min-w-full table-auto text-sm">
-                    <thead class="bg-gray-200 text-left text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <tbody class="divide-y">
+                    <?php if (empty($customers)) : ?>
                         <tr>
-                            <th class="p-4">ID tài khoản</th>
-                            <th class="p-4">Họ tên</th>
-                            <th class="p-4">Ngày sinh</th>
-                            <th class="p-4">Địa chỉ</th>
-                            <th class="p-4">Email</th>
-                            <th class="p-4">Số điện thoại</th>
-                            <th class="p-4">Hành động</th>
+                            <td colspan="7" class="text-red-600 font-bold py-6 text-center">Không tìm thấy khách hàng nào.</td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        <?php if (empty($customers)) : ?>
-                            <tr>
-                                <td colspan="7" class="p-6 text-center text-gray-500">Chưa có dữ liệu khách hàng.</td>
+                    <?php else : ?>
+                        <?php foreach ($customers as $customer) : ?>
+                            <tr class="hover:bg-gray-50" data-customer-id="<?= escape($customer['ID_TK']) ?>">
+                                <td class="px-4 py-3 text-left md:text-center font-semibold text-gray-800"><?= escape($customer['ID_TK']) ?></td>
+                                <td class="px-4 py-3 text-left font-semibold text-gray-900"><?= escape($customer['HO_TEN']) ?></td>
+                                <td class="px-4 py-3 text-left"><?= escape(formatDateForDisplay($customer['NGAY_SINH'])) ?></td>
+                                <td class="px-4 py-3 text-left"><?= escape($customer['DIA_CHI']) ?></td>
+                                <td class="px-4 py-3 text-left"><?= escape($customer['EMAIL']) ?></td>
+                                <td class="px-4 py-3 text-left"><?= escape($customer['SDT']) ?></td>
+                                <td class="px-4 py-3">
+                                    <div class="flex flex-wrap justify-center gap-2">
+                                        <button onclick="openEditCustomerModal('<?= escape($customer['ID_TK']) ?>')"
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-indigo-700 border border-indigo-200 rounded-lg hover:bg-indigo-50">
+                                            Sửa
+                                        </button>
+                                        <button onclick="openDeleteModal('<?= escape($customer['ID_TK']) ?>', '<?= escape($customer['HO_TEN']) ?>')"
+                                            class="inline-flex items-center px-3 py-1.5 text-sm font-semibold text-red-600 border border-red-200 rounded-lg hover:bg-red-50">
+                                            Xóa
+                                        </button>
+                                    </div>
+                                </td>
                             </tr>
-                        <?php else : ?>
-                            <?php foreach ($customers as $customer) : ?>
-                                <tr class="border-b last:border-b-0 hover:bg-gray-50">
-                                    <td class="p-4 font-medium text-gray-700"><?= escape($customer['ID_TK']) ?></td>
-                                    <td class="p-4 text-gray-700"><?= escape($customer['HO_TEN']) ?></td>
-                                    <td class="p-4 text-gray-700"><?= escape(formatDateForDisplay($customer['NGAY_SINH'])) ?></td>
-                                    <td class="p-4 text-gray-700"><?= escape($customer['DIA_CHI']) ?></td>
-                                    <td class="p-4 text-gray-700"><?= escape($customer['EMAIL']) ?></td>
-                                    <td class="p-4 text-gray-700"><?= escape($customer['SDT']) ?></td>
-                                    <td class="p-4">
-                                        <div class="flex flex-wrap gap-2">
-                                            <a href="?page=customers&edit=<?= urlencode($customer['ID_TK']) ?>" class="rounded border border-yellow-500 px-3 py-1 text-sm font-medium text-yellow-700 hover:bg-yellow-50">Chỉnh sửa</a>
-                                            <a href="?page=customers&delete=<?= urlencode($customer['ID_TK']) ?>" onclick="return confirm('Bạn có chắc chắn muốn xóa khách hàng này?');" class="rounded border border-red-500 px-3 py-1 text-sm font-medium text-red-600 hover:bg-red-50">Xóa</a>
-                                        </div>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
-            </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
 
-            <?php if ($totalPages > 1 && $totalCustomers > 0) : ?>
-                <div class="mt-6 flex flex-wrap justify-center gap-2">
-                    <?php for ($i = 1; $i <= $totalPages; $i++) : ?>
-                        <a href="?page=customers&search=<?= urlencode($search) ?>&p=<?= $i ?>" class="rounded border px-3 py-1 text-sm <?= ($i == $pageNumber) ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50' ?>">
-                            <?= $i ?>
-                        </a>
-                    <?php endfor; ?>
+        <!-- Pagination -->
+        <?php
+        echo '<div class="mt-6 flex flex-wrap justify-center gap-2" id="paginationContainer">';
+        for ($i = 1; $i <= $totalPages; $i++) {
+            $queryString = http_build_query([
+                'page' => 'customers',
+                'p' => $i,
+                'search' => $search,
+            ]);
+            $active = ($i == $pageNumber) ? 'bg-indigo-600 text-white' : 'bg-gray-200 hover:bg-gray-300';
+            echo "<a href='?$queryString' class='px-3 py-1 rounded $active pagination-link' data-page='$i'>$i</a>";
+        }
+        echo '</div>';
+        ?>
+
+        <!-- Modal: Thêm/Sửa khách hàng -->
+        <div id="customerModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                <form id="customerForm" class="p-6 space-y-6">
+                    <div class="flex justify-between items-center border-b pb-4">
+                        <h2 class="text-2xl font-bold text-indigo-700" id="modalTitle">Thêm khách hàng mới</h2>
+                        <button type="button" onclick="closeCustomerModal()" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+                    </div>
+
+                    <input type="hidden" id="modalAction" name="action" value="create">
+                    <input type="hidden" id="modalIdTk" name="ID_TK">
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- ID Tài khoản (chỉ hiển thị khi thêm) -->
+                        <div id="idTkField">
+                            <label class="block mb-1 text-sm font-medium text-gray-700">ID Tài khoản</label>
+                            <input type="text" id="ID_TK" name="ID_TK" required
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div>
+                            <label class="block mb-1 text-sm font-medium text-gray-700">Họ tên</label>
+                            <input type="text" id="HO_TEN" name="HO_TEN" required
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div>
+                            <label class="block mb-1 text-sm font-medium text-gray-700">Ngày sinh</label>
+                            <input type="date" id="NGAY_SINH" name="NGAY_SINH" max="<?= escape($maxAllowedBirthDate) ?>"
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div>
+                            <label class="block mb-1 text-sm font-medium text-gray-700">Địa chỉ</label>
+                            <input type="text" id="DIA_CHI" name="DIA_CHI" required
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div>
+                            <label class="block mb-1 text-sm font-medium text-gray-700">Email</label>
+                            <input type="email" id="EMAIL" name="EMAIL" required
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div>
+                            <label class="block mb-1 text-sm font-medium text-gray-700">Số điện thoại</label>
+                            <input type="text" id="SDT" name="SDT" required
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+
+                        <div class="md:col-span-2">
+                            <label class="block mb-1 text-sm font-medium text-gray-700" id="passwordLabel">Mật khẩu</label>
+                            <input type="password" id="MAT_KHAU" name="MAT_KHAU"
+                                class="w-full border rounded px-4 py-2 shadow-sm focus:ring-indigo-500" />
+                        </div>
+                    </div>
+
+                    <div id="formError" class="hidden bg-red-100 text-red-700 px-4 py-3 rounded"></div>
+
+                    <div class="flex justify-between items-center border-t pt-4">
+                        <button type="button" onclick="closeCustomerModal()"
+                            class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-2 rounded-lg shadow">
+                            Đóng
+                        </button>
+                        <button type="submit" id="submitBtn"
+                            class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-6 py-2 rounded-lg shadow flex items-center gap-2">
+                            <span id="submitBtnText">Thêm mới</span>
+                            <span id="submitBtnSpinner" class="hidden animate-spin">⟳</span>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal: Xác nhận xóa -->
+        <div id="deleteConfirmModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50 p-4">
+            <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+                <div class="p-6 space-y-4">
+                    <h3 class="text-xl font-bold text-gray-800">Xác nhận xóa khách hàng</h3>
+                    <p class="text-gray-600">
+                        Bạn có chắc chắn muốn xóa khách hàng <strong id="deleteCustomerName"></strong> không? 
+                    </p>
+                    <div id="deleteError" class="hidden bg-red-100 text-red-700 px-4 py-3 rounded text-sm"></div>
                 </div>
-            <?php endif; ?>
-        <?php endif; ?>
+                <div class="flex gap-3 bg-gray-50 px-6 py-4 rounded-b-xl">
+                    <button type="button" onclick="closeDeleteModal()"
+                        class="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-4 py-2 rounded">
+                        Hủy
+                    </button>
+                    <button type="button" onclick="confirmDelete()"
+                        class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded flex items-center justify-center gap-2">
+                        <span id="deleteBtnText">Xóa</span>
+                        <span id="deleteBtnSpinner" class="hidden animate-spin">⟳</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Notifications -->
+        <div id="toastContainer" class="fixed top-4 right-4 z-[9999] space-y-3 max-w-md"></div>
     </div>
 </body>
+
+<script>
+// API base URL
+const API_BASE = './api/api_customers.php';
+let deleteConfirmData = { id_tk: null, name: null };
+let showingStart = <?= $firstItemIndex ?>;
+let showingEnd = <?= $lastItemIndex ?>;
+
+// ==================== TOAST NOTIFICATIONS ====================
+function showToast(message, type = 'info', duration = 4000) {
+    const toastContainer = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    
+    const bgColor = {
+        'success': 'bg-green-500',
+        'error': 'bg-red-500',
+        'info': 'bg-blue-500',
+        'warning': 'bg-yellow-500'
+    }[type] || 'bg-blue-500';
+
+    toast.className = `${bgColor} text-white px-4 py-3 rounded-lg shadow-lg flex justify-between items-center animate-pulse`;
+    toast.innerHTML = `
+        <span>${message}</span>
+        <button onclick="this.parentElement.remove()" class="ml-4 text-lg font-bold">&times;</button>
+    `;
+    
+    toastContainer.appendChild(toast);
+    
+    if (duration > 0) {
+        setTimeout(() => toast.remove(), duration);
+    }
+}
+
+// ==================== MODAL: THÊM/SỬA KHÁCH HÀNG ====================
+function openAddCustomerModal() {
+    resetCustomerForm();
+    document.getElementById('modalAction').value = 'create';
+    document.getElementById('modalTitle').textContent = 'Thêm khách hàng mới';
+    document.getElementById('submitBtnText').textContent = 'Thêm mới';
+    document.getElementById('passwordLabel').innerHTML = 'Mật khẩu <span class="text-red-500">*</span>';
+    document.getElementById('MAT_KHAU').required = true;
+    document.getElementById('idTkField').style.display = 'block';
+    document.getElementById('ID_TK').required = true;
+    document.getElementById('customerModal').classList.remove('hidden');
+    document.getElementById('customerModal').classList.add('flex');
+}
+
+function openEditCustomerModal(idTk) {
+    const row = document.querySelector(`tr[data-customer-id="${idTk}"]`);
+    
+    if (!row) {
+        showToast('Không tìm thấy dữ liệu khách hàng', 'error');
+        return;
+    }
+
+    const cells = row.querySelectorAll('td');
+    const hoTen = cells[1]?.textContent?.trim() || '';
+    const ngaySinh = cells[2]?.textContent?.trim() || '';
+    const diaChi = cells[3]?.textContent?.trim() || '';
+    const email = cells[4]?.textContent?.trim() || '';
+    const sdt = cells[5]?.textContent?.trim() || '';
+
+    document.getElementById('modalAction').value = 'update';
+    document.getElementById('modalTitle').textContent = 'Sửa thông tin khách hàng';
+    document.getElementById('submitBtnText').textContent = 'Cập nhật';
+    document.getElementById('passwordLabel').innerHTML = 'Mật khẩu mới (bỏ trống nếu không đổi)';
+    document.getElementById('MAT_KHAU').required = false;
+    document.getElementById('idTkField').style.display = 'none';
+    
+    document.getElementById('modalIdTk').value = idTk;
+    document.getElementById('ID_TK').value = idTk;
+    document.getElementById('HO_TEN').value = hoTen;
+    document.getElementById('NGAY_SINH').value = ngaySinh ? convertDateForInput(ngaySinh) : '';
+    document.getElementById('DIA_CHI').value = diaChi;
+    document.getElementById('EMAIL').value = email;
+    document.getElementById('SDT').value = sdt;
+    document.getElementById('MAT_KHAU').value = '';
+    
+    document.getElementById('customerModal').classList.remove('hidden');
+    document.getElementById('customerModal').classList.add('flex');
+}
+
+function convertDateForInput(dateStr) {
+    // Convert dd/mm/yyyy to yyyy-mm-dd
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+    }
+    return dateStr;
+}
+
+function closeCustomerModal() {
+    document.getElementById('customerModal').classList.add('hidden');
+    document.getElementById('customerModal').classList.remove('flex');
+    resetCustomerForm();
+}
+
+function resetCustomerForm() {
+    document.getElementById('customerForm').reset();
+    document.getElementById('formError').classList.add('hidden');
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('submitBtnSpinner').classList.add('hidden');
+}
+
+document.getElementById('customerForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const action = document.getElementById('modalAction').value;
+    const submitBtn = document.getElementById('submitBtn');
+    const spinnerEl = document.getElementById('submitBtnSpinner');
+    const errorEl = document.getElementById('formError');
+    
+    submitBtn.disabled = true;
+    spinnerEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+
+    const formData = new FormData(document.getElementById('customerForm'));
+    formData.set('action', action);
+    
+    try {
+        const res = await fetch(API_BASE, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            closeCustomerModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            errorEl.textContent = result.message;
+            errorEl.classList.remove('hidden');
+            showToast(result.message, 'error', 5000);
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        errorEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+        errorEl.classList.remove('hidden');
+        showToast('Lỗi kết nối', 'error');
+    } finally {
+        submitBtn.disabled = false;
+        spinnerEl.classList.add('hidden');
+    }
+});
+
+// ==================== MODAL: XÁC NHẬN XÓA ====================
+function openDeleteModal(idTk, name) {
+    deleteConfirmData = { id_tk: idTk, name: name };
+    document.getElementById('deleteCustomerName').textContent = name;
+    document.getElementById('deleteError').classList.add('hidden');
+    document.getElementById('deleteConfirmModal').classList.remove('hidden');
+    document.getElementById('deleteConfirmModal').classList.add('flex');
+}
+
+function closeDeleteModal() {
+    document.getElementById('deleteConfirmModal').classList.add('hidden');
+    document.getElementById('deleteConfirmModal').classList.remove('flex');
+    deleteConfirmData = { id_tk: null, name: null };
+}
+
+async function confirmDelete() {
+    if (!deleteConfirmData.id_tk) return;
+    
+    const deleteBtn = document.querySelector('#deleteConfirmModal button[onclick="confirmDelete()"]');
+    const spinnerEl = document.getElementById('deleteBtnSpinner');
+    const errorEl = document.getElementById('deleteError');
+    
+    deleteBtn.disabled = true;
+    spinnerEl.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+
+    const formData = new FormData();
+    formData.append('action', 'delete');
+    formData.append('ID_TK', deleteConfirmData.id_tk);
+
+    try {
+        const res = await fetch(API_BASE, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+        });
+        
+        const result = await res.json();
+        
+        if (result.success) {
+            showToast(result.message, 'success');
+            closeDeleteModal();
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            errorEl.textContent = result.message;
+            errorEl.classList.remove('hidden');
+            showToast(result.message, 'error', 5000);
+        }
+    } catch (err) {
+        console.error('Error:', err);
+        errorEl.textContent = 'Lỗi kết nối. Vui lòng thử lại.';
+        errorEl.classList.remove('hidden');
+        showToast('Lỗi kết nối', 'error');
+    } finally {
+        deleteBtn.disabled = false;
+        spinnerEl.classList.add('hidden');
+    }
+}
+
+// ==================== MODAL: CLOSE ON ESCAPE ====================
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeCustomerModal();
+        closeDeleteModal();
+    }
+});
+
+// Close modal when clicking outside
+document.getElementById('customerModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('customerModal')) {
+        closeCustomerModal();
+    }
+});
+
+document.getElementById('deleteConfirmModal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('deleteConfirmModal')) {
+        closeDeleteModal();
+    }
+});
+
+// Smooth scroll to table on pagination
+document.querySelectorAll('.pagination-link').forEach(link => {
+    link.addEventListener('click', function() {
+        sessionStorage.setItem('scrollToTable', 'true');
+    });
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    if (sessionStorage.getItem('scrollToTable')) {
+        sessionStorage.removeItem('scrollToTable');
+        const table = document.getElementById('customersTable');
+        if (table) {
+            setTimeout(() => {
+                table.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 300);
+        }
+    }
+});
+</script>
 </html>

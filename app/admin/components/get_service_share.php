@@ -1,35 +1,53 @@
 <?php
-include '../../../database/config.php';
+require_once __DIR__ . '/../../../database/config.php';
+require_once __DIR__ . '/report_helpers.php';
 
-$filter = $_GET['filter'] ?? 'year';
-$branch = $_GET['branch'] ?? 'all';
+$filterParam = $_GET['filter'] ?? 'year';
+$branchParam = $_GET['branch'] ?? 'all';
 
-$branchCondition = '';
-if ($branch !== 'all') {
-    $branchId = intval(substr($branch, 2));
-    $branchCondition = "AND tc.ID_CN = $branchId";
-}
+[$filter, $start, $end] = report_resolve_relative_range($filterParam);
+$branchId = report_parse_branch($branchParam);
 
 $sql = "
-    SELECT dv.TEN_DV, COUNT(*) AS total
-    FROM hoa_don h
-    JOIN lich_hen l ON h.ID_LICHHEN = l.ID_LICHHEN
-    JOIN dich_vu dv ON l.ID_DV = dv.ID_DV
-    JOIN tai_chinh tc ON h.ID_HD = tc.ID_HD
-    WHERE 1 $branchCondition
-    GROUP BY dv.ID_DV
-    ORDER BY total DESC
-";
+    SELECT dv.TEN_DV AS label, COUNT(*) AS total
+    FROM BOOKING_ITEM bi
+    JOIN dich_vu dv ON dv.ID_DV = bi.REF_ID
+    JOIN lich_hen lh ON lh.ID_LICHHEN = bi.ID_LICHHEN
+    WHERE bi.ITEM_TYPE = 'service'
+      AND lh.THOI_GIAN_BAT_DAU BETWEEN ? AND ?";
 
-$result = mysqli_query($conn, $sql);
+$types = 'ss';
+$params = [
+    $start->format('Y-m-d H:i:s'),
+    $end->format('Y-m-d H:i:s')
+];
+
+if ($branchId) {
+    $sql .= ' AND lh.ID_CHINHANH = ?';
+    $types .= 'i';
+    $params[] = $branchId;
+}
+
+$sql .= ' GROUP BY dv.ID_DV ORDER BY total DESC';
+
+$stmt = $conn->prepare($sql);
+if (!$stmt) {
+    report_json(['success' => false, 'message' => 'Không thể tải dữ liệu tỉ lệ dịch vụ.'], 500);
+}
+
+report_stmt_bind_params($stmt, $types, $params);
+$stmt->execute();
+$result = $stmt->get_result();
+
 $data = [];
-
-while ($row = mysqli_fetch_assoc($result)) {
+while ($row = $result->fetch_assoc()) {
     $data[] = [
-        'label' => $row['TEN_DV'],
+        'label' => $row['label'],
         'value' => (int)$row['total']
     ];
 }
+
+$stmt->close();
 
 header('Content-Type: application/json');
 echo json_encode($data);

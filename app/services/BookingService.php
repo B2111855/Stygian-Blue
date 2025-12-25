@@ -24,9 +24,10 @@ class BookingService
         }
 
         // Lock candidate items: not overlapping existing rentals with status cho_duyet/da_duyet/dang_thue
-        $sql = "SELECT tp.ID_TRANG_PHUC AS id
-                FROM trang_phuc tp
-                WHERE tp.ID_LOAI = ? AND tp.ID_CN = ? AND tp.TRANG_THAI = 'available'
+                $sql = "SELECT tp.ID_TRANG_PHUC AS id
+                                FROM trang_phuc tp
+                                WHERE tp.ID_LOAI = ? AND tp.ID_CN = ? AND tp.TRANG_THAI = 'available'
+                                    AND (tp.SCOPE_TYPE = 'global' OR tp.ID_CN_OWNER = ?)
                   AND tp.ID_TRANG_PHUC NOT IN (
                      SELECT ct.ID_TP FROM don_thue_trang_phuc_ct ct
                      JOIN don_thue_trang_phuc t ON t.ID_TTP = ct.ID_TTP
@@ -40,7 +41,7 @@ class BookingService
         if (!$stmt) {
             throw new Exception('Không chuẩn bị được truy vấn kho: ' . $conn->error);
         }
-        $stmt->bind_param('iissi', $typeId, $branchId, $fromDateTime, $toDateTime, $quantity);
+        $stmt->bind_param('iiissi', $typeId, $branchId, $branchId, $fromDateTime, $toDateTime, $quantity);
         if (!$stmt->execute()) {
             throw new Exception('Không thể lấy danh sách trang phục: ' . $stmt->error);
         }

@@ -60,6 +60,12 @@ if (!empty($salaryPeriods)) {
 }
 
 if ($salary && isset($_GET['export']) && $_GET['export'] === 'csv') {
+    // Ensure no buffered output is sent before headers
+    if (function_exists('ob_get_level')) {
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+    }
     $filename = sprintf('bang-luong-%02d-%d.csv', $month, $year);
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename=' . $filename);

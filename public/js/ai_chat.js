@@ -197,6 +197,7 @@
   applyStoredDialPosition();
   const onPointerMove = (e) => {
     if (!isPointerDown) return;
+    e.preventDefault(); // Ngăn các hành vi mặc định
     const clientX = e.clientX;
     const clientY = e.clientY;
     const dx = clientX - dragStartX;
@@ -234,12 +235,16 @@
       localStorage.setItem(DIAL_POS_X_KEY, String(rect.left));
       localStorage.setItem(DIAL_POS_Y_KEY, String(rect.top));
       setTimeout(() => { skipNextToggle = false; }, 120); // allow click after small delay
+    } else {
+      // Nếu không drag (chỉ click), reset ngay để cho phép toggle
+      skipNextToggle = false;
     }
   };
 
   dragHandle.addEventListener('pointerdown', (e) => {
     // Only allow drag when menu closed
     if (isSpeedDialOpen) return;
+    e.stopPropagation(); // Ngăn event bubble up
     isPointerDown = true;
     isDragging = false;
     dragStartX = e.clientX;
@@ -247,7 +252,7 @@
     const rect = speedDial.getBoundingClientRect();
     dialStartX = rect.left;
     dialStartY = rect.top;
-    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointermove', onPointerMove, { passive: false });
     document.addEventListener('pointerup', endDrag);
   });
 

@@ -1,5 +1,6 @@
 <?php
 include '../../database/config.php';
+require_once __DIR__ . '/../../helpers/equipment_media.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -37,7 +38,13 @@ function equipmentFlash(string $type, string $message): void
 function redirectBack(): void
 {
     $target = strtok($_SERVER['REQUEST_URI'] ?? '?page=equipment', '#') ?: '?page=equipment';
+  if (!headers_sent()) {
     header('Location: ' . $target);
+  } else {
+    $safe = htmlspecialchars($target, ENT_QUOTES, 'UTF-8');
+    echo '<script>window.location.href = ' . json_encode($target) . ';</script>';
+    echo '<noscript><meta http-equiv="refresh" content="0;url=' . $safe . '"></noscript>';
+  }
     exit;
 }
 
@@ -406,7 +413,7 @@ function maintenanceLabel(?int $days): string
 <div class="space-y-6">
   <div class="flex flex-wrap items-center justify-between gap-4">
     <div>
-      <h1 class="text-2xl font-bold text-indigo-700">Thiết bị chi nhánh <?= htmlspecialchars($branchName) ?></h1>
+      <h1 class="text-2xl font-bold text-indigo-700">Thiết bị chi nhánh <?= htmlspecialchars($branchName ?? '') ?></h1>
       <p class="text-sm text-gray-500">Theo dõi, cập nhật bảo trì và tồn kho thiết bị tại chi nhánh của bạn.</p>
     </div>
     <div class="px-4 py-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-700 text-sm font-medium">ID chi nhánh: CN<?= (int) $branchId ?></div>
@@ -549,11 +556,8 @@ function maintenanceLabel(?int $days): string
             <tr class="<?= $overdue ? 'bg-red-50/60' : '' ?>">
               <td class="px-4 py-3">
                 <div class="flex items-center gap-3">
-                  <?php if (!empty($device['IMAGE'])): ?>
-                    <img src="../../<?= htmlspecialchars($device['IMAGE']) ?>" alt="<?= htmlspecialchars($device['TEN_TB']) ?>" class="h-12 w-12 rounded-lg object-cover">
-                  <?php else: ?>
-                    <div class="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-gray-500"><i class="fas fa-tools"></i></div>
-                  <?php endif; ?>
+                  <?php $deviceImage = sb_equipment_image_url($device['IMAGE'] ?? null); ?>
+                  <img src="../../<?= htmlspecialchars($deviceImage) ?>" alt="<?= htmlspecialchars($device['TEN_TB']) ?>" class="h-12 w-12 rounded-lg object-cover">
                   <div>
                     <p class="font-semibold text-gray-800"><?= htmlspecialchars($device['TEN_TB']) ?></p>
                     <p class="text-xs text-gray-500">#<?= (int) $device['ID_TB'] ?></p>

@@ -74,6 +74,10 @@ try {
     unset($baseQuery['p']);
     $baseQuery['page'] = 'system_logs';
 
+    // Check for export request EARLY - before any HTML output
+    $exportFormat = strtolower(trim($_GET['export'] ?? ''));
+    $isExporting = ($exportFormat === 'csv' || $exportFormat === 'json');
+
     $filterClauses = [];
     $filterTypes = '';
     $filterValues = [];
@@ -147,6 +151,47 @@ try {
     $logs = $result->fetch_all(MYSQLI_ASSOC);
     $listStmt->close();
 
+    // Handle export IMMEDIATELY after getting data, before any HTML
+    if ($isExporting) {
+        $exportMeta = [
+            'page' => $page,
+            'perPage' => $perPage,
+            'totalLogs' => $totalLogs,
+            'totalPages' => $totalPages,
+        ];
+
+        if ($exportFormat === 'csv') {
+            header('Content-Type: text/csv; charset=utf-8');
+            header('Content-Disposition: attachment; filename="system_logs_page_' . $page . '.csv"');
+            echo "\xEF\xBB\xBF"; // BOM for Excel UTF-8 compatibility
+            $out = fopen('php://output', 'w');
+            fputcsv($out, ['ID_LOG', 'CREATED_AT', 'ACTOR_ID', 'VAI_TRO', 'HANH_DONG', 'DOI_TUONG', 'IP', 'USER_AGENT']);
+            foreach ($logs as $row) {
+                fputcsv($out, [
+                    $row['ID_LOG'] ?? '',
+                    $row['CREATED_AT'] ?? '',
+                    $row['ACTOR_ID'] ?? '',
+                    $row['VAI_TRO'] ?? '',
+                    $row['HANH_DONG'] ?? '',
+                    $row['DOI_TUONG'] ?? '',
+                    $row['IP'] ?? '',
+                    $row['USER_AGENT'] ?? '',
+                ]);
+            }
+            fclose($out);
+            exit;
+        }
+
+        // JSON export
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => true,
+            'pagination' => $exportMeta,
+            'data' => $logs,
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+        exit;
+    }
+
     $rolesResult = $conn->query("SELECT DISTINCT VAI_TRO FROM nhat_ky_he_thong WHERE VAI_TRO IS NOT NULL AND VAI_TRO <> '' ORDER BY VAI_TRO");
     $roleOptions = array_filter(array_column($rolesResult->fetch_all(MYSQLI_ASSOC), 'VAI_TRO'));
 
@@ -175,7 +220,7 @@ try {
             </div>
             <div class="flex flex-wrap items-start gap-4 justify-between">
                 <div>
-                    <h1 class="text-3xl font-bold text-indigo-700">📜 Nhật ký hệ thống</h1>
+                    <h1 class="text-3xl font-bold text-indigo-700">Nhật ký hệ thống</h1>
                     <p class="text-gray-600 mt-1">Theo dõi chi tiết mọi thao tác quan trọng trên nền tảng</p>
                 </div>
                 <div class="flex items-center gap-2 mt-2">
@@ -389,19 +434,195 @@ try {
         <?php endif; ?>
     </div> <!-- end inner container -->
 <script>
-// Lazy load JSON + diff when <details> is opened first time
-document.addEventListener('DOMContentLoaded', () => {
-    const detailsList = document.querySelectorAll('.system-log-detail');
-    detailsList.forEach(d => {
+// ============== LOGS STATE MANAGER ==============
+class LogsStateManager {
+    constructor(apiUrl = 'system_logs_list_api.php') {
+        this.apiUrl = apiUrl;
+        this.state = {
+            q: new URLSearchParams(window.location.search).get('q') || '',
+            role: new URLSearchParams(window.location.search).get('role') || '',
+            action: new URLSearchParams(window.location.search).get('action') || '',
+            from: new URLSearchParams(window.location.search).get('from') || '',
+            to: new URLSearchParams(window.location.search).get('to') || '',
+            limit: parseInt(new URLSearchParams(window.location.search).get('limit')) || 25,
+            p: parseInt(new URLSearchParams(window.location.search).get('p')) || 1,
+        };
+        this.isLoading = false;
+    }
+
+    getQueryString() {
+        const params = new URLSearchParams();
+        Object.entries(this.state).forEach(([key, val]) => {
+            if (val !== '' && val !== 0) {
+                params.set(key, val);
+            }
+        });
+        params.set('page', 'system_logs');
+        return params.toString();
+    }
+
+    updateState(updates) {
+        this.state = { ...this.state, ...updates, p: 1 };
+    }
+
+    async fetchLogs() {
+        if (this.isLoading) return null;
+        this.isLoading = true;
+        try {
+            const resp = await fetch(`${this.apiUrl}?${this.getQueryString()}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            this.isLoading = false;
+            return data.success ? data : null;
+        } catch (err) {
+            this.isLoading = false;
+            console.error('Logs fetch error:', err);
+            return null;
+        }
+    }
+
+    pushHistory() {
+        const url = `?${this.getQueryString()}`;
+        history.pushState(this.state, '', url);
+    }
+}
+
+// Initialize state manager
+const logsManager = new LogsStateManager('system_logs_list_api.php');
+
+// ============== TABLE RENDERING ==============
+function renderLogsTable(apiData) {
+    const tbody = document.querySelector('#logs-container tbody');
+    const headerStats = document.querySelector('.flex.flex-col');
+    const paginationContainer = document.querySelector('.flex.flex-wrap.items-center.justify-center');
+
+    if (!apiData || !apiData.data || apiData.data.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-10 text-gray-500">
+                    <div class="flex flex-col items-center gap-2">
+                        <div class="text-4xl">🗒️</div>
+                        <div class="font-semibold">Chưa có dữ liệu phù hợp</div>
+                        <div class="text-xs text-gray-400">Thử thay đổi bộ lọc hoặc kiểm tra hệ thống ghi log.</div>
+                    </div>
+                </td>
+            </tr>`;
+        return;
+    }
+
+    const rows = apiData.data.map(log => `
+        <tr class="border-b border-gray-100 hover:bg-indigo-50/40 transition">
+            <td class="px-4 py-3 text-gray-700">
+                <div class="font-semibold text-sm">${log.CREATED_AT}</div>
+                <div class="text-xs text-gray-500">#${log.ID_LOG}</div>
+            </td>
+            <td class="px-4 py-3">
+                <div class="font-medium text-indigo-700">${log.ACTOR_ID}</div>
+                <div class="text-xs text-gray-500 truncate max-w-[160px] flex items-center gap-1" title="${log.USER_AGENT}">
+                    <span>${log.USER_AGENT || '—'}</span>
+                    ${log.USER_AGENT ? `<button type="button" class="text-[10px] px-1 py-0.5 bg-gray-200 hover:bg-gray-300 rounded copy-btn" data-copy="${log.USER_AGENT}">Copy</button>` : ''}
+                </div>
+            </td>
+            <td class="px-4 py-3 text-gray-700">
+                <span class="inline-flex items-center px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">
+                    ${log.VAI_TRO}
+                </span>
+            </td>
+            <td class="px-4 py-3 font-semibold text-gray-800">${log.HANH_DONG}</td>
+            <td class="px-4 py-3 text-gray-700">${log.DOI_TUONG}</td>
+            <td class="px-4 py-3 text-gray-600 flex items-center gap-1">
+                <span class="font-mono text-sm">${log.IP}</span>
+                ${log.IP !== '—' ? `<button type="button" class="text-[10px] px-1 py-0.5 bg-gray-200 hover:bg-gray-300 rounded copy-btn" data-copy="${log.IP}">Copy</button>` : ''}
+            </td>
+            <td class="px-4 py-3">
+                <details class="space-y-2 system-log-detail" data-log-id="${log.ID_LOG}">
+                    <summary class="cursor-pointer text-indigo-600 hover:text-indigo-800 text-sm font-semibold">Xem JSON + Diff</summary>
+                    <div class="text-xs text-gray-500" data-status>Đang tải khi mở...</div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2" hidden data-panels>
+                        <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                            <p class="text-xs font-semibold text-gray-500 mb-1">Trước</p>
+                            <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-56" data-before></pre>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                            <p class="text-xs font-semibold text-gray-500 mb-1">Sau</p>
+                            <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-56" data-after></pre>
+                        </div>
+                        <div class="md:col-span-2 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                            <p class="text-xs font-semibold text-gray-500 mb-1 flex items-center justify-between">Diff
+                                <span class="text-[10px] font-normal text-gray-400" data-diff-stats></span>
+                            </p>
+                            <pre class="text-xs bg-white p-2 rounded border overflow-auto max-h-64" data-diff></pre>
+                        </div>
+                    </div>
+                </details>
+            </td>
+        </tr>
+    `).join('');
+
+    tbody.innerHTML = rows;
+
+    // Update header stats
+    const { topActions } = apiData.stats;
+    const topSummary = Object.entries(topActions)
+        .map(([action, count]) => `${action}:${count}`)
+        .join(', ');
+
+    if (headerStats) {
+        headerStats.innerHTML = `
+            <span>Tổng số log: <strong>${apiData.pagination.totalLogs.toLocaleString('vi-VN')}</strong></span>
+            <span class="text-xs text-gray-500">Top hành động trang: ${topSummary}</span>`;
+    }
+
+    // Update pagination
+    const { page, totalPages } = apiData.pagination;
+    if (paginationContainer && totalPages > 1) {
+        let paginationHtml = '';
+        for (let i = 1; i <= totalPages; i++) {
+            logsManager.state.p = i;
+            const url = `?${logsManager.getQueryString()}`;
+            const isActive = i === page;
+            paginationHtml += `
+                <a href="${url}" class="page-link px-3 py-1.5 rounded-lg border ${isActive ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'}">
+                    ${i}
+                </a>`;
+        }
+        logsManager.state.p = page; // Reset to current page
+        paginationContainer.innerHTML = paginationHtml;
+    }
+
+    // Re-attach copy and detail handlers
+    attachEventHandlers();
+}
+
+// ============== EVENT HANDLERS ==============
+function attachEventHandlers() {
+    // Copy buttons
+    document.querySelectorAll('.copy-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const txt = btn.getAttribute('data-copy') || '';
+            navigator.clipboard.writeText(txt).then(() => {
+                const original = btn.textContent;
+                btn.textContent = 'Copied';
+                setTimeout(() => btn.textContent = original, 1500);
+            });
+        });
+    });
+
+    // Detail toggle (lazy load)
+    document.querySelectorAll('.system-log-detail').forEach(d => {
+        if (d._detailHandlerAttached) return;
+        d._detailHandlerAttached = true;
+        
         d.addEventListener('toggle', async () => {
             if (!d.open) return;
-            if (d.dataset.loaded === '1') return; // already loaded
+            if (d.dataset.loaded === '1') return;
             const id = d.getAttribute('data-log-id');
             const statusEl = d.querySelector('[data-status]');
             const panelsEl = d.querySelector('[data-panels]');
             try {
                 statusEl.textContent = 'Đang tải...';
-                const resp = await fetch('system_log_fetch.php?id=' + encodeURIComponent(id));
+                const resp = await fetch('./components/system_log_fetch.php?id=' + encodeURIComponent(id));
                 if (!resp.ok) throw new Error('HTTP ' + resp.status);
                 const data = await resp.json();
                 if (data.error) throw new Error(data.error);
@@ -427,16 +648,69 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
-    // Copy buttons
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const txt = btn.getAttribute('data-copy') || '';
-            navigator.clipboard.writeText(txt).then(() => {
-                btn.textContent = 'Copied';
-                setTimeout(()=>btn.textContent='Copy',1500);
-            });
+
+    // Pagination links
+    document.querySelectorAll('.page-link').forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const url = new URL(link.href);
+            const params = new URLSearchParams(url.search);
+            logsManager.state.p = parseInt(params.get('p')) || 1;
+            loadAndRender();
         });
     });
+}
+
+async function loadAndRender() {
+    const apiData = await logsManager.fetchLogs();
+    if (apiData) {
+        renderLogsTable(apiData);
+        logsManager.pushHistory();
+    }
+}
+
+// ============== FILTER FORM HIJACKING ==============
+document.addEventListener('DOMContentLoaded', () => {
+    const filterForm = document.getElementById('filter-form');
+    
+    if (filterForm) {
+        filterForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(filterForm);
+            logsManager.updateState({
+                q: formData.get('q') || '',
+                role: formData.get('role') || '',
+                action: formData.get('action') || '',
+                from: formData.get('from') || '',
+                to: formData.get('to') || '',
+                limit: parseInt(formData.get('limit')) || 25,
+            });
+            await loadAndRender();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    }
+
+    // Reset filter link
+    const resetLink = document.querySelector('a[href*="page=system_logs"]');
+    if (resetLink) {
+        resetLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            logsManager.state = {
+                q: '', role: '', action: '', from: '', to: '',
+                limit: 25, p: 1,
+            };
+            loadAndRender();
+        });
+    }
+
+    // Browser back/forward support
+    window.addEventListener('popstate', (e) => {
+        if (e.state) {
+            logsManager.state = e.state;
+            renderLogsTable(logsManager.state._apiData || {});
+        }
+    });
+
     // Dark mode toggle
     const darkBtn = document.getElementById('toggle-dark');
     const root = document.documentElement;
@@ -446,55 +720,21 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     applyDark(localStorage.getItem('sb_dark')==='1');
     darkBtn.addEventListener('click',()=>{ applyDark(!root.classList.contains('dark')); });
+    
     // Collapse filters
     const collapseBtn = document.getElementById('collapse-filters');
-    const filterForm = document.getElementById('filter-form');
-    collapseBtn.addEventListener('click',()=>{
-        const open = collapseBtn.getAttribute('data-state')==='open';
-        filterForm.style.display = open ? 'none' : '';
-        collapseBtn.textContent = open ? 'Hiện bộ lọc' : 'Ẩn bộ lọc';
-        collapseBtn.setAttribute('data-state', open ? 'closed':'open');
-    });
-    // Refresh empty state
-    const refreshBtn = document.getElementById('logs-refresh-btn');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', () => { location.reload(); });
-    }
-    const forceReloadBtn = document.getElementById('logs-force-reload');
-    if (forceReloadBtn) {
-        // Attempt fetch first page via API and inject simple rows if possible
-        forceReloadBtn.addEventListener('click', async () => {
-            forceReloadBtn.textContent = 'Đang lấy...';
-            try {
-                const params = new URLSearchParams({format:'json',limit:'25'});
-                const apiResp = await fetch('system_logs_api.php?' + params.toString());
-                const data = await apiResp.json();
-                if (data && Array.isArray(data.data) && data.data.length) {
-                    const tbody = document.querySelector('#logs-container tbody');
-                    tbody.innerHTML = '';
-                    data.data.forEach(row => {
-                        const tr = document.createElement('tr');
-                        tr.className = 'border-b border-gray-100 hover:bg-indigo-50/40 transition';
-                        tr.innerHTML = `
-                          <td class="px-4 py-3 text-gray-700">
-                            <div class="font-semibold text-sm">${row.CREATED_AT}</div>
-                            <div class="text-xs text-gray-500">#${row.ID_LOG}</div>
-                          </td>
-                          <td class="px-4 py-3"><div class="font-medium text-indigo-700">${row.ACTOR_ID || 'Không xác định'}</div></td>
-                          <td class="px-4 py-3 text-gray-700"><span class="inline-flex items-center px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-semibold">${row.VAI_TRO || '—'}</span></td>
-                          <td class="px-4 py-3 font-semibold text-gray-800">${row.HANH_DONG}</td>
-                          <td class="px-4 py-3 text-gray-700">${row.DOI_TUONG || '—'}</td>
-                          <td class="px-4 py-3 text-gray-600"><span class="font-mono text-sm">${row.IP || '—'}</span></td>
-                          <td class="px-4 py-3"><span class="text-xs text-gray-400">(Mở chi tiết đầy đủ để xem)</span></td>`;
-                        tbody.appendChild(tr);
-                    });
-                    forceReloadBtn.textContent = 'Đã nạp tạm';
-                } else {
-                    forceReloadBtn.textContent = 'Không có dữ liệu';
-                }
-            } catch(e){ forceReloadBtn.textContent = 'Lỗi: ' + e.message; }
+    const filterFormEl = document.getElementById('filter-form');
+    if (collapseBtn && filterFormEl) {
+        collapseBtn.addEventListener('click',()=>{
+            const open = collapseBtn.getAttribute('data-state')==='open';
+            filterFormEl.style.display = open ? 'none' : '';
+            collapseBtn.textContent = open ? 'Hiện bộ lọc' : 'Ẩn bộ lọc';
+            collapseBtn.setAttribute('data-state', open ? 'closed':'open');
         });
     }
+
+    // Attach handlers for server-rendered table on initial load
+    attachEventHandlers();
 });
 </script>
 </body>

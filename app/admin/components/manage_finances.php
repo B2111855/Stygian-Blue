@@ -75,39 +75,74 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         </div>
 
         <div class="grid gap-3 sm:grid-cols-2" id="statGrid">
-          <article class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-sm text-gray-500">Tổng doanh thu</p>
-            <p id="statRevenue" class="text-2xl font-semibold text-gray-900">--</p>
+          <article class="rounded-xl border border-blue-100 bg-blue-50 p-4 shadow-sm">
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-medium text-blue-700">Doanh thu dự kiến</p>
+            </div>
+            <p id="statRevenue" class="text-2xl font-semibold text-blue-900">--</p>
+            <div class="text-xs text-blue-600 mt-2 bg-blue-100 p-2 rounded border border-blue-200">
+              <p class="font-mono">= Doanh thu chờ thanh toán + Doanh thu đã thanh toán</p>
+              <p class="text-blue-700 mt-1">Từ quote, booking, appointment (chưa/đã thanh toán)</p>
+            </div>
+          </article>
+          <article class="rounded-xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm">
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-medium text-emerald-700">Doanh thu thực tế</p>
+            </div>
+            <p id="statRevenueActual" class="text-2xl font-semibold text-emerald-900">--</p>
+            <div class="text-xs text-emerald-600 mt-2 bg-emerald-100 p-2 rounded border border-emerald-200">
+              <p class="font-mono">= Doanh thu đã thanh toán</p>
+              <p class="text-emerald-700 mt-1">Chỉ những đơn hàng đã nhận tiền (confirmed)</p>
+            </div>
           </article>
           <article class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-sm text-gray-500">Tổng chi phí</p>
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-medium text-gray-700">Tổng chi phí</p>
+            </div>
             <p id="statExpense" class="text-2xl font-semibold text-gray-900">--</p>
+            <div class="text-xs text-gray-600 mt-2 bg-gray-100 p-2 rounded border border-gray-300">
+              <p class="font-mono">= Chi phí phát sinh (vận hành) + Lương nhân viên + Thuế</p>
+              <p class="text-gray-700 mt-1">Chi phí phát sinh đã bao gồm điện, nước, mặt bằng, bảo trì...</p>
+            </div>
           </article>
-          <article class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-sm text-gray-500">Lợi nhuận</p>
-            <p id="statProfit" class="text-2xl font-semibold text-gray-900">--</p>
+          <article class="rounded-xl border border-red-100 bg-red-50 p-4 shadow-sm">
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-medium text-red-700">Lợi nhuận ròng</p>
+            </div>
+            <p id="statProfit" class="text-2xl font-semibold text-red-900">--</p>
+            <div class="text-xs text-red-600 mt-2 bg-red-100 p-2 rounded border border-red-200">
+              <p class="font-mono">= Doanh thu thực tế - (Chi phí phát sinh + Lương + Thuế)</p>
+              <p class="text-red-700 mt-1">Lợi nhuận thực tế sau tất cả chi phí</p>
+            </div>
           </article>
-          <article class="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-            <p class="text-sm text-gray-500">Tỷ suất lợi nhuận</p>
-            <p id="statMargin" class="text-2xl font-semibold text-gray-900">--</p>
+          <article class="rounded-xl border border-orange-100 bg-orange-50 p-4 shadow-sm">
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-medium text-orange-700">Tỷ suất lợi nhuận</p>
+            </div>
+            <p id="statMargin" class="text-2xl font-semibold text-orange-900">--</p>
+            <div class="text-xs text-orange-600 mt-2 bg-orange-100 p-2 rounded border border-orange-200">
+              <p class="font-mono">= (Lợi nhuận ÷ Tổng chi phí) × 100%</p>
+              <p class="text-orange-700 mt-1">Tỷ suất lợi nhuận trên chi phí</p>
+            </div>
           </article>
         </div>
 
         <div class="bg-white border border-gray-100 rounded-xl shadow-sm p-5">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold text-gray-900">Tổng hợp</h2>
+            <h2 class="text-lg font-semibold text-gray-900">Tóm tắt chi tiết</h2>
             <span class="text-xs text-gray-500">Tự động cập nhật</span>
           </div>
-          <div id="summary" class="text-sm sm:text-base text-gray-700 leading-relaxed"></div>
+          <div id="summary" class="text-sm sm:text-base text-gray-700 leading-relaxed mb-4"></div>
+          <div class="grid grid-cols-1 gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200 text-xs">
+            <p class="font-semibold text-gray-900">Ghi chú quan trọng:</p>
+            <p><strong>Doanh thu dự kiến</strong> = Tất cả quote/booking/appointment (chưa/đã thanh toán)</p>
+            <p><strong>Doanh thu thực tế</strong> = Chỉ những đơn đã nhận tiền (tính thuế VAT)</p>
+            <p><strong>Tỷ suất</strong> = (Lợi nhuận / Chi phí) × 100% - tỷ suất trên chi phí, không phải doanh thu</p>
+            <p><strong>Chi phí phát sinh</strong> đang đóng vai trò chi phí vận hành (điện, nước, mặt bằng...)</p>
+          </div>
         </div>
 
-        <div class="bg-slate-900 text-white rounded-xl shadow-inner p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <h2 class="text-lg font-semibold">Chỉ số chuyên sâu</h2>
-            <span class="text-xs uppercase tracking-wide text-slate-300">Advanced KPIs</span>
-          </div>
-          <div id="advancedMetrics" class="grid gap-3 sm:grid-cols-2"></div>
-        </div>
+        
       </section>
 
       <section class="xl:col-span-8 bg-white border border-gray-100 rounded-2xl shadow-lg p-4 sm:p-6">
@@ -129,7 +164,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
                 <p class="text-xs uppercase tracking-wide text-slate-500">Cơ cấu</p>
                 <h3 class="text-lg font-semibold text-slate-900">Phân bổ chi phí</h3>
               </div>
-              <span class="text-xs text-slate-500">Thuế + lương + vận hành</span>
+              <span class="text-xs text-slate-500">Thuế + lương + chi phí phát sinh</span>
             </div>
             <div class="h-60">
               <canvas id="costStructureChart"></canvas>
@@ -157,36 +192,252 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
       </div>
       <div id="trendTable" class="rounded-xl border border-gray-100 bg-white"></div>
     </section>
+    <!-- Section: Quản lý Chi phí Phát sinh -->
+    <section class="border-t pt-8">
+      <div class="mb-4">
+        <button type="button" onclick="toggleExpensePanel()" class="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700 hover:bg-indigo-100 transition flex items-center gap-2">
+          Quản lý chi phí phát sinh tháng hiện tại
+        </button>
+      </div>
+
+      <!-- Expense Management Panel (Collapsible) -->
+      <div id="expensePanel" class="border border-indigo-100 rounded-lg bg-indigo-50 p-6 mb-6 hidden">
+        <!-- Panel Header -->
+        <div class="mb-6 pb-4 border-b border-indigo-200 flex items-center justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-gray-900">Quản lý Chi phí Phát sinh</h2>
+            <p class="text-sm text-gray-600 mt-1">Tháng hiện tại: <strong id="currentExpenseMonth">12/2025</strong></p>
+          </div>
+          <button onclick="toggleExpensePanel()" class="text-gray-500 hover:text-gray-700 text-xl">×</button>
+        </div>
+
+        <!-- Tab Navigation - Giảm từ 5 tab xuống 3 tab chính -->
+        <div class="flex border-b border-indigo-200 gap-4 mb-6 overflow-x-auto">
+          <button onclick="switchExpensePanel('view')" id="panel-tab-view" class="px-4 py-2 font-medium text-indigo-600 border-b-2 border-indigo-600 text-sm whitespace-nowrap">Xem & Quản lý</button>
+          <button onclick="switchExpensePanel('manage')" id="panel-tab-manage" class="px-4 py-2 font-medium text-gray-600 border-b-2 border-transparent hover:text-gray-700 text-sm whitespace-nowrap">Loại chi phí</button>
+          <button onclick="switchExpensePanel('stats')" id="panel-tab-stats" class="px-4 py-2 font-medium text-gray-600 border-b-2 border-transparent hover:text-gray-700 text-sm whitespace-nowrap">Thống kê</button>
+        </div>
+
+        <!-- Tab: View & Manage -->
+        <div id="panel-content-view" class="space-y-4">
+          <div class="flex gap-2 mb-4">
+            <div class="flex-1">
+              <label class="text-sm text-gray-700 font-medium block mb-2">Chọn chi nhánh</label>
+              <select id="panelBranchSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="loadPanelExpenses()">
+                <option value="">-- Chọn chi nhánh --</option>
+                <?php 
+                  $branchQuery = mysqli_query($conn, "SELECT ID_CN, TEN_CN FROM chi_nhanh ORDER BY TEN_CN");
+                  while ($b = mysqli_fetch_assoc($branchQuery)) {
+                    echo '<option value="' . $b['ID_CN'] . '">' . htmlspecialchars($b['TEN_CN']) . '</option>';
+                  }
+                ?>
+              </select>
+            </div>
+            <div class="flex items-end">
+              <button onclick="copyFromPreviousMonth()" class="rounded-lg bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-700 transition">Copy tháng trước</button>
+            </div>
+          </div>
+          <div id="panelExpenseTableContainer" class="border border-gray-200 rounded-lg overflow-hidden bg-white"></div>
+        </div>
+
+        <!-- Tab: History -->
+        <div id="panel-content-history" class="space-y-4" style="display: none;">
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+            <p class="text-sm text-blue-900"><strong>ℹ️ Lịch sử chi phí:</strong> Xem chi phí của từng loại qua các tháng và chi nhánh</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="text-sm text-gray-700 font-medium block mb-2">Chọn loại chi phí</label>
+              <select id="historyExpenseTypeSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="loadExpenseHistory()">
+                <option value="">-- Chọn loại --</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm text-gray-700 font-medium block mb-2">Sắp xếp theo</label>
+              <select id="historySortSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="loadExpenseHistory()">
+                <option value="thang_desc">Tháng mới nhất</option>
+                <option value="thang_asc">Tháng cũ nhất</option>
+                <option value="branch">Chi nhánh</option>
+              </select>
+            </div>
+          </div>
+          <div id="panelHistoryTableContainer" class="border border-gray-200 rounded-lg overflow-hidden bg-white"></div>
+        </div>
+
+        <!-- Tab: Summary -->
+        <div id="panel-content-summary" class="space-y-4" style="display: none;">
+          <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+            <p class="text-sm text-green-900"><strong>ℹ️ Tổng hợp chi phí:</strong> Tổng cộng tất cả chi nhánh theo loại</p>
+          </div>
+          <div>
+            <label class="text-sm text-gray-700 font-medium block mb-2">Chọn tháng</label>
+            <input type="month" id="summarySummaryMonthSelect" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" onchange="loadExpenseSummary()">
+          </div>
+          <div id="panelSummaryContainer" class="space-y-4">
+            <!-- Summary cards will be rendered here -->
+          </div>
+        </div>
+
+        <!-- Tab: Thống kê (Hợp nhất History + Summary) - NEW -->
+        <div id="panel-content-stats" class="space-y-4" style="display: none;">
+          <div class="flex flex-col sm:flex-row gap-4 mb-4">
+            <div class="flex-1">
+              <label class="text-sm font-medium text-gray-700 block mb-2">Loại chi phí</label>
+              <select id="statsExpenseTypeSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" onchange="loadStatsData()">
+                <option value="">-- Tất cả loại --</option>
+              </select>
+            </div>
+            <div class="flex-1">
+              <label class="text-sm font-medium text-gray-700 block mb-2">Tháng</label>
+              <input type="month" id="statsMonthSelect" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500" onchange="loadStatsData()">
+            </div>
+            <div class="flex gap-2 mt-auto">
+              <button onclick="showStatsHistoryView()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+                Chi tiết
+              </button>
+              <button onclick="showStatsSummaryView()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+                Tổng hợp
+              </button>
+            </div>
+          </div>
+          <div id="statsContentArea" class="border border-gray-200 rounded-lg overflow-hidden bg-white"></div>
+        </div>
+
+        <!-- Tab: Add New Expense Type (Admin) - KEEP for backward compat, will be replaced by modal -->
+        <div id="panel-content-add" class="space-y-4" style="display: none;">
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+            <p class="text-sm text-blue-900"><strong>ℹ️ Hướng dẫn:</strong> Tạo loại chi phí mới sẽ áp dụng cho <strong>tất cả chi nhánh</strong></p>
+          </div>
+          <div>
+            <label class="text-sm text-gray-700 font-medium block mb-2">Tên loại chi phí</label>
+            <input type="text" id="panelAddExpenseName" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="Ví dụ: Vệ sinh, Bảo dưỡng, Điện nước...">
+          </div>
+          <div>
+            <label class="text-sm text-gray-700 font-medium block mb-2">Mô tả (tùy chọn)</label>
+            <textarea id="panelAddExpenseDesc" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="Mô tả chi tiết loại chi phí này" rows="3"></textarea>
+          </div>
+          <button onclick="confirmPanelAddNewExpenseType()" class="w-full rounded-lg bg-indigo-600 px-4 py-2 font-semibold text-white hover:bg-indigo-700 transition">✅ Tạo loại chi phí</button>
+        </div>
+
+        <!-- Tab: Manage Expense Types (Admin) - Hợp nhất Add + Manage -->
+        <div id="panel-content-manage" class="space-y-4" style="display: none;">
+          <div class="bg-red-50 border border-red-300 rounded-lg p-4 mb-4">
+            <p class="text-sm text-red-900 font-semibold mb-2">⚠️ CẢNH BÁO - KHÔNG THỂ KHÔI PHỤC!</p>
+            <p class="text-sm text-red-800">Xóa loại chi phí sẽ xóa vĩnh viễn loại chi phí <strong>và tất cả dữ liệu chi phí liên quan</strong> trong hệ thống. Hành động này không thể hoàn tác.</p>
+          </div>
+          
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-gray-900">Danh sách loại chi phí</h3>
+            <button onclick="showAddExpenseTypeModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+              Thêm loại
+            </button>
+          </div>
+          
+          <div id="panelManageExpenseList" class="grid gap-3">
+            <!-- Dynamic list will be rendered here -->
+          </div>
+        </div>
+
+        <!-- Tab: Copy from Previous Month -->
+        <div id="panel-content-copy" class="space-y-4" style="display: none;">
+          <!-- Removed - using inline button instead -->
+        </div>
+      </div>
+
+      <!-- Modal Dialog: Thêm/Sửa Loại Chi phí -->
+      <div id="addExpenseTypeModal" style="display:none" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold text-gray-900">Tạo loại chi phí mới</h3>
+            <button onclick="closeAddExpenseTypeModal()" class="text-gray-500 hover:text-gray-700 text-xl">×</button>
+          </div>
+          
+          <div class="space-y-3 mb-5">
+            <div>
+              <label class="text-sm font-medium text-gray-700 block mb-1">Tên loại chi phí <span class="text-red-500">*</span></label>
+              <input type="text" id="modalExpenseTypeName" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" placeholder="VD: Vệ sinh, Bảo dưỡng, Điện nước...">
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700 block mb-1">Mô tả (tùy chọn)</label>
+              <textarea id="modalExpenseTypeDesc" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" rows="2" placeholder="Mô tả chi tiết loại chi phí này"></textarea>
+            </div>
+          </div>
+          
+          <div class="flex gap-2">
+            <button onclick="closeAddExpenseTypeModal()" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+              Hủy
+            </button>
+            <button onclick="saveExpenseTypeFromModal()" class="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+              Tạo
+            </button>
+          </div>
+          
+          <p class="text-xs text-gray-500 mt-4 text-center">Loại chi phí sẽ áp dụng cho <strong>tất cả chi nhánh</strong></p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Section: Thuế Chi Trả -->
     <section class="border-t pt-8">
       <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
         <div>
-          <h2 class="text-2xl font-bold text-gray-900">Chi phí phát sinh tháng hiện tại</h2>
-          <p class="text-sm text-gray-500">Theo dõi các khoản điều chỉnh thủ công của từng chi nhánh</p>
+          <h2 class="text-2xl font-bold text-gray-900">Thuế chi trả tháng hiện tại</h2>
+          <p class="text-sm text-gray-500">Thuế VAT (10% doanh thu thực tế) + Thuế DN (20% lợi nhuận)</p>
         </div>
-        <button type="button" onclick="toggleExpenseForm()" class="self-start rounded-lg border border-yellow-300 bg-yellow-50 px-4 py-2 text-sm font-semibold text-yellow-700 hover:bg-yellow-100 transition">Cập nhật chi phí phát sinh</button>
+        <button type="button" onclick="calculateAndRefreshTaxes()" class="self-start rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100 transition">Tính toán lại thuế</button>
       </div>
 
-      <div id="expenseTable" class="mb-6 text-sm text-gray-700"></div>
-
-      <div id="expenseFormWrapper" class="hidden border rounded-xl p-4 sm:p-6 bg-white shadow-sm">
-        <form id="expenseForm" class="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <input type="hidden" id="selectedBranch" name="branch" value="">
-          <div>
-            <label class="block text-sm text-gray-600 font-medium mb-1">Chi phí mặt bằng (VND)</label>
-            <input type="number" name="rent" class="w-full px-4 py-2 border rounded-lg focus:ring-blue-400" min="0" placeholder="Nhập số tiền">
-          </div>
-          <div>
-            <label class="block text-sm text-gray-600 font-medium mb-1">Chi phí điện nước (VND)</label>
-            <input type="number" name="utilities" class="w-full px-4 py-2 border rounded-lg focus:ring-blue-400" min="0" placeholder="Nhập số tiền">
-          </div>
-          <div class="md:col-span-2 flex flex-wrap gap-3 justify-end">
-            <button type="button" onclick="toggleExpenseForm()" class="rounded-lg border border-gray-200 px-5 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">Đóng</button>
-            <button type="submit" class="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700">Lưu chi phí</button>
-          </div>
-        </form>
-        <div id="expenseMessage" class="mt-4 text-sm font-medium text-center"></div>
+      <!-- Tax Explanation -->
+      <div class="mb-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+        <p class="font-semibold mb-2">⚠️ Cách tính thuế:</p>
+        <ul class="space-y-1 text-xs">
+          <li>• <strong>Thuế VAT (10%)</strong> = Doanh thu <u>thực tế đã thanh toán</u> × 10%</li>
+          <li>• <strong>Thuế DN (20%)</strong> = Lợi nhuận × 20% (chỉ khi lợi nhuận > 0)</li>
+          <li>• <strong>Lưu ý:</strong> Thuế tính trên doanh thu đã nhận tiền, không phải doanh thu dự kiến</li>
+        </ul>
       </div>
+
+      <!-- Tax Display Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <!-- Thuế VAT -->
+        <div class="border rounded-lg p-4 bg-blue-50 border-blue-200">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm text-blue-600 font-medium">Thuế VAT</p>
+            <span title="10% × Doanh thu thực tế đã nhận tiền" class="text-xs text-blue-500 cursor-help">ℹ️</span>
+          </div>
+          <p id="taxVatAmount" class="text-2xl font-bold text-blue-900">--</p>
+          <p class="text-xs text-blue-600 mt-1">10% doanh thu thực tế</p>
+        </div>
+
+        <!-- Thuế Doanh Nghiệp -->
+        <div class="border rounded-lg p-4 bg-orange-50 border-orange-200">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm text-orange-600 font-medium">Thuế DN</p>
+            <span title="20% × Lợi nhuận (nếu > 0)" class="text-xs text-orange-500 cursor-help">ℹ️</span>
+          </div>
+          <p id="taxCorpAmount" class="text-2xl font-bold text-orange-900">--</p>
+          <p class="text-xs text-orange-600 mt-1">20% lợi nhuận (nếu lãi)</p>
+        </div>
+
+        <!-- Tổng Thuế -->
+        <div class="border rounded-lg p-4 bg-red-50 border-red-200">
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-sm text-red-600 font-medium">Tổng Thuế</p>
+            <span title="VAT + Thuế DN" class="text-xs text-red-500 cursor-help">ℹ️</span>
+          </div>
+          <p id="taxTotalAmount" class="text-2xl font-bold text-red-900">--</p>
+          <p class="text-xs text-red-600 mt-1">VAT + Thuế DN</p>
+        </div>
+      </div>
+
+      <!-- Tax Detail Table -->
+      <div id="taxTable" class="mb-6 text-sm text-gray-700"></div>
+
     </section>
+
+    <!-- Modal Quản lý Chi phí Phát sinh (deprecated - now using collapsible panel) -->
+    <!-- REMOVED - Functionality moved to collapsible panel above -->
 
     <div class="flex flex-col gap-3 sm:flex-row sm:justify-end">
       <button type="button" id="downloadCsv" class="rounded-lg border border-gray-300 px-5 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Xuất CSV</button>
@@ -216,7 +467,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         bootstrapState();
         refreshPrimaryDataset();
         refreshCompareDataset();
-        refreshExpenses();
+        refreshTaxes();
       }
 
       function cacheDom() {
@@ -231,6 +482,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         dom.costCanvas = document.getElementById('costStructureChart');
         dom.summary = document.getElementById('summary');
         dom.statRevenue = document.getElementById('statRevenue');
+        dom.statRevenueActual = document.getElementById('statRevenueActual');
         dom.statExpense = document.getElementById('statExpense');
         dom.statProfit = document.getElementById('statProfit');
         dom.statMargin = document.getElementById('statMargin');
@@ -240,11 +492,11 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         dom.advancedMetrics = document.getElementById('advancedMetrics');
         dom.refreshBtn = document.getElementById('refreshBtn');
         dom.downloadCsv = document.getElementById('downloadCsv');
-        dom.expenseForm = document.getElementById('expenseForm');
-        dom.expenseMessage = document.getElementById('expenseMessage');
-        dom.expenseTable = document.getElementById('expenseTable');
-        dom.expenseFormWrapper = document.getElementById('expenseFormWrapper');
-        dom.selectedBranch = document.getElementById('selectedBranch');
+        // Expense table moved to panel - removed old dom reference
+        dom.taxVatAmount = document.getElementById('taxVatAmount');
+        dom.taxCorpAmount = document.getElementById('taxCorpAmount');
+        dom.taxTotalAmount = document.getElementById('taxTotalAmount');
+        dom.taxTable = document.getElementById('taxTable');
       }
 
       function bindEvents() {
@@ -266,10 +518,9 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
         dom.branchFilter.addEventListener('change', async () => {
           state.currentBranch = dom.branchFilter.value;
-          dom.selectedBranch.value = state.currentBranch;
           dom.branchName.innerText = dom.branchFilter.options[dom.branchFilter.selectedIndex].text;
           await refreshPrimaryDataset();
-          await refreshExpenses();
+          await refreshTaxes();
           await refreshCompareDataset();
         });
 
@@ -282,16 +533,14 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         dom.refreshBtn.addEventListener('click', async () => {
           await refreshPrimaryDataset();
           await refreshCompareDataset();
-          await refreshExpenses();
+          await refreshTaxes();
         });
 
         dom.downloadCsv.addEventListener('click', downloadCsvReport);
-        dom.expenseForm.addEventListener('submit', handleExpenseSubmit);
       }
 
       function bootstrapState() {
         state.currentBranch = dom.branchFilter.value;
-        dom.selectedBranch.value = state.currentBranch;
         dom.branchName.innerText = dom.branchFilter.options[dom.branchFilter.selectedIndex].text;
         setActiveChartButton(state.chartType);
       }
@@ -346,8 +595,8 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
       async function fetchDataset(branch, filter) {
         const [financialRes, taxRes] = await Promise.all([
-          fetch(`./components/get_financial_data.php?filter=${filter}&branch=${branch}`),
-          fetch(`./components/get_total_tax.php?branch=${branch}`)
+          fetch(`components/get_financial_data.php?filter=${filter}&branch=${branch}`),
+          fetch(`components/get_total_tax.php?branch=${branch}`)
         ]);
 
         if (!financialRes.ok) throw new Error('Không nhận được dữ liệu doanh thu/chi phí');
@@ -358,12 +607,81 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         return { ...data, tax: taxPayload?.tax ? Number(taxPayload.tax) : 0 };
       }
 
-      async function refreshExpenses() {
+      // refreshExpenses() removed - expense loading moved to panel functions
+      // Use loadPanelExpenses() in the collapsible panel instead
+
+      async function refreshTaxes() {
         try {
-          const res = await fetch(`./components/get_expense_table.php?branch=${state.currentBranch}`);
-          dom.expenseTable.innerHTML = await res.text();
+          const branchId = state.currentBranch === 'all' ? 'all' : state.currentBranch.replace('cn', '');
+          const currentMonth = new Date().toISOString().slice(0, 7);
+          
+          const res = await fetch(`components/get_taxes.php?branch_id=${branchId}&month=${currentMonth}`);
+          const data = await res.json();
+          
+          if (data.status === 'success') {
+            let vatAmount = 0, corpAmount = 0;
+            
+            data.taxes.forEach(tax => {
+              if (tax.type === 'Thuế VAT') {
+                vatAmount = tax.amount;
+              } else if (tax.type === 'Thuế DN') {
+                corpAmount = tax.amount;
+              }
+            });
+            
+            const totalTax = vatAmount + corpAmount;
+            dom.taxVatAmount.innerText = formatCurrency(vatAmount);
+            dom.taxCorpAmount.innerText = formatCurrency(corpAmount);
+            dom.taxTotalAmount.innerText = formatCurrency(totalTax);
+            
+            // Render tax table
+            let html = '<div class="overflow-x-auto border rounded-lg"><table class="w-full text-sm">';
+            html += '<thead class="bg-gray-50"><tr><th class="px-4 py-3 text-left font-semibold">Loại thuế</th><th class="px-4 py-3 text-right font-semibold">Tỷ lệ</th><th class="px-4 py-3 text-right font-semibold">Số tiền</th><th class="px-4 py-3 text-left font-semibold">Cơ sở tính</th></tr></thead>';
+            html += '<tbody>';
+            
+            data.taxes.forEach(tax => {
+              html += `<tr class="border-t hover:bg-gray-50">
+                <td class="px-4 py-3 font-medium">${tax.type}</td>
+                <td class="px-4 py-3 text-right">${tax.rate}%</td>
+                <td class="px-4 py-3 text-right font-semibold">${formatCurrency(tax.amount)}</td>
+                <td class="px-4 py-3">${tax.baseOn}</td>
+              </tr>`;
+            });
+            
+            html += '</tbody></table></div>';
+            dom.taxTable.innerHTML = html;
+          } else {
+            dom.taxVatAmount.innerText = '--';
+            dom.taxCorpAmount.innerText = '--';
+            dom.taxTotalAmount.innerText = '--';
+            dom.taxTable.innerHTML = '<p class="text-gray-500">Chưa có dữ liệu thuế</p>';
+          }
         } catch (error) {
-          dom.expenseTable.innerHTML = '<p class="text-red-600">Không thể tải chi phí phát sinh.</p>';
+          console.error('Lỗi tải thuế:', error);
+          dom.taxVatAmount.innerText = '--';
+          dom.taxCorpAmount.innerText = '--';
+          dom.taxTotalAmount.innerText = '--';
+          dom.taxTable.innerHTML = '<p class="text-red-600">Không thể tải dữ liệu thuế.</p>';
+        }
+      }
+
+      async function calculateAndRefreshTaxes() {
+        try {
+          const branchId = state.currentBranch === 'all' ? 'all' : state.currentBranch.replace('cn', '');
+          const currentMonth = new Date().toISOString().slice(0, 7);
+          
+          const res = await fetch(`components/calculate_taxes.php?branch_id=${branchId}&month=${currentMonth}`);
+          const data = await res.json();
+          
+          if (data.status === 'success') {
+            alert('Đã tính toán lại thuế thành công!');
+            await refreshTaxes();
+          } else {
+            alert('Lỗi: ' + data.message);
+          }
+        } catch (error) {
+          console.error('Lỗi tính thuế:', error);
+          alert('Không thể tính lại thuế');
         }
       }
 
@@ -385,7 +703,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
             fill: state.chartType === 'line'
           },
           {
-            label: 'Chi phí',
+            label: 'Chi phí phát sinh',
             data: expenseSeries,
             borderColor: '#dc2626',
             backgroundColor: 'rgba(220, 38, 38, 0.15)',
@@ -431,7 +749,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         if (!totals) return;
         const ctx = dom.costCanvas.getContext('2d');
         const slices = [
-          { label: 'Chi phí vận hành', value: totals.totalExpense },
+          { label: 'Chi phí phát sinh (vận hành)', value: totals.totalExpense },
           { label: 'Chi phí lương', value: totals.salaryExpense },
           { label: 'Thuế', value: totals.tax }
         ];
@@ -448,7 +766,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
             labels: slices.map(item => item.label),
             datasets: [{
               data: slices.map(item => Math.max(item.value, 0)),
-              backgroundColor: ['#38bdf8', '#6366f1', '#f97316', '#14b8a6'],
+              backgroundColor: ['#38bdf8', '#fbbf24', '#6366f1', '#f97316', '#14b8a6'],
               borderWidth: 0
             }]
           },
@@ -463,22 +781,101 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
       function updateSummary() {
         const totals = computeTotals(state.datasets.primary);
         if (!totals) return;
+        const incidentalExpense = totals.incidentalExpense;
         dom.summary.innerHTML = `
-          <div id="financialReport" class="space-y-1">
-            <p><strong>Tổng doanh thu:</strong> ${formatCurrency(totals.totalRevenue)}</p>
-            <p><strong>Chi phí hoạt động:</strong> ${formatCurrency(totals.totalExpense)}</p>
-            <p><strong>Chi phí lương nhân viên:</strong> ${formatCurrency(totals.salaryExpense)}</p>
-            <p><strong>Thuế:</strong> ${formatCurrency(totals.tax)}</p>
-            <p><strong>Tổng chi phí (gồm thuế):</strong> ${formatCurrency(totals.totalExpenseWithTax)}</p>
-            <p><strong>Lợi nhuận ròng:</strong> ${formatCurrency(totals.profit)}</p>
+          <div id="financialReport" class="space-y-2 text-sm">
+            <!-- DOANH THU -->
+            <div class="pb-2 border-b border-gray-200">
+              <p class="flex items-center justify-between">
+                <span><strong>Tổng doanh thu:</strong> <span class="text-xs text-gray-500">(đã thanh toán + chờ thanh toán)</span></span>
+                <span class="font-semibold text-green-700">${formatCurrency(totals.totalRevenue)}</span>
+              </p>
+              <p class="text-xs text-gray-500 ml-4 mt-1">
+                = Doanh thu dự kiến (chờ thanh toán) + Doanh thu thực tế (đã thanh toán)<br>
+                = SUM(revenue_predicted + revenue_actual) từ get_financial_data.php
+              </p>
+            </div>
+
+            <!-- CHI PHÍ PHÁT SINH (VẬN HÀNH) -->
+            <div class="pb-2 border-b border-gray-200">
+              <p class="flex items-center justify-between">
+                <span><strong>Chi phí phát sinh:</strong> <span class="text-xs text-gray-500">(điện, nước, mặt bằng, bảo trì...)</span></span>
+                <span class="font-semibold text-orange-700">${formatCurrency(totals.totalExpense)}</span>
+              </p>
+              <p class="text-xs text-gray-500 ml-4 mt-1">
+                = SUM(SO_TIEN) từ tai_chinh<br>
+                WHERE LOAI_GIAO_DICH='chi phí' AND LOAI_CHI_TIET='Chi phí phát sinh'<br>
+                <span class="text-blue-600">💡 Đây là chi phí vận hành chính (đã gộp toàn bộ điện, nước, mặt bằng...)</span>
+              </p>
+            </div>
+
+            <!-- CHI PHÍ LƯƠNG -->
+            <div class="pb-2 border-b border-gray-200">
+              <p class="flex items-center justify-between">
+                <span><strong>Chi phí lương nhân viên:</strong> <span class="text-xs text-gray-500">(tiền lương toàn bộ nhân viên)</span></span>
+                <span class="font-semibold text-orange-700">${formatCurrency(totals.salaryExpense)}</span>
+              </p>
+              <p class="text-xs text-gray-500 ml-4 mt-1">
+                = SUM(SO_TIEN) từ tai_chinh<br>
+                WHERE LOAI_CHI_TIET='Lương nhân viên'<br>
+                <span class="text-blue-600">💡 Lưu từ manage_salaries.php khi tính lương</span>
+              </p>
+            </div>
+
+            <!-- THUẾ -->
+            <div class="pb-2 border-b border-gray-200">
+              <p class="flex items-center justify-between">
+                <span><strong>Thuế:</strong> <span class="text-xs text-gray-500">(thuế VAT + thuế doanh nghiệp)</span></span>
+                <span class="font-semibold text-orange-700">${formatCurrency(totals.tax)}</span>
+              </p>
+              <p class="text-xs text-gray-500 ml-4 mt-1">
+                = SUM(SO_TIEN) từ tai_chinh<br>
+                WHERE LOAI_CHI_TIET='Thuế VAT' OR LOAI_CHI_TIET='Thuế DN'<br>
+                <span class="text-blue-600">💡 Lưu từ save_expenses.php hoặc tính toán thuế</span>
+              </p>
+            </div>
+
+            <!-- TỔNG CHI PHÍ -->
+            <div class="pb-2 border-b border-gray-200 bg-red-50 p-2 rounded">
+              <p class="flex items-center justify-between">
+                <span><strong>Tổng chi phí (gồm cả thuế):</strong></span>
+                <span class="font-bold text-red-800">${formatCurrency(totals.totalExpenseWithTax)}</span>
+              </p>
+              <p class="text-xs text-gray-600 ml-4 mt-1">
+                = Chi phí phát sinh (vận hành) + Lương + Thuế<br>
+                = ${formatCurrency(totals.totalExpense)} + ${formatCurrency(totals.salaryExpense)} + ${formatCurrency(totals.tax)}<br>
+                <span class="text-red-600">⚠️ Đây là tổng chi phí thực tế đã chi trả</span>
+              </p>
+            </div>
+
+            <!-- LỢI NHUẬN -->
+            <div class="bg-green-50 p-2 rounded">
+              <p class="flex items-center justify-between">
+                <span><strong>Lợi nhuận ròng:</strong> <span class="text-xs text-gray-500">(doanh thu - chi phí)</span></span>
+                <span class="font-bold text-green-800 text-lg">${formatCurrency(totals.profit)}</span>
+              </p>
+              <p class="text-xs text-gray-600 ml-4 mt-1">
+                = Doanh thu thực tế (đã thanh toán) - Tổng chi phí<br>
+                = ${formatCurrency(totals.totalRevenueActual)} - ${formatCurrency(totals.totalExpenseWithTax)}<br>
+                <span class="text-blue-600">💡 Giá trị âm = lỗ, giá trị dương = lãi</span>
+              </p>
+            </div>
           </div>
-          <p class="mt-3 text-sm text-indigo-700 font-semibold">Tỷ suất lợi nhuận trên tổng chi phí: ${totals.rate}</p>`;
+          <div class="mt-4 p-3 bg-indigo-50 border border-indigo-200 rounded-lg">
+            <p class="text-sm text-indigo-900 font-semibold">Tỷ suất lợi nhuận (ROI): <span class="text-lg text-indigo-700">${totals.rate}</span></p>
+            <p class="text-xs text-indigo-700 mt-1">
+              = (Lợi nhuận ÷ Tổng chi phí) × 100%<br>
+              = (${formatCurrency(totals.profit)} ÷ ${formatCurrency(totals.totalExpenseWithTax)}) × 100%<br>
+              <span class="text-indigo-600">📊 Chỉ báo hiệu quả quản lý chi phí: càng cao càng tốt</span>
+            </p>
+          </div>`;
       }
 
       function updateStatCards() {
         const totals = computeTotals(state.datasets.primary);
         if (!totals) return;
         dom.statRevenue.innerText = formatCurrency(totals.totalRevenue);
+        dom.statRevenueActual.innerText = formatCurrency(totals.totalRevenueActual);
         dom.statExpense.innerText = formatCurrency(totals.totalExpenseWithTax);
         dom.statProfit.innerText = formatCurrency(totals.profit);
         dom.statMargin.innerText = totals.rate;
@@ -570,7 +967,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
           {
             label: 'Tỷ lệ chi phí / doanh thu',
             value: expenseRatio === null ? 'N/A' : `${expenseRatio.toFixed(1)}%`,
-            hint: 'Bao gồm thuế & lương'
+            hint: 'Bao gồm chi phí phát sinh + lương + thuế'
           },
           {
             label: 'Burn rate mỗi kỳ',
@@ -619,7 +1016,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
           `Doanh thu ${growth >= 0 ? 'tăng' : 'giảm'} ${Math.abs(growth).toFixed(1)}% so với kỳ trước.`,
           `Tỷ lệ chi phí/doanh thu hiện ở mức ${expenseRatio.toFixed(1)}%, ${expenseRatio > 80 ? 'cần kiểm soát chặt' : 'được xem là an toàn'}.`,
           `Độ biến động doanh thu (σ) đạt ${volatility.toLocaleString('vi-VN')} VND, phù hợp để lập kế hoạch quỹ dự phòng.`,
-          `Chi phí bình quân mỗi kỳ khoảng ${formatCurrency(avgExpense)}.`
+          `Chi phí bình quân mỗi kỳ khoảng ${formatCurrency(avgExpense)}. Chi phí phát sinh hiện là ${formatCurrency(totals.incidentalExpense)}.`
         ];
         dom.insightList.innerHTML = insights.map(item => `<li class="flex gap-2"><span class="text-indigo-500">•</span><span>${item}</span></li>`).join('');
       }
@@ -648,23 +1045,10 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
       async function handleExpenseSubmit(event) {
         event.preventDefault();
-        const formData = new FormData(dom.expenseForm);
-        try {
-          const response = await fetch('./components/save_expenses.php', { method: 'POST', body: formData });
-          const result = await response.json();
-          if (result.status !== 'success') throw new Error(result.message);
-          showMessage('Đã lưu chi phí thành công', 'green');
-          await refreshPrimaryDataset();
-          await refreshExpenses();
-        } catch (error) {
-          console.error('Lỗi lưu chi phí:', error);
-          showMessage(error.message || 'Không thể lưu chi phí', 'red');
-        }
       }
 
       function showMessage(message, color) {
-        dom.expenseMessage.innerText = message;
-        dom.expenseMessage.className = `mt-4 text-sm font-medium text-center text-${color}-600`;
+        // Old function - no longer needed
       }
 
       function downloadCsvReport() {
@@ -690,17 +1074,47 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
       function computeTotals(dataset) {
         if (!dataset) return null;
-        const revenueSeries = safeSeries(dataset.revenue);
+        // FIXED: Doanh thu dự kiến = chờ thanh toán + đã thanh toán (từ revenue_predicted + revenue)
+        const revenuePredictedSeries = safeSeries(dataset.revenue_predicted || []);
+        const revenueActualSeries = safeSeries(dataset.revenue_actual || []);
         const expenseSeries = safeSeries(dataset.expense);
-        const totalRevenue = revenueSeries.reduce((sum, value) => sum + Number(value || 0), 0);
-        const totalExpense = expenseSeries.reduce((sum, value) => sum + Number(value || 0), 0);
-        const salaryExpense = Number(dataset.salary_expense || 0);
+        const salaryExpenseSeries = safeSeries(dataset.salary_expense || []);
+        
+        // Tổng doanh thu hiển thị: tất cả doanh thu đã ghi nhận (đã thanh toán + chờ thanh toán)
+        const revenueSeriesAll = revenuePredictedSeries.map((pred, idx) => 
+          Number(pred || 0) + Number(revenueActualSeries[idx] || 0)
+        );
+        
+        // QUAN TRỌNG: Khi filter='month', chỉ lấy **kỳ cuối cùng** trong mảng (tháng hiện tại)
+        // Khi filter='year', lấy **tổng toàn bộ** mảng
+        // Điều này được xác định bởi số lượng phần tử trong mảng
+        const isMonthlyView = (expenseSeries.length < 12); // Nếu < 12 phần tử, chứng tỏ chỉ có dữ liệu từng tháng cụ thể
+        
+        let totalRevenue, totalRevenueActual, totalExpense, salaryExpense;
+        
+        if (isMonthlyView && expenseSeries.length > 0) {
+          // Lấy phần tử cuối cùng (tháng hiện tại)
+          const lastIdx = expenseSeries.length - 1;
+          totalRevenue = revenueSeriesAll.reduce((sum, v) => sum + Number(v || 0), 0); // Tổng doanh thu năm
+          totalRevenueActual = revenueActualSeries.reduce((sum, v) => sum + Number(v || 0), 0); // Tổng doanh thu năm
+          totalExpense = Number(expenseSeries[lastIdx] || 0); // Chi phí của tháng hiện tại
+          salaryExpense = Number(salaryExpenseSeries[lastIdx] || 0); // Lương của tháng hiện tại
+        } else {
+          // Lấy tổng toàn bộ (cho view năm/quý)
+          totalRevenue = revenueSeriesAll.reduce((sum, value) => sum + Number(value || 0), 0);
+          totalRevenueActual = revenueActualSeries.reduce((sum, value) => sum + Number(value || 0), 0);
+          totalExpense = expenseSeries.reduce((sum, value) => sum + Number(value || 0), 0);
+          salaryExpense = salaryExpenseSeries.reduce((sum, v) => sum + Number(v || 0), 0);
+        }
+        
+        // Chi phí phát sinh tổng - KHÔNG dùng nữa (chỉ giữ cho backward compatibility nếu cần)
+        // const incidentalExpense = Number(dataset.incidental_expense || totalExpense || 0);
         const tax = Number(dataset.tax || 0);
-        const expenseWithSalary = totalExpense + salaryExpense;
-        const totalExpenseWithTax = expenseWithSalary + tax;
-        const profit = totalRevenue - totalExpenseWithTax;
+        const totalExpenseWithTax = totalExpense + salaryExpense + tax;
+        // Lợi nhuận thực tế dựa trên doanh thu đã thanh toán
+        const profit = totalRevenueActual - totalExpenseWithTax;
         const rate = totalExpenseWithTax === 0 ? 'N/A' : ((profit / totalExpenseWithTax) * 100).toFixed(2) + '%';
-        return { totalRevenue, totalExpense, salaryExpense, tax, totalExpenseWithTax, profit, rate };
+        return { totalRevenue, totalRevenueActual, totalExpense, salaryExpense, tax, totalExpenseWithTax, profit, rate };
       }
 
       function setActiveChartButton(type) {
@@ -739,9 +1153,8 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         return Math.sqrt(variance);
       }
 
-      window.toggleExpenseForm = function () {
-        dom.expenseFormWrapper.classList.toggle('hidden');
-      };
+      // Variables để lưu state khi sửa chi phí
+      let editingExpenseName = null;
 
       window.printReport = function () {
         const today = new Date();
@@ -818,6 +1231,812 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
         popup.print();
       };
     })();
+
+    // Expense Manager Panel Functions (Collapsible) - New System
+    function toggleExpensePanel() {
+      const panel = document.getElementById('expensePanel');
+      
+      if (panel.classList.contains('hidden')) {
+        panel.classList.remove('hidden');
+        initExpensePanel();
+      } else {
+        panel.classList.add('hidden');
+      }
+    }
+
+    function initExpensePanel() {
+      // Load danh sách loại chi phí cho tab Add
+      loadExpenseTypes();
+      // Load danh sách tháng cho tab Copy
+      loadMonthsForCopy();
+    }
+
+    function switchExpensePanel(tab) {
+      // Hide all tabs (3 main tabs only)
+      document.getElementById('panel-content-view').style.display = 'none';
+      document.getElementById('panel-content-manage').style.display = 'none';
+      document.getElementById('panel-content-stats').style.display = 'none';
+      // Hide old tabs
+      document.getElementById('panel-content-history').style.display = 'none';
+      document.getElementById('panel-content-summary').style.display = 'none';
+      document.getElementById('panel-content-add').style.display = 'none';
+
+      // Remove active state from all tabs (3 main tabs only)
+      ['view', 'manage', 'stats'].forEach(t => {
+        const btn = document.getElementById(`panel-tab-${t}`);
+        if (btn) {
+          btn.classList.remove('border-indigo-600', 'text-indigo-600');
+          btn.classList.add('border-transparent', 'text-gray-600');
+        }
+      });
+
+      // Show selected tab
+      const tabContent = document.getElementById('panel-content-' + tab);
+      if (tabContent) {
+        tabContent.style.display = 'block';
+      }
+
+      // Set active state
+      const activeBtn = document.getElementById('panel-tab-' + tab);
+      if (activeBtn) {
+        activeBtn.classList.remove('border-transparent', 'text-gray-600');
+        activeBtn.classList.add('border-indigo-600', 'text-indigo-600');
+      }
+
+      // Load data for specific tabs
+      if (tab === 'stats') {
+        // Initialize stats tab with filters
+        const now = new Date();
+        const currentMonth = now.toISOString().slice(0, 7);
+        document.getElementById('statsMonthSelect').value = currentMonth;
+        loadStatsData();
+        loadExpenseTypesForStats();
+      } else if (tab === 'manage') {
+        loadManageExpenseTypesList();
+      }
+    }
+
+    function loadExpenseTypes() {
+      fetch('components/api_chi_phi_loai.php?action=list')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            const select = document.getElementById('panelBranchSelect');
+            // Load danh sách loại chi phí vào select của View tab
+            // (nếu cần trong tương lai)
+          }
+        })
+        .catch(err => console.error('Error loading expense types:', err));
+    }
+
+    function confirmPanelAddNewExpenseType() {
+      // Tạo loại chi phí mới (Admin function)
+      const tenLoai = document.getElementById('panelAddExpenseName').value.trim();
+      const motaLoai = document.getElementById('panelAddExpenseDesc').value.trim();
+
+      if (!tenLoai) {
+        alert('Vui lòng nhập tên loại chi phí');
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('ten_loai', tenLoai);
+      formData.append('mota_loai', motaLoai);
+
+      fetch('components/api_chi_phi_loai.php', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('✅ Loại chi phí đã được tạo thành công!');
+          document.getElementById('panelAddExpenseName').value = '';
+          document.getElementById('panelAddExpenseDesc').value = '';
+          // Reload loại chi phí ở View tab
+          loadExpenseTypesForView();
+        } else {
+          alert('❌ Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Lỗi kết nối');
+      });
+    }
+
+    function loadExpenseTypesForView() {
+      // Load danh sách loại chi phí từ API
+      fetch('components/api_chi_phi_loai.php?action=list')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            // Cập nhật UI nếu cần (ví dụ: hiển thị danh sách loại chi phí)
+            console.log('Loại chi phí đã được cập nhật:', data.data);
+          }
+        })
+        .catch(err => console.error('Error:', err));
+    }
+
+    function loadPanelExpenses() {
+      const branchSelect = document.getElementById('panelBranchSelect').value;
+      const branchId = branchSelect ? branchSelect : '';
+      const currentMonth = new Date().toISOString().slice(0, 7);
+
+      if (!branchId) {
+        document.getElementById('panelExpenseTableContainer').innerHTML = '<p class="text-gray-500 py-4 px-4 text-center text-sm">Vui lòng chọn chi nhánh</p>';
+        return;
+      }
+
+      fetch(`components/api_chi_phi_gia_tri.php?action=list&id_cn=${branchId}&thang=${currentMonth}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderExpenseTable(data.data, branchId);
+          } else {
+            document.getElementById('panelExpenseTableContainer').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi tải dữ liệu</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('panelExpenseTableContainer').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi kết nối</p>';
+        });
+    }
+
+    function renderExpenseTable(expenses, branchId) {
+      if (expenses.length === 0) {
+        document.getElementById('panelExpenseTableContainer').innerHTML = '<p class="text-gray-500 py-4 px-4 text-center text-sm">Chưa có chi phí trong tháng này</p>';
+        return;
+      }
+
+      let html = '<div class="overflow-x-auto">';
+      html += '<table class="w-full text-sm">';
+      html += '<thead class="bg-gradient-to-r from-indigo-50 to-indigo-100 border-b-2 border-indigo-200">';
+      html += '<tr>';
+      html += '<th class="px-4 py-3 text-left font-semibold text-gray-700">Loại chi phí</th>';
+      html += '<th class="px-4 py-3 text-right font-semibold text-gray-700">Giá trị (VND)</th>';
+      html += '<th class="px-4 py-3 text-left font-semibold text-gray-700">Ghi chú</th>';
+      html += '<th class="px-4 py-3 text-center font-semibold text-gray-700">Hành động</th>';
+      html += '</tr>';
+      html += '</thead>';
+      html += '<tbody>';
+
+      let totalAmount = 0;
+      expenses.forEach((exp, idx) => {
+        const amount = parseInt(exp.GIA_TRI) || 0;
+        totalAmount += amount;
+        const giaVND = amount.toLocaleString('vi-VN');
+        // Alternating row colors
+        const bgClass = idx % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+        
+        html += `<tr class="${bgClass} border-t hover:bg-indigo-50 transition">
+          <td class="px-4 py-3 font-medium text-gray-900">${exp.TEN_LOAI}</td>
+          <td class="px-4 py-3 text-right font-semibold text-indigo-600">${giaVND}</td>
+          <td class="px-4 py-3 text-sm text-gray-600">${exp.MOTA_CP ? '<span class="text-xs bg-gray-100 px-2 py-1 rounded">' + exp.MOTA_CP.substring(0, 30) + (exp.MOTA_CP.length > 30 ? '...' : '') + '</span>' : '<span class="text-gray-400">-</span>'}</td>
+          <td class="px-4 py-3">
+            <div class="flex gap-2 justify-center">
+              <button onclick="editPanelExpenseNew(${exp.ID_CP}, ${exp.ID_LOAI}, ${exp.GIA_TRI}, '${(exp.MOTA_CP || '').replace(/'/g, "\\'")}' )" class="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition font-medium">
+                Sửa
+              </button>
+              <button onclick="deletePanelExpenseNew(${exp.ID_CP})" class="px-2 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200 transition font-medium">
+                Xóa
+              </button>
+            </div>
+          </td>
+        </tr>`;
+      });
+
+      html += '</tbody>';
+      html += '</table>';
+      html += '</div>';
+      
+      // Add total row below table
+      html += `<div class="bg-gradient-to-r from-indigo-50 to-indigo-100 border-t-2 border-indigo-200 px-4 py-3 flex items-center justify-between">
+        <span class="font-semibold text-gray-700">Tổng chi phí:</span>
+        <span class="text-lg font-bold text-indigo-600">${totalAmount.toLocaleString('vi-VN')} VND</span>
+      </div>`;
+
+      document.getElementById('panelExpenseTableContainer').innerHTML = html;
+    }
+
+    function copyFromPreviousMonth() {
+      const branchId = document.getElementById('panelBranchSelect').value;
+      
+      if (!branchId) {
+        alert('Vui lòng chọn chi nhánh');
+        return;
+      }
+
+      if (!confirm('Sao chép chi phí từ tháng trước? Những chi phí chưa có trong tháng này sẽ được thêm.')) {
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('id_cn', parseInt(branchId));
+      formData.append('thang_dich', new Date().toISOString().slice(0, 7));
+
+      fetch('components/controller_copy_previous_month.php', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert(`✅ Đã sao chép ${data.da_copy} chi phí từ tháng ${data.thang_nguon}`);
+          refreshPrimaryDataset();
+          loadPanelExpenses();
+        } else if (data.status === 'info') {
+          alert('ℹ️ ' + data.message);
+        } else {
+          alert('❌ Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Lỗi kết nối');
+      });
+    }
+
+    function editPanelExpenseNew(idCp, idLoai, giaTriCu, ghiChu) {
+      const newAmount = prompt('Số tiền mới:', giaTriCu);
+      if (!newAmount || newAmount <= 0) {
+        alert('Số tiền không hợp lệ');
+        return;
+      }
+
+      const branchId = parseInt(document.getElementById('panelBranchSelect').value);
+      const currentMonth = new Date().toISOString().slice(0, 7);
+
+      const formData = new FormData();
+      formData.append('id_loai', idLoai);
+      formData.append('id_cn', branchId);
+      formData.append('thang', currentMonth);
+      formData.append('gia_tri', newAmount);
+      formData.append('mota', ghiChu);
+
+      fetch('components/api_chi_phi_gia_tri.php', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('Chi phí đã được cập nhật');
+          refreshPrimaryDataset();
+          loadPanelExpenses();
+        } else {
+          alert('Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('Lỗi kết nối');
+      });
+    }
+
+    function deletePanelExpenseNew(idCp) {
+      if (!confirm('Bạn chắc chắn muốn xóa chi phí này?')) {
+        return;
+      }
+
+      fetch(`components/api_chi_phi_gia_tri.php?id=${idCp}`, {
+        method: 'DELETE'
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('Chi phí đã được xóa');
+          refreshPrimaryDataset();
+          loadPanelExpenses();
+        } else {
+          alert('Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('Lỗi kết nối');
+      });
+    }
+
+    function loadMonthsForCopy() {
+      // Deprecated - using auto-copy instead
+    }
+
+    function loadPanelCopyExpensesNew() {
+      // Deprecated - using auto-copy instead
+    }
+
+    function renderCopyTable() {
+      // Deprecated - using auto-copy instead
+    }
+
+    function confirmCopyExpense() {
+      // Deprecated - using auto-copy instead
+    }
+
+    // New function: Load and manage expense types list
+    function loadManageExpenseTypesList() {
+      fetch('components/api_chi_phi_loai.php?action=list&all=1')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderManageExpenseTypesList(data.data);
+          } else {
+            document.getElementById('panelManageExpenseList').innerHTML = '<p class="text-red-500">Lỗi tải danh sách</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('panelManageExpenseList').innerHTML = '<p class="text-red-500">Lỗi kết nối</p>';
+        });
+    }
+
+    function renderManageExpenseTypesList(types) {
+      if (types.length === 0) {
+        document.getElementById('panelManageExpenseList').innerHTML = '<p class="text-gray-500 text-center py-4">Chưa có loại chi phí nào</p>';
+        return;
+      }
+
+      let html = '<div class="grid gap-3">';
+      types.forEach(type => {
+        const isActive = type.TRANG_THAI === 'active';
+        html += `
+          <div class="flex items-start justify-between bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+            <div class="flex-1">
+              <h4 class="font-semibold text-gray-900">${type.TEN_LOAI}</h4>
+              <p class="text-sm text-gray-600 mt-1">${type.MOTA_LOAI || 'Không có mô tả'}</p>
+              <p class="text-xs text-gray-500 mt-2">
+                <span class="inline-block px-2 py-1 rounded ${isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                  ${isActive ? 'Kích hoạt' : 'Vô hiệu'}
+                </span>
+              </p>
+            </div>
+            <div class="flex gap-2 ml-4">
+              <button onclick="editPanelExpenseType(${type.ID_LOAI}, '${type.TEN_LOAI.replace(/'/g, "\\'")}', '${(type.MOTA_LOAI || '').replace(/'/g, "\\'")}')" 
+                      class="text-blue-600 hover:font-semibold text-sm">Sửa</button>
+              <button onclick="deletePanelExpenseType(${type.ID_LOAI})" 
+                      class="text-red-600 hover:font-semibold text-sm">Xóa</button>
+            </div>
+          </div>
+        `;
+      });
+      html += '</div>';
+      document.getElementById('panelManageExpenseList').innerHTML = html;
+    }
+
+    function editPanelExpenseType(idLoai, tenLoai, motaLoai) {
+      // Tạo modal form để sửa
+      const newName = prompt('Tên loại chi phí:', tenLoai);
+      if (!newName || newName.trim() === '') {
+        return;
+      }
+
+      const newDesc = prompt('Mô tả loại chi phí:', motaLoai);
+      
+      const formData = new FormData();
+      formData.append('id_loai', idLoai);
+      formData.append('ten_loai', newName.trim());
+      formData.append('mota_loai', (newDesc || '').trim());
+
+      fetch('components/api_chi_phi_loai.php', {
+        method: 'PUT',
+        body: new URLSearchParams({
+          'id_loai': idLoai,
+          'ten_loai': newName.trim(),
+          'mota_loai': (newDesc || '').trim()
+        })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('✅ Loại chi phí đã được cập nhật');
+          loadManageExpenseTypesList();
+        } else {
+          alert('❌ Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Lỗi kết nối');
+      });
+    }
+
+    function deletePanelExpenseType(idLoai) {
+      if (!confirm('⚠️ CẢNH BÁO: Xóa loại chi phí này sẽ xóa VĨnh viễn loại chi phí và TẤT CẢ dữ liệu chi phí liên quan! Không thể khôi phục sau khi xóa. Bạn chắc chắn muốn tiếp tục?')) {
+        return;
+      }
+
+      fetch(`components/api_chi_phi_loai.php?id=${idLoai}`, {
+        method: 'DELETE'
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('✅ ' + data.message);
+          loadManageExpenseTypesList();
+        } else {
+          alert('❌ Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Lỗi kết nối');
+      });
+    }
+
+    // ========== HISTORY TAB FUNCTIONS ==========
+    function loadExpenseTypesForHistory() {
+      fetch('components/api_chi_phi_loai.php?action=list')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success' && data.data) {
+            const select = document.getElementById('historyExpenseTypeSelect');
+            select.innerHTML = '<option value="">-- Chọn loại --</option>';
+            data.data.forEach(type => {
+              const option = document.createElement('option');
+              option.value = type.ID_LOAI;
+              option.textContent = type.TEN_LOAI;
+              select.appendChild(option);
+            });
+          }
+        })
+        .catch(err => console.error('Error loading expense types:', err));
+    }
+
+    function loadExpenseHistory() {
+      const idLoai = document.getElementById('historyExpenseTypeSelect').value;
+      const sortBy = document.getElementById('historySortSelect').value || 'thang_desc';
+
+      if (!idLoai) {
+        document.getElementById('panelHistoryTableContainer').innerHTML = '<p class="text-gray-500 py-4 px-4 text-center">Vui lòng chọn loại chi phí</p>';
+        return;
+      }
+
+      fetch(`components/api_chi_phi_gia_tri.php?action=history&id_loai=${idLoai}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderHistoryTable(data.data, data.ten_loai, sortBy);
+          } else {
+            document.getElementById('panelHistoryTableContainer').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi tải dữ liệu</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('panelHistoryTableContainer').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi kết nối</p>';
+        });
+    }
+
+    function renderHistoryTable(history, tenLoai, sortBy) {
+      if (!history || history.length === 0) {
+        document.getElementById('panelHistoryTableContainer').innerHTML = '<p class="text-gray-500 py-4 px-4 text-center">Chưa có dữ liệu lịch sử</p>';
+        return;
+      }
+
+      // Sort data
+      const sorted = [...history];
+      if (sortBy === 'thang_asc') {
+        sorted.sort((a, b) => a.THANG.localeCompare(b.THANG));
+      } else if (sortBy === 'branch') {
+        sorted.sort((a, b) => (a.TEN_CN || '').localeCompare(b.TEN_CN || ''));
+      } else {
+        sorted.sort((a, b) => b.THANG.localeCompare(a.THANG));
+      }
+
+      let html = `<div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr>
+              <th class="px-4 py-3 text-left font-semibold">Tháng</th>
+              <th class="px-4 py-3 text-left font-semibold">Chi nhánh</th>
+              <th class="px-4 py-3 text-right font-semibold">Giá trị (VND)</th>
+              <th class="px-4 py-3 text-left font-semibold">Ngày ghi nhận</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+      let currentMonth = '';
+      let monthTotal = 0;
+
+      sorted.forEach((item, idx) => {
+        if (item.THANG !== currentMonth && currentMonth !== '') {
+          html += `<tr class="bg-indigo-50 border-t">
+            <td colspan="2" class="px-4 py-3 font-semibold text-right">Tổng tháng ${currentMonth}:</td>
+            <td class="px-4 py-3 text-right font-bold text-indigo-700">${monthTotal.toLocaleString('vi-VN')}</td>
+            <td></td>
+          </tr>`;
+        }
+
+        if (item.THANG !== currentMonth) {
+          currentMonth = item.THANG;
+          monthTotal = 0;
+        }
+
+        monthTotal += parseInt(item.GIA_TRI || 0);
+        const giaVND = parseInt(item.GIA_TRI).toLocaleString('vi-VN');
+        const ngayGhi = item.NGAY_GIO ? new Date(item.NGAY_GIO).toLocaleDateString('vi-VN') : '-';
+
+        html += `<tr class="border-t hover:bg-gray-50">
+          <td class="px-4 py-3">${item.THANG}</td>
+          <td class="px-4 py-3">${item.TEN_CN || 'N/A'}</td>
+          <td class="px-4 py-3 text-right">${giaVND}</td>
+          <td class="px-4 py-3 text-sm text-gray-600">${ngayGhi}</td>
+        </tr>`;
+      });
+
+      if (currentMonth) {
+        html += `<tr class="bg-indigo-50 border-t">
+          <td colspan="2" class="px-4 py-3 font-semibold text-right">Tổng tháng ${currentMonth}:</td>
+          <td class="px-4 py-3 text-right font-bold text-indigo-700">${monthTotal.toLocaleString('vi-VN')}</td>
+          <td></td>
+        </tr>`;
+      }
+
+      // Grand total
+      const grandTotal = sorted.reduce((sum, item) => sum + parseInt(item.GIA_TRI || 0), 0);
+      html += `<tr class="bg-indigo-100 border-t font-bold">
+        <td colspan="2" class="px-4 py-3 text-right">TỔNG CỘNG ${tenLoai}:</td>
+        <td class="px-4 py-3 text-right text-indigo-900">${grandTotal.toLocaleString('vi-VN')}</td>
+        <td></td>
+      </tr>`;
+
+      html += '</tbody></table></div>';
+      document.getElementById('panelHistoryTableContainer').innerHTML = html;
+    }
+
+    // ========== SUMMARY TAB FUNCTIONS ==========
+    function loadExpenseSummary() {
+      const thang = document.getElementById('summarySummaryMonthSelect').value;
+
+      if (!thang) {
+        document.getElementById('panelSummaryContainer').innerHTML = '<p class="text-gray-500">Vui lòng chọn tháng</p>';
+        return;
+      }
+
+      fetch(`components/api_chi_phi_gia_tri.php?action=summary&thang=${thang}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderSummaryCards(data.data, data.tong_chung, thang);
+          } else {
+            document.getElementById('panelSummaryContainer').innerHTML = '<p class="text-red-500">Lỗi tải dữ liệu</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('panelSummaryContainer').innerHTML = '<p class="text-red-500">Lỗi kết nối</p>';
+        });
+    }
+
+    function renderSummaryCards(summary, tong_chung, thang) {
+      if (!summary || summary.length === 0) {
+        document.getElementById('panelSummaryContainer').innerHTML = '<p class="text-gray-500">Chưa có chi phí trong tháng này</p>';
+        return;
+      }
+
+      let html = `<div class="grid grid-cols-1 md:grid-cols-2 gap-4">`;
+
+      summary.forEach(item => {
+        const giaVND = parseInt(item.TONG_GIA_TRI).toLocaleString('vi-VN');
+        const phanTram = ((parseInt(item.TONG_GIA_TRI) / parseInt(tong_chung)) * 100).toFixed(1);
+
+        html += `<div class="border border-indigo-200 rounded-lg p-4 bg-indigo-50 hover:shadow-md transition">
+          <div class="flex justify-between items-start mb-2">
+            <h3 class="font-semibold text-gray-900">${item.TEN_LOAI}</h3>
+            <span class="bg-indigo-200 text-indigo-900 text-xs font-bold px-2 py-1 rounded">${phanTram}%</span>
+          </div>
+          <p class="text-2xl font-bold text-indigo-700 mb-1">${giaVND}</p>
+          <p class="text-xs text-gray-600">Từ ${item.SO_CHI_NHANH} chi nhánh</p>
+        </div>`;
+      });
+
+      html += '</div>';
+
+      // Add grand total
+      html += `<div class="mt-6 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg p-6 shadow-lg">
+        <p class="text-sm font-medium opacity-90">Tổng chi phí tháng ${thang}</p>
+        <p class="text-3xl font-bold">${parseInt(tong_chung).toLocaleString('vi-VN')} VND</p>
+        <p class="text-sm opacity-90 mt-2">Tổng ${summary.length} loại chi phí</p>
+      </div>`;
+
+      document.getElementById('panelSummaryContainer').innerHTML = html;
+    }
+
+    // ===== New functions for unified Stats Tab (History + Summary combined) =====
+    function loadExpenseTypesForStats() {
+      fetch('components/api_chi_phi_loai.php?action=list&all=1')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            const select = document.getElementById('statsExpenseTypeSelect');
+            select.innerHTML = '<option value="">-- Tất cả loại --</option>';
+            data.data.forEach(type => {
+              const option = document.createElement('option');
+              option.value = type.ID_LOAI;
+              option.textContent = type.TEN_LOAI;
+              select.appendChild(option);
+            });
+          }
+        })
+        .catch(err => console.error('Error:', err));
+    }
+
+    function loadStatsData() {
+      const idLoai = document.getElementById('statsExpenseTypeSelect').value || '';
+      const thang = document.getElementById('statsMonthSelect').value || new Date().toISOString().slice(0, 7);
+      
+      if (!thang) {
+        document.getElementById('statsContentArea').innerHTML = '<p class="text-gray-500 py-4 px-4">Vui lòng chọn tháng</p>';
+        return;
+      }
+
+      // Default to history view
+      showStatsHistoryView();
+    }
+
+    function showStatsHistoryView() {
+      const idLoai = document.getElementById('statsExpenseTypeSelect').value;
+      const thang = document.getElementById('statsMonthSelect').value;
+      
+      let url = `components/api_chi_phi_gia_tri.php?action=details&thang=${thang}`;
+      if (idLoai) {
+        url += `&id_loai=${idLoai}`;
+      }
+
+      fetch(url)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderStatsHistoryTable(data.data, thang);
+          } else {
+            document.getElementById('statsContentArea').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi tải dữ liệu</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('statsContentArea').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi kết nối</p>';
+        });
+    }
+
+    function showStatsSummaryView() {
+      const thang = document.getElementById('statsMonthSelect').value;
+      
+      fetch(`components/api_chi_phi_gia_tri.php?action=summary&thang=${thang}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'success') {
+            renderStatsSummaryCards(data.data, thang);
+          } else {
+            document.getElementById('statsContentArea').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi tải dữ liệu</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Error:', err);
+          document.getElementById('statsContentArea').innerHTML = '<p class="text-red-500 py-4 px-4">Lỗi kết nối</p>';
+        });
+    }
+
+    function renderStatsHistoryTable(expenses, thang) {
+      if (!expenses || expenses.length === 0) {
+        document.getElementById('statsContentArea').innerHTML = '<p class="text-gray-500 py-4 px-4 text-center">Chưa có dữ liệu tháng này</p>';
+        return;
+      }
+
+      let html = '<div class="overflow-x-auto"><table class="w-full text-sm"><thead class="bg-gray-100"><tr>';
+      html += '<th class="px-3 py-2 text-left font-semibold">Chi nhánh</th>';
+      html += '<th class="px-3 py-2 text-left font-semibold">Loại chi phí</th>';
+      html += '<th class="px-3 py-2 text-right font-semibold">Giá trị</th>';
+      html += '</tr></thead><tbody>';
+
+      let totalAmount = 0;
+      expenses.forEach((exp, idx) => {
+        const amount = parseInt(exp.GIA_TRI) || 0;
+        totalAmount += amount;
+        const bgClass = idx % 2 === 0 ? 'bg-white' : 'bg-gray-50';
+        html += `<tr class="${bgClass} border-t hover:bg-indigo-50 transition">
+          <td class="px-3 py-2 text-gray-700">${exp.TEN_CN || 'N/A'}</td>
+          <td class="px-3 py-2 text-gray-700">${exp.TEN_LOAI || 'N/A'}</td>
+          <td class="px-3 py-2 text-right font-medium text-gray-900">${amount.toLocaleString('vi-VN')}</td>
+        </tr>`;
+      });
+
+      html += '</tbody></table></div>';
+      html += `<div class="bg-indigo-50 px-3 py-3 text-sm font-semibold text-gray-900 border-t">
+        Tổng: <span class="text-indigo-600 text-lg">${totalAmount.toLocaleString('vi-VN')} VND</span>
+      </div>`;
+
+      document.getElementById('statsContentArea').innerHTML = html;
+    }
+
+    function renderStatsSummaryCards(summary, thang) {
+      if (!summary || summary.length === 0) {
+        document.getElementById('statsContentArea').innerHTML = '<p class="text-gray-500 py-4 px-4">Chưa có dữ liệu</p>';
+        return;
+      }
+
+      let html = '<div class="space-y-3">';
+      let tong_chung = 0;
+
+      summary.forEach(item => {
+        const amount = parseInt(item.TONG_GIA_TRI) || 0;
+        const soCN = parseInt(item.SO_CHI_NHANH) || 0;
+        tong_chung += amount;
+        
+        html += `<div class="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="font-semibold text-gray-900">${item.TEN_LOAI || 'N/A'}</p>
+              <p class="text-xs text-gray-500">${soCN} chi nhánh</p>
+            </div>
+            <p class="text-xl font-bold text-indigo-600">${amount.toLocaleString('vi-VN')} VND</p>
+          </div>
+        </div>`;
+      });
+
+      html += '</div>';
+      html += `<div class="mt-6 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-lg p-6 shadow-lg">
+        <p class="text-sm font-medium opacity-90">Tổng chi phí tháng ${thang}</p>
+        <p class="text-3xl font-bold">${parseInt(tong_chung).toLocaleString('vi-VN')} VND</p>
+      </div>`;
+
+      document.getElementById('statsContentArea').innerHTML = html;
+    }
+
+    // ===== Modal Dialog Functions for Add/Edit Expense Type =====
+    function showAddExpenseTypeModal() {
+      document.getElementById('modalExpenseTypeName').value = '';
+      document.getElementById('modalExpenseTypeDesc').value = '';
+      document.getElementById('addExpenseTypeModal').style.display = 'flex';
+      document.getElementById('modalExpenseTypeName').focus();
+    }
+
+    function closeAddExpenseTypeModal() {
+      document.getElementById('addExpenseTypeModal').style.display = 'none';
+    }
+
+    function saveExpenseTypeFromModal() {
+      const tenLoai = document.getElementById('modalExpenseTypeName').value.trim();
+      const motaLoai = document.getElementById('modalExpenseTypeDesc').value.trim();
+
+      if (!tenLoai) {
+        alert('❌ Vui lòng nhập tên loại chi phí');
+        document.getElementById('modalExpenseTypeName').focus();
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append('ten_loai', tenLoai);
+      formData.append('mota_loai', motaLoai);
+
+      fetch('components/api_chi_phi_loai.php', {
+        method: 'POST',
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.status === 'success') {
+          alert('✅ ' + data.message);
+          closeAddExpenseTypeModal();
+          loadManageExpenseTypesList();
+        } else {
+          alert('❌ Lỗi: ' + data.message);
+        }
+      })
+      .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Lỗi kết nối');
+      });
+    }
+
+    // Close modal when clicking outside
+    document.addEventListener('DOMContentLoaded', () => {
+      const modal = document.getElementById('addExpenseTypeModal');
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          closeAddExpenseTypeModal();
+        }
+      });
+    });
   </script>
 </body>
 

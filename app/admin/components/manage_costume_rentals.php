@@ -25,6 +25,21 @@ if (session_status() === PHP_SESSION_NONE) {
 
 date_default_timezone_set('Asia/Ho_Chi_Minh');
 
+// Auto-mark overdue rentals as late to keep the list up to date
+function tp_auto_mark_overdue(mysqli $conn): void
+{
+    $now = date('Y-m-d H:i:s');
+    $sql = "UPDATE don_thue_trang_phuc\n            SET TRANG_THAI = 'tre_hen',\n                TRE_HEN_NGAY = GREATEST(1, CEIL(TIMESTAMPDIFF(HOUR, NGAY_TRA_DK, ?) / 24)),\n                PHI_TRE_HEN = GREATEST(0, ROUND(TONG_TIEN_DU_KIEN * 0.02 * CEIL(TIMESTAMPDIFF(HOUR, NGAY_TRA_DK, ?) / 24))),\n                UPDATED_AT = NOW()\n            WHERE TRANG_THAI IN ('cho_duyet','da_duyet','dang_thue')\n              AND NGAY_TRA_DK IS NOT NULL\n              AND NGAY_TRA_DK < ?\n              AND (NGAY_TRA_THAT IS NULL AND NGAY_TRA_TT IS NULL)";
+    $stmt = $conn->prepare($sql);
+    if ($stmt) {
+        $stmt->bind_param('sss', $now, $now, $now);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
+tp_auto_mark_overdue($conn);
+
 $STATUS_META = [
     'cho_duyet' => [
         'label' => 'Chờ duyệt',
@@ -102,14 +117,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
         tp_rental_redirect();
     }
 
-    $orderStmt = $conn->prepare('SELECT ID_CN, TRANG_THAI, GHI_CHU, TONG_TIEN_DU_KIEN, TIEN_COC, ID_TK FROM don_thue_trang_phuc WHERE ID_TTP = ? LIMIT 1');
+    $orderStmt = $conn->prepare('SELECT ID_CN, TRANG_THAI, GHI_CHU, TONG_TIEN_DU_KIEN, TIEN_COC, ID_TK, NGAY_TRA_DK, COALESCE(NGAY_TRA_THAT, NGAY_TRA_TT) AS NGAY_TRA_THAT_CUR, TRE_HEN_NGAY, PHI_TRE_HEN FROM don_thue_trang_phuc WHERE ID_TTP = ? LIMIT 1');
     if (!$orderStmt) {
         $_SESSION['costume_rental_flash'] = ['type' => 'error', 'message' => 'Không thể tải thông tin đơn thuê.'];
         tp_rental_redirect();
     }
     $orderStmt->bind_param('i', $orderId);
     $orderStmt->execute();
-    $orderStmt->bind_result($orderBranch, $currentStatus, $currentNote, $expectedTotal, $depositAmount, $accountId);
+    $orderStmt->bind_result($orderBranch, $currentStatus, $currentNote, $expectedTotal, $depositAmount, $accountId, $expectedReturnDate, $currentReturnActual, $currentLateDays, $currentLateFee);
     $found = $orderStmt->fetch();
     $orderStmt->close();
 
@@ -131,6 +146,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
     $allowedTargets = $TRANSITIONS[$currentStatus] ?? [];
     if (!$isAdmin && !in_array($newStatus, $allowedTargets, true)) {
         $_SESSION['costume_rental_flash'] = ['type' => 'error', 'message' => 'Trạng thái mới không hợp lệ cho đơn hiện tại.'];
+        tp_rental_redirect();
+    }
+
+    $expectedReturnTs = $expectedReturnDate ? strtotime($expectedReturnDate) : false;
+    $isExpiredWindow = $expectedReturnTs && $expectedReturnTs < time() && !in_array($currentStatus, ['da_tra', 'huy'], true);
+    if ($isExpiredWindow && $newStatus === 'da_duyet') {
+        $_SESSION['costume_rental_flash'] = ['type' => 'error', 'message' => 'Đơn thuê đã quá hạn dự kiến, không thể duyệt thêm. Vui lòng cập nhật lịch hoặc tạo yêu cầu mới.'];
         tp_rental_redirect();
     }
 
@@ -158,14 +180,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
         $noteToSave = $currentNote ? ($currentNote . "\n" . $entry) : $entry;
     }
 
+    $lateDays = 0;
+    $lateFeeCalc = 0;
+    if ($requiresReturn && $returnedAt !== null && $expectedReturnDate) {
+        $tsActual = strtotime($returnedAt);
+        $tsExpected = strtotime($expectedReturnDate);
+        if ($tsActual !== false && $tsExpected !== false && $tsActual > $tsExpected) {
+            $lateDays = (int) ceil(($tsActual - $tsExpected) / 86400);
+            $lateFeeCalc = (int) round($expectedTotal * 0.02 * $lateDays);
+        }
+    }
+
     $fields = ['TRANG_THAI = ?', 'UPDATED_AT = NOW()'];
     $params = [$newStatus];
     $types  = 's';
 
     if ($returnedAt !== null) {
+        $fields[] = 'NGAY_TRA_THAT = ?';
+        $params[] = $returnedAt;
+        $types   .= 's';
         $fields[] = 'NGAY_TRA_TT = ?';
         $params[] = $returnedAt;
         $types   .= 's';
+    }
+
+    if ($requiresReturn) {
+        $fields[] = 'TRE_HEN_NGAY = ?';
+        $params[] = $lateDays;
+        $types   .= 'i';
+        $fields[] = 'PHI_TRE_HEN = ?';
+        $params[] = $lateFeeCalc;
+        $types   .= 'i';
     }
 
     if ($actualTotal !== null) {
@@ -258,6 +303,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
             } else {
                 $invoiceIdInitial = $existingInitialId; // reuse existing
             }
+            // Option A: Ghi doanh thu vào tai_chinh ngay khi tạo hóa đơn (chờ thanh toán)
+            if ($invoiceIdInitial) {
+                $revCheck = $conn->prepare("SELECT 1 FROM tai_chinh WHERE ID_HD = ? AND LOAI_GIAO_DICH = 'doanh thu' LIMIT 1");
+                if ($revCheck) {
+                    $revCheck->bind_param('i', $invoiceIdInitial);
+                    $revCheck->execute();
+                    $revCheck->store_result();
+                    $exists = $revCheck->num_rows > 0;
+                    $revCheck->close();
+                    if (!$exists) {
+                        $insRev = $conn->prepare("INSERT INTO tai_chinh (ID_HD, NGAY_GIAO_DICH, SO_TIEN, LOAI_GIAO_DICH, LOAI_CHI_TIET, ID_CN, TRANG_THAI) VALUES (?, NOW(), ?, 'doanh thu', 'Thuê trang phục', ?, 'chờ thanh toán')");
+                        if ($insRev) {
+                            $insRev->bind_param('iii', $invoiceIdInitial, $expectedTotal, $orderBranch);
+                            if (!$insRev->execute()) { error_log('Insert revenue (pending) failed: '.$insRev->error); }
+                            $insRev->close();
+                        }
+                    }
+                }
+            }
             $infoStmt = $conn->prepare('SELECT tk.EMAIL, tk.HO_TEN FROM tai_khoan tk WHERE tk.ID_TK = ? LIMIT 1');
             $email = $hoTen = '';
             if ($infoStmt) {
@@ -286,7 +350,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
                     $rowsHtml .= '<tr><td style="padding:6px 8px;border:1px solid #ddd">'.htmlspecialchars($it['TEN']).'</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:center">x'.(int)$it['SO_LUONG'].'</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:right">'.number_format($lineTotal,0,',','.').' ₫</td></tr>';
                 }
                 if ((int)$depositAmount > 0) {
-                    $rowsHtml .= '<tr><td style="padding:6px 8px;border:1px solid #ddd">Tiền cọc đã nhận</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:center">-</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:right">'.number_format((int)$depositAmount,0,',','.').' ₫</td></tr>';
+                    $rowsHtml .= '<tr><td style="padding:6px 8px;border:1px solid #ddd">Tiền cọc</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:center">-</td><td style="padding:6px 8px;border:1px solid #ddd;text-align:right">'.number_format((int)$depositAmount,0,',','.').' ₫</td></tr>';
                 }
                 $remaining = (int)$expectedTotal - (int)$depositAmount;
                 if ($remaining > 0) {
@@ -359,18 +423,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['rental_action'])) {
                     $createFallback->close();
                     $previousTotal = $baseTotal;
                 }
+                // Also record pending revenue when creating fallback invoice
+                if ($invoiceIdFinal) {
+                    $revCheck2 = $conn->prepare("SELECT 1 FROM tai_chinh WHERE ID_HD = ? AND LOAI_GIAO_DICH = 'doanh thu' LIMIT 1");
+                    if ($revCheck2) {
+                        $revCheck2->bind_param('i', $invoiceIdFinal);
+                        $revCheck2->execute();
+                        $revCheck2->store_result();
+                        $exists2 = $revCheck2->num_rows > 0;
+                        $revCheck2->close();
+                        if (!$exists2) {
+                            $insRev2 = $conn->prepare("INSERT INTO tai_chinh (ID_HD, NGAY_GIAO_DICH, SO_TIEN, LOAI_GIAO_DICH, LOAI_CHI_TIET, ID_CN, TRANG_THAI) VALUES (?, NOW(), ?, 'doanh thu', 'Thuê trang phục', ?, 'chờ thanh toán')");
+                            if ($insRev2) {
+                                $insRev2->bind_param('iii', $invoiceIdFinal, $baseTotal, $orderBranch);
+                                if (!$insRev2->execute()) { error_log('Insert revenue (pending/fallback) failed: '.$insRev2->error); }
+                                $insRev2->close();
+                            }
+                        }
+                    }
+                }
             }
             if ($invoiceIdFinal) {
-                // Compute late fee
-                $lateFee = 0; $returnActual = $returnedAt ?? date('Y-m-d H:i:s'); $tsActual = strtotime($returnActual);
-                $expectedReturn = null; $expectedRow = $conn->prepare('SELECT NGAY_TRA_DK FROM don_thue_trang_phuc WHERE ID_TTP = ?');
-                if ($expectedRow) { $expectedRow->bind_param('i',$orderId); $expectedRow->execute(); $expectedRow->bind_result($expectedReturn); $expectedRow->fetch(); $expectedRow->close(); }
-                if ($expectedReturn) {
-                    $tsExpected = strtotime($expectedReturn);
-                    if ($tsActual > $tsExpected) {
-                        $hoursLate = (int)ceil(($tsActual - $tsExpected)/3600);
-                        $daysLate = (int)ceil($hoursLate/24);
-                        $lateFee = (int)round($expectedTotal * 0.02 * $daysLate);
+                // Use computed late metrics (fallback re-check if needed)
+                $returnActual = $returnedAt ?? ($currentReturnActual ?? date('Y-m-d H:i:s'));
+                $lateFee = $lateFeeCalc;
+                $daysLate = $lateDays;
+                if ($lateFee === 0 && $expectedReturnDate && $returnActual) {
+                    $tsExpected = strtotime($expectedReturnDate);
+                    $tsActual = strtotime($returnActual);
+                    if ($tsExpected !== false && $tsActual !== false && $tsActual > $tsExpected) {
+                        $hoursLate = (int) ceil(($tsActual - $tsExpected) / 3600);
+                        $daysLate = (int) ceil($hoursLate / 24);
+                        $lateFee = (int) round($expectedTotal * 0.02 * $daysLate);
                     }
                 }
                 // Determine final total before deposit adjustment
@@ -460,7 +544,7 @@ if ($branchResult) {
 }
 
 $searchTerm   = trim($_GET['search'] ?? '');
-$statusFilter = $_GET['status'] ?? '';
+$statusFilter = array_key_exists('status', $_GET) ? ($_GET['status'] ?? '') : 'cho_duyet';
 $branchFilter = isset($_GET['branch']) ? (int) $_GET['branch'] : 0;
 $fromDate     = trim($_GET['from_date'] ?? '');
 $toDate       = trim($_GET['to_date'] ?? '');
@@ -469,19 +553,14 @@ if (!$isAdmin && $branchScopeId > 0) {
     $branchFilter = $branchScopeId;
 }
 
-$dataConditions = [];
+$dataConditionsBase = [];
 if ($branchFilter > 0) {
-    $dataConditions[] = 'ttp.ID_CN = ' . (int) $branchFilter;
-}
-if ($statusFilter !== '' && isset($STATUS_META[$statusFilter])) {
-    $dataConditions[] = "ttp.TRANG_THAI = '" . $conn->real_escape_string($statusFilter) . "'";
-} else {
-    $statusFilter = '';
+    $dataConditionsBase[] = 'ttp.ID_CN = ' . (int) $branchFilter;
 }
 if ($fromDate !== '') {
     $dt = DateTime::createFromFormat('Y-m-d', $fromDate);
     if ($dt) {
-        $dataConditions[] = "DATE(ttp.NGAY_NHAN) >= '" . $dt->format('Y-m-d') . "'";
+        $dataConditionsBase[] = "DATE(ttp.NGAY_NHAN) >= '" . $dt->format('Y-m-d') . "'";
         $fromDate = $dt->format('Y-m-d');
     } else {
         $fromDate = '';
@@ -490,7 +569,7 @@ if ($fromDate !== '') {
 if ($toDate !== '') {
     $dt = DateTime::createFromFormat('Y-m-d', $toDate);
     if ($dt) {
-        $dataConditions[] = "DATE(ttp.NGAY_NHAN) <= '" . $dt->format('Y-m-d') . "'";
+        $dataConditionsBase[] = "DATE(ttp.NGAY_NHAN) <= '" . $dt->format('Y-m-d') . "'";
         $toDate = $dt->format('Y-m-d');
     } else {
         $toDate = '';
@@ -499,10 +578,18 @@ if ($toDate !== '') {
 if ($searchTerm !== '') {
     $escaped = $conn->real_escape_string($searchTerm);
     $like = "'%" . $escaped . "%'";
-    $dataConditions[] = "(tk.HO_TEN LIKE $like OR tk.EMAIL LIKE $like OR tk.SDT LIKE $like OR tp.TEN LIKE $like OR CAST(ttp.ID_TTP AS CHAR) = '" . $conn->real_escape_string($searchTerm) . "')";
+    $dataConditionsBase[] = "(tk.HO_TEN LIKE $like OR tk.EMAIL LIKE $like OR tk.SDT LIKE $like OR tp.TEN LIKE $like OR CAST(ttp.ID_TTP AS CHAR) = '" . $conn->real_escape_string($searchTerm) . "')";
 }
 
-$whereSql = $dataConditions ? 'WHERE ' . implode(' AND ', $dataConditions) : '';
+$dataConditionsFiltered = $dataConditionsBase;
+if ($statusFilter !== '' && isset($STATUS_META[$statusFilter])) {
+    $dataConditionsFiltered[] = "ttp.TRANG_THAI = '" . $conn->real_escape_string($statusFilter) . "'";
+} else {
+    $statusFilter = '';
+}
+
+$whereSql       = $dataConditionsFiltered ? 'WHERE ' . implode(' AND ', $dataConditionsFiltered) : '';
+$whereSqlNoStat = $dataConditionsBase ? 'WHERE ' . implode(' AND ', $dataConditionsBase) : '';
 
 $baseFrom = ' FROM don_thue_trang_phuc ttp '
     . 'JOIN tai_khoan tk ON tk.ID_TK = ttp.ID_TK '
@@ -514,7 +601,7 @@ $countSql = 'SELECT COUNT(DISTINCT ttp.ID_TTP) AS total' . $baseFrom . ' ' . $wh
 $countResult = $conn->query($countSql);
 $totalRows = $countResult ? (int) $countResult->fetch_assoc()['total'] : 0;
 
-$statusSql = 'SELECT ttp.TRANG_THAI, COUNT(DISTINCT ttp.ID_TTP) AS total' . $baseFrom . ' ' . $whereSql . ' GROUP BY ttp.TRANG_THAI';
+$statusSql = 'SELECT ttp.TRANG_THAI, COUNT(DISTINCT ttp.ID_TTP) AS total' . $baseFrom . ' ' . $whereSqlNoStat . ' GROUP BY ttp.TRANG_THAI';
 $statusResult = $conn->query($statusSql);
 $statusCounts = [];
 if ($statusResult) {
@@ -531,7 +618,7 @@ if ($page > $totalPages) {
 }
 $offset = ($page - 1) * $perPage;
 
-$listSql = 'SELECT ttp.ID_TTP, ttp.NGAY_DAT, ttp.NGAY_NHAN, ttp.NGAY_TRA_DK, ttp.NGAY_TRA_TT, ttp.TRANG_THAI,'
+$listSql = 'SELECT ttp.ID_TTP, ttp.NGAY_DAT, ttp.NGAY_NHAN, ttp.NGAY_TRA_DK, COALESCE(ttp.NGAY_TRA_THAT, ttp.NGAY_TRA_TT) AS NGAY_TRA_THAT, ttp.TRE_HEN_NGAY, ttp.PHI_TRE_HEN, ttp.TRANG_THAI,'
     . ' ttp.TIEN_COC, ttp.TONG_TIEN_DU_KIEN, ttp.TONG_TIEN_THUC_TE, ttp.GHI_CHU,'
     . ' tk.HO_TEN, tk.EMAIL, tk.SDT, cn.TEN_CN,'
     . " GROUP_CONCAT(DISTINCT CONCAT(tp.TEN, ' (x', ct.SO_LUONG, ')') ORDER BY tp.TEN SEPARATOR ', ') AS ITEM_LABELS"
@@ -607,11 +694,11 @@ function tp_format_currency(?int $value): string
         <?php endforeach; ?>
     </div>
 
-    <form method="GET" class="bg-gray-50 border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-sm">
+    <form method="GET" data-action="filter_rentals" class="bg-gray-50 border border-gray-200 rounded-2xl p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 text-sm">
         <input type="hidden" name="page" value="costume_rentals">
         <div class="lg:col-span-2">
             <label class="block text-gray-600 font-medium mb-1">Tìm kiếm</label>
-            <input id="rental-search" type="text" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>" placeholder="Tên khách, email, SĐT hoặc mã đơn" class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" autocomplete="off">
+            <input id="rental-search" type="text" name="search" value="<?php echo htmlspecialchars($searchTerm); ?>" data-action="search" placeholder="Tên khách, email, SĐT hoặc mã đơn" class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" autocomplete="off">
         </div>
         <div>
             <label class="block text-gray-600 font-medium mb-1">Trạng thái</label>
@@ -657,9 +744,9 @@ function tp_format_currency(?int $value): string
                     <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Khách hàng</th>
                     <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Chi nhánh</th>
                     <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Thời gian</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Chi phí</th>
-                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Trạng thái</th>
-                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Thao tác</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Chi phí</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Trạng thái</th>
+                    <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">Thao tác</th>
                 </tr>
             </thead>
             <tbody class="bg-white divide-y divide-gray-100">
@@ -668,73 +755,50 @@ function tp_format_currency(?int $value): string
                         <td colspan="7" class="px-4 py-6 text-center text-gray-500">Không tìm thấy đơn thuê nào khớp bộ lọc.</td>
                     </tr>
                 <?php else: ?>
-                    <?php foreach ($orders as $order): 
+                    <?php $nowTs = time(); foreach ($orders as $order): 
                         $statusMeta = $STATUS_META[$order['TRANG_THAI']] ?? ['label' => $order['TRANG_THAI'], 'badge' => 'bg-gray-100 text-gray-600'];
                         $orderId = (int) $order['ID_TTP'];
                         $detailId = 'order-detail-' . $orderId;
                         $expectedReturnTs = strtotime($order['NGAY_TRA_DK']);
                         $receiveTs = strtotime($order['NGAY_NHAN']);
                         $durationDays = max(1, (int) ceil(($expectedReturnTs - $receiveTs) / 86400));
-                        $isOverdue = ($order['TRANG_THAI'] === 'dang_thue' && $expectedReturnTs < time());
-                        $overdueHours = $isOverdue ? max(1, (int) floor((time() - $expectedReturnTs) / 3600)) : 0;
-                        $rowExtraClass = $isOverdue ? 'bg-rose-50/60' : '';
+                        $hasExpiredWindow = ($expectedReturnTs && $expectedReturnTs < $nowTs && !in_array($order['TRANG_THAI'], ['da_tra', 'huy'], true));
+                        $overdueHours = $hasExpiredWindow ? max(1, (int) floor(($nowTs - $expectedReturnTs) / 3600)) : 0;
+                        $rowExtraClass = $hasExpiredWindow ? 'bg-rose-50/60' : '';
+                        $approvalLocked = $hasExpiredWindow && in_array($order['TRANG_THAI'], ['cho_duyet', 'da_duyet'], true);
                     ?>
-                        <tr class="hover:bg-gray-50 transition <?php echo $rowExtraClass; ?>"<?php if($isOverdue){ echo ' aria-label="Đơn quá hạn"'; } ?>>
-                            <td class="px-4 py-3 align-top">
+                        <tr class="hover:bg-gray-50 transition <?php echo $rowExtraClass; ?>"<?php if($hasExpiredWindow){ echo ' aria-label="Đơn quá hạn"'; } ?>>
+                            <td class="px-4 py-2.5 align-top">
                                 <div class="font-semibold text-gray-800">#<?php echo $orderId; ?></div>
                                 <div class="text-xs text-gray-500">Đặt: <?php echo date('d/m/Y H:i', strtotime($order['NGAY_DAT'])); ?></div>
                                 <button type="button" data-toggle-detail="<?php echo $detailId; ?>" class="text-xs text-indigo-600 mt-1 hover:underline">Xem chi tiết</button>
                             </td>
-                            <td class="px-4 py-3 align-top">
+                            <td class="px-4 py-2.5 align-top">
                                 <div class="text-sm font-medium text-gray-800"><?php echo htmlspecialchars($order['HO_TEN']); ?></div>
-                                <div class="text-xs text-gray-500 flex flex-col">
-                                    <span><?php echo htmlspecialchars($order['EMAIL']); ?></span>
-                                    <span><?php echo htmlspecialchars($order['SDT']); ?></span>
-                                </div>
+                                <div class="text-xs text-gray-500"><?php echo htmlspecialchars($order['EMAIL']); ?></div>
                             </td>
-                            <td class="px-4 py-3 align-top">
+                            <td class="px-4 py-2.5 align-top">
                                 <div class="text-sm text-gray-800"><?php echo htmlspecialchars($order['TEN_CN']); ?></div>
-                                <div class="text-xs text-gray-500"><?php echo htmlspecialchars($order['ITEM_LABELS'] ?? '—'); ?></div>
+                                <div class="text-xs text-gray-500 line-clamp-1" title="<?php echo htmlspecialchars($order['ITEM_LABELS'] ?? ''); ?>"><?php echo htmlspecialchars($order['ITEM_LABELS'] ?? '—'); ?></div>
                             </td>
-                            <td class="px-4 py-3 align-top text-sm text-gray-700">
-                                <div>
-                                    <span data-tip="Thời điểm khách nhận trang phục." class="inline-flex items-center gap-1">Nhận <button type="button" class="text-xs text-gray-400 hover:text-indigo-500" aria-label="Giải thích">?</button>:</span>
-                                    <span class="font-semibold text-gray-900"><?php echo date('d/m H:i', strtotime($order['NGAY_NHAN'])); ?></span>
-                                </div>
-                                <div>
-                                    <span data-tip="Mốc trả theo kế hoạch ban đầu, dùng để phát hiện quá hạn." class="inline-flex items-center gap-1">Trả dự kiến <button type="button" class="text-xs text-gray-400 hover:text-indigo-500" aria-label="Giải thích">?</button>:</span>
-                                    <span class="font-semibold text-gray-900"><?php echo date('d/m H:i', $expectedReturnTs); ?></span>
-                                </div>
-                                <div class="text-xs text-gray-500">Thời lượng: <?php echo $durationDays; ?> ngày</div>
-                                <?php if ($isOverdue): ?>
-                                    <div class="text-xs font-semibold text-rose-600">Quá hạn: <?php echo $overdueHours; ?> giờ</div>
-                                <?php endif; ?>
-                                <?php if ($order['NGAY_TRA_TT']): ?>
-                                    <div class="text-xs text-gray-500"><span data-tip="Thời điểm thực tế nhân viên ghi nhận đã trả">Đã trả<button type="button" class="ml-1 text-[10px] text-gray-400 hover:text-indigo-500" aria-label="Giải thích">?</button>:</span> <?php echo date('d/m H:i', strtotime($order['NGAY_TRA_TT'])); ?></div>
+                            <td class="px-4 py-2.5 align-top text-sm text-gray-700">
+                                <div class="font-semibold text-gray-900">Nhận: <?php echo date('d/m H:i', strtotime($order['NGAY_NHAN'])); ?> · Trả: <?php echo date('d/m H:i', $expectedReturnTs); ?></div>
+                                <?php if ($hasExpiredWindow): ?>
+                                    <div class="text-xs font-semibold text-rose-600">Quá hạn <?php echo $overdueHours; ?> giờ</div>
                                 <?php endif; ?>
                             </td>
-                            <td class="px-4 py-3 align-top text-sm text-gray-700">
+                            <td class="px-4 py-2.5 align-top text-sm text-gray-700 whitespace-nowrap">
                                 <div class="font-semibold text-indigo-700"><?php echo tp_format_currency((int) $order['TONG_TIEN_DU_KIEN']); ?></div>
-                                <div class="text-xs text-gray-500"><span data-tip="Số tiền khách đặt trước để giữ và bảo đảm trang phục">Cọc<button type="button" class="ml-1 text-[10px] text-gray-400 hover:text-indigo-500" aria-label="Giải thích">?</button>:</span> <?php echo tp_format_currency((int) $order['TIEN_COC']); ?></div>
-                                <?php if (!empty($order['TONG_TIEN_THUC_TE'])): ?>
-                                    <div class="text-xs text-emerald-600"><span data-tip="Tổng phí cuối cùng không bao gồm tiền cọc đã thu">TT<button type="button" class="ml-1 text-[10px] text-gray-400 hover:text-indigo-600" aria-label="Giải thích">?</button>:</span> <?php echo tp_format_currency((int) $order['TONG_TIEN_THUC_TE']); ?></div>
-                                    <?php $remaining = (int)$order['TONG_TIEN_THUC_TE'] - (int)$order['TIEN_COC']; if ($remaining > 0): ?>
-                                        <div class="text-xs text-indigo-600"><span data-tip="Số tiền khách cần thanh toán thêm (Tổng thực tế - cọc)">Còn thu<button type="button" class="ml-1 text-[10px] text-gray-400 hover:text-indigo-600" aria-label="Giải thích">?</button>:</span> <?php echo tp_format_currency($remaining); ?></div>
-                                    <?php elseif ($remaining === 0): ?>
-                                        <div class="text-xs text-gray-500" data-tip="Khách đã thanh toán đủ theo tổng thực tế">Đủ tiền</div>
-                                    <?php else: ?>
-                                        <div class="text-xs text-emerald-700" data-tip="Tiền cọc lớn hơn tổng thực tế, cần xem xét hoàn lại phần chênh">Hoàn lại: <?php echo tp_format_currency(abs($remaining)); ?></div>
-                                    <?php endif; ?>
-                                <?php endif; ?>
+                                <div class="text-xs text-gray-500">Cọc: <?php echo tp_format_currency((int) $order['TIEN_COC']); ?></div>
                             </td>
-                            <td class="px-4 py-3 align-top">
-                                <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold <?php echo $statusMeta['badge']; ?>">
+                            <td class="px-4 py-2.5 align-top whitespace-nowrap">
+                                <span class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap <?php echo $statusMeta['badge']; ?>" title="<?php echo htmlspecialchars($STATUS_META[$order['TRANG_THAI']]['desc'] ?? ''); ?>">
                                     <span class="w-2 h-2 rounded-full <?php echo $statusMeta['dot'] ?? 'bg-gray-400'; ?>"></span>
                                     <?php echo htmlspecialchars($statusMeta['label']); ?>
                                 </span>
                             </td>
-                            <td class="px-4 py-3 align-top text-right">
-                                <button type="button" data-toggle-detail="<?php echo $detailId; ?>" class="inline-flex items-center px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-sm hover:bg-indigo-50">
+                            <td class="px-4 py-2.5 align-top text-right whitespace-nowrap">
+                                <button type="button" data-toggle-detail="<?php echo $detailId; ?>" class="inline-flex items-center px-3 py-1.5 rounded-lg border border-indigo-200 text-indigo-600 text-sm hover:bg-indigo-50 whitespace-nowrap">
                                     Cập nhật
                                 </button>
                             </td>
@@ -768,34 +832,64 @@ function tp_format_currency(?int $value): string
                                             <h3 class="text-sm font-semibold text-gray-700">Ghi chú</h3>
                                             <div class="mt-2 text-sm text-gray-600 bg-white border border-gray-200 rounded-xl px-3 py-2 min-h-[60px] whitespace-pre-wrap"><?php echo htmlspecialchars($order['GHI_CHU'] ?: 'Chưa có ghi chú.'); ?></div>
                                         </div>
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div class="bg-white border border-gray-200 rounded-xl p-3">
+                                                <div class="text-xs font-semibold text-gray-600 mb-1">Thông tin khách</div>
+                                                <div class="text-sm text-gray-800"><?php echo htmlspecialchars($order['HO_TEN']); ?></div>
+                                                <div class="text-xs text-gray-500 break-words"><?php echo htmlspecialchars($order['EMAIL']); ?></div>
+                                                <div class="text-xs text-gray-500"><?php echo htmlspecialchars($order['SDT']); ?></div>
+                                            </div>
+                                            <div class="bg-white border border-gray-200 rounded-xl p-3">
+                                                <div class="text-xs font-semibold text-gray-600 mb-1">Thanh toán</div>
+                                                <div class="flex justify-between text-sm text-gray-700"><span>Dự kiến</span><span class="font-semibold"><?php echo tp_format_currency((int)$order['TONG_TIEN_DU_KIEN']); ?></span></div>
+                                                <div class="flex justify-between text-sm text-gray-700"><span>Cọc</span><span><?php echo tp_format_currency((int)$order['TIEN_COC']); ?></span></div>
+                                                <div class="flex justify-between text-sm text-gray-700"><span>Phụ phí trễ</span><span><?php echo tp_format_currency((int)$order['PHI_TRE_HEN']); ?></span></div>
+                                                <div class="flex justify-between text-sm text-gray-700"><span>Tổng thực tế</span><span><?php echo tp_format_currency($order['TONG_TIEN_THUC_TE'] ? (int)$order['TONG_TIEN_THUC_TE'] : null); ?></span></div>
+                                                <?php
+                                                    $actual = $order['TONG_TIEN_THUC_TE'] ? (int)$order['TONG_TIEN_THUC_TE'] : null;
+                                                    $lateFee = (int)$order['PHI_TRE_HEN'];
+                                                    $expected = (int)$order['TONG_TIEN_DU_KIEN'];
+                                                    $base = $actual ?? $expected;
+                                                    $grand = $base + $lateFee;
+                                                    $remaining = $grand - (int)$order['TIEN_COC'];
+                                                ?>
+                                                <div class="mt-2 text-xs text-gray-500">Còn thu/hoàn sau cọc:</div>
+                                                <div class="text-sm font-semibold <?php echo $remaining > 0 ? 'text-indigo-700' : ($remaining < 0 ? 'text-emerald-700' : 'text-gray-700'); ?>">
+                                                    <?php echo $remaining > 0 ? ('Cần thu ' . tp_format_currency($remaining)) : ($remaining < 0 ? ('Hoàn lại ' . tp_format_currency(abs($remaining))) : 'Đủ sau cọc'); ?>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <div>
                                         <h3 class="text-sm font-semibold text-gray-700 mb-2">Cập nhật trạng thái</h3>
-                                        <form method="POST" class="space-y-3 bg-white border border-gray-200 rounded-2xl p-4">
+                                        <form method="POST" data-action="update_rental_status" class="space-y-3 bg-white border border-gray-200 rounded-2xl p-4">
                                             <input type="hidden" name="rental_action" value="update">
                                             <input type="hidden" name="order_id" value="<?php echo $orderId; ?>">
                                             <div>
                                                 <label class="block text-xs font-semibold text-gray-600 mb-1">Trạng thái mới</label>
                                                 <?php
                                                     $allowedForThisOrder = $isAdmin ? $ALLOWED_STATUSES : array_unique(array_merge([$order['TRANG_THAI']], $TRANSITIONS[$order['TRANG_THAI']] ?? []));
+                                                    $restrictedStatuses = $approvalLocked ? ['da_duyet'] : [];
                                                 ?>
                                                 <select name="new_status" class="w-full border border-gray-300 rounded-xl px-3 py-2 focus:ring-2 focus:ring-indigo-500" aria-label="Chọn trạng thái mới">
                                                     <?php foreach ($ALLOWED_STATUSES as $status):
-                                                        $disabled = !in_array($status, $allowedForThisOrder, true);
+                                                        $disabled = (!in_array($status, $allowedForThisOrder, true) || (in_array($status, $restrictedStatuses, true) && $status !== $order['TRANG_THAI']));
                                                     ?>
                                                         <option value="<?php echo $status; ?>" <?php echo $status === $order['TRANG_THAI'] ? 'selected' : ''; ?> <?php echo $disabled ? 'disabled' : ''; ?>>
                                                             <?php echo htmlspecialchars($STATUS_META[$status]['label']); ?><?php echo $disabled ? ' (không hợp lệ)' : ''; ?>
                                                         </option>
                                                     <?php endforeach; ?>
                                                 </select>
-                                                <?php if(!$isAdmin): ?>
+                                                <?php if($approvalLocked): ?>
+                                                    <p class="mt-1 text-[11px] text-rose-600">Đơn đã quá hạn, không thể chuyển về trạng thái "Đã duyệt".</p>
+                                                <?php elseif(!$isAdmin): ?>
                                                     <p class="mt-1 text-[11px] text-gray-500">Chỉ có trạng thái không bị mờ là chuyển đổi được.</p>
                                                 <?php endif; ?>
                                             </div>
                                             <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                                                 <div>
                                                     <label class="block text-xs font-semibold text-gray-600 mb-1">Thời gian trả thực tế</label>
-                                                    <input type="datetime-local" name="returned_at" class="w-full border border-gray-300 rounded-xl px-3 py-2" value="<?php echo $order['NGAY_TRA_TT'] ? date('Y-m-d\TH:i', strtotime($order['NGAY_TRA_TT'])) : ''; ?>">
+                                                    <input type="datetime-local" name="returned_at" class="w-full border border-gray-300 rounded-xl px-3 py-2" value="<?php echo $order['NGAY_TRA_THAT'] ? date('Y-m-d\TH:i', strtotime($order['NGAY_TRA_THAT'])) : ''; ?>">
                                                 </div>
                                                 <div>
                                                     <label class="text-xs font-semibold text-gray-600 mb-1 inline-flex items-center gap-1">Tổng tiền thực tế <span data-tip="Không cộng lại tiền cọc. Là tổng phí cuối cùng trước khi đối chiếu cọc." class="inline-flex items-center"><button type="button" class="text-[10px] text-gray-400 hover:text-indigo-500" aria-label="Giải thích">?</button></span></label>
@@ -873,18 +967,6 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         });
         document.addEventListener('scroll', ()=>{ if(tipVisible) hideTip(); }, {passive:true});
-    document.querySelectorAll('[data-toggle-detail]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            const targetId = btn.getAttribute('data-toggle-detail');
-            const target = document.getElementById(targetId);
-            if (!target) return;
-            target.classList.toggle('hidden');
-            if (!target.classList.contains('hidden')) {
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        });
-    });
-
     // Flash dismiss & auto-hide
     const flashEl = document.querySelector('[role="alert"]');
     if (flashEl) {
@@ -907,3 +989,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 });
 </script>
+
+<!-- API Client Utilities -->
+<script src="../../public/assets/js/api-client.js"></script>
+
+<!-- Page-Specific Rental Management -->
+<script src="../../public/assets/js/manage-costume-rentals.js"></script>

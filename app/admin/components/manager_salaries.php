@@ -303,8 +303,7 @@ $currentQuery = http_build_query([
             <thead class="bg-gray-50">
                 <tr>
                     <th class="px-4 py-3 text-left font-semibold text-gray-600">Nhân viên</th>
-                    <th class="px-4 py-3 text-right font-semibold text-gray-600">Lương cơ bản</th>
-                    <th class="px-4 py-3 text-right font-semibold text-gray-600">Thưởng</th>
+                    <th class="px-4 py-3 text-right font-semibold text-gray-600">Lương cơ bản + Thưởng</th>
                     <th class="px-4 py-3 text-right font-semibold text-gray-600">Phụ cấp</th>
                     <th class="px-4 py-3 text-right font-semibold text-gray-600">Khấu trừ</th>
                     <th class="px-4 py-3 text-right font-semibold text-gray-600">Thực lĩnh</th>
@@ -319,15 +318,36 @@ $currentQuery = http_build_query([
                 </tr>
             <?php else: ?>
                 <?php foreach ($rows as $row): ?>
-                    <tr class="hover:bg-indigo-50/30">
+                    <tr class="hover:bg-indigo-50/30" data-row-id="<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>">
                         <td class="px-4 py-3">
                             <div class="font-semibold text-gray-900"><?= htmlspecialchars($row['name']) ?></div>
                             <div class="text-xs text-gray-500"><?= htmlspecialchars($row['specialty']) ?></div>
                         </td>
-                        <td class="px-4 py-3 text-right text-gray-700"><?= formatCurrencyVND($row['base']) ?></td>
-                        <td class="px-4 py-3 text-right text-gray-700"><?= formatCurrencyVND($row['bonus']) ?></td>
-                        <td class="px-4 py-3 text-right text-emerald-600 font-semibold"><?= formatCurrencyVND($row['allowance']) ?></td>
-                        <td class="px-4 py-3 text-right text-rose-600 font-semibold">-<?= formatCurrencyVND($row['deduction']) ?></td>
+                        <td class="px-4 py-3 text-right text-gray-700">
+                            <div class="base-salary-display">
+                                <?= formatCurrencyVND($row['base']) ?>
+                                <span class="text-xs text-gray-500"> + thưởng <?= formatCurrencyVND($row['bonus']) ?></span>
+                            </div>
+                            <form class="base-salary-form" method="post" action="./components/manager_salary_action.php" style="display:none; margin-top:4px">
+                                <input type="hidden" name="action" value="update_base_salary" />
+                                <input type="hidden" name="employee_id" value="<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>" />
+                                <input type="hidden" name="month" value="<?= $month ?>" />
+                                <input type="hidden" name="year" value="<?= $year ?>" />
+                                <div class="flex items-center justify-end gap-2">
+                                    <input type="text" name="base_salary" value="<?= (int)$row['base'] ?>" inputmode="numeric" pattern="[0-9]*" class="w-36 rounded border border-gray-300 px-2 py-1 text-right" />
+                                    <button type="button" class="rounded bg-indigo-600 px-3 py-1 text-xs text-white" onclick="saveBaseSalaryEdit('<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>')">Lưu</button>
+                                    <button type="button" class="rounded border border-gray-300 px-3 py-1 text-xs text-gray-700" onclick="cancelBaseSalaryEdit('<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>')">Hủy</button>
+                                </div>
+                            </form>
+                        </td>
+                        <td class="px-4 py-3 text-right text-emerald-600 font-semibold">
+                            <span class="inline-edit-display"><?= formatCurrencyVND($row['allowance']) ?></span>
+                            <input type="hidden" class="inline-edit-value" value="<?= $row['allowance'] ?>" />
+                        </td>
+                        <td class="px-4 py-3 text-right text-rose-600 font-semibold">
+                            <span class="inline-edit-display">-<?= formatCurrencyVND($row['deduction']) ?></span>
+                            <input type="hidden" class="inline-edit-value" value="<?= $row['deduction'] ?>" />
+                        </td>
                         <td class="px-4 py-3 text-right text-gray-900 font-semibold"><?= formatCurrencyVND($row['net']) ?></td>
                         <td class="px-4 py-3 text-center">
                             <span class="inline-flex rounded-full px-3 py-1 text-xs font-semibold <?= statusBadgeClass($row['status']) ?>">
@@ -337,20 +357,21 @@ $currentQuery = http_build_query([
                         <td class="px-4 py-3 text-center">
                             <button
                                 type="button"
-                                class="inline-flex items-center gap-2 rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
-                                data-employee="<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>"
-                                data-name="<?= htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8') ?>"
-                                data-allowance="<?= $row['allowance'] ?>"
-                                data-deduction="<?= $row['deduction'] ?>"
-                                data-net="<?= $row['net'] ?>"
-                                data-base="<?= $row['base'] ?>"
-                                data-bonus="<?= $row['bonus'] ?>"
-                                data-status="<?= $row['status'] ?>"
-                                data-note="<?= htmlspecialchars($row['note'], ENT_QUOTES, 'UTF-8') ?>"
-                                data-has-salary="<?= $row['hasSalary'] ? '1' : '0' ?>"
-                                onclick="openSalaryModal(this)">
+                                class="inline-flex items-center gap-2 rounded-lg border border-indigo-200 px-3 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 transition"
+                                onclick="toggleInlineEdit(this, {
+                                    id: '<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>',
+                                    name: '<?= htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8') ?>',
+                                    allowance: <?= $row['allowance'] ?>,
+                                    deduction: <?= $row['deduction'] ?>,
+                                    status: '<?= $row['status'] ?>',
+                                    note: '<?= htmlspecialchars($row['note'], ENT_QUOTES, 'UTF-8') ?>'
+                                })">
                                 <i class="fas fa-edit"></i>
-                                Điều chỉnh
+                                <span class="edit-button-text">Sửa</span>
+                            </button>
+                            <button type="button" class="ml-2 inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50" onclick="enterBaseSalaryEdit('<?= htmlspecialchars($row['id'], ENT_QUOTES, 'UTF-8') ?>')">
+                                <i class="fas fa-pen"></i>
+                                Sửa lương cơ bản
                             </button>
                         </td>
                     </tr>
@@ -361,52 +382,143 @@ $currentQuery = http_build_query([
     </div>
 </div>
 
-<div id="salaryModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 p-4">
-    <div class="w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl">
-        <div class="flex items-center justify-between">
+<style>
+#salaryModal {
+    display: none;
+}
+
+#salaryModal.visible {
+    display: flex;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+#salaryModal .modal-content {
+    animation: slideUp 0.3s ease-out;
+}
+
+#salaryModal:not(.visible) .modal-content {
+    animation: slideDown 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(20px) scale(0.95);
+    }
+}
+</style>
+
+<div id="salaryModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
+    <div class="modal-content w-full max-w-md rounded-2xl bg-white p-8 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
             <div>
-                <p class="text-sm text-gray-500">Điều chỉnh lương</p>
-                <h3 id="modalEmployeeName" class="text-xl font-semibold text-gray-900"></h3>
+                <p class="text-xs uppercase tracking-widest font-semibold text-indigo-600">Quản lý lương</p>
+                <h3 id="modalEmployeeName" class="text-2xl font-bold text-gray-900 mt-1"></h3>
             </div>
-            <button class="text-gray-400 hover:text-gray-600" onclick="closeSalaryModal()">
+            <button class="text-gray-400 hover:text-gray-600 text-lg" onclick="closeSalaryModal()">
                 <i class="fas fa-times"></i>
             </button>
         </div>
-        <form class="mt-4 space-y-4" method="POST" action="./components/manager_salary_action.php" id="salaryForm">
+
+        <!-- Form -->
+        <form class="space-y-5" method="POST" action="./components/manager_salary_action.php" id="salaryForm">
             <input type="hidden" name="employee_id" id="modalEmployeeId" />
             <input type="hidden" name="month" value="<?= $month ?>" />
             <input type="hidden" name="year" value="<?= $year ?>" />
             <input type="hidden" name="return_url" value="<?= htmlspecialchars($_SERVER['REQUEST_URI'] ?? '/app/admin/manager_dashboard.php?page=salaries', ENT_QUOTES, 'UTF-8') ?>" />
-            <div class="grid gap-4 md:grid-cols-2">
-                <label class="text-sm font-medium text-gray-600">
-                    <span class="mb-1 block">Phụ cấp (₫)</span>
-                    <input type="number" min="0" name="allowance" id="modalAllowance" class="w-full rounded-lg border border-gray-300 px-3 py-2" />
-                </label>
-                <label class="text-sm font-medium text-gray-600">
-                    <span class="mb-1 block">Khấu trừ (₫)</span>
-                    <input type="number" min="0" name="deduction" id="modalDeduction" class="w-full rounded-lg border border-gray-300 px-3 py-2" />
-                </label>
+
+            <!-- Base Salary Info Box -->
+            <div class="rounded-xl bg-gradient-to-br from-indigo-50 to-blue-50 p-4 border border-indigo-100">
+                <p class="text-xs uppercase tracking-wide text-indigo-600 font-semibold mb-3">Lương cơ bản</p>
+                <div class="flex justify-between items-center">
+                    <div>
+                        <p class="text-xs text-gray-600 mb-1">Lương + Thưởng</p>
+                        <p id="modalBase" class="text-2xl font-bold text-indigo-700">0 ₫</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-gray-600 mb-1">Dự kiến thực lĩnh</p>
+                        <p id="modalNetPreview" class="text-2xl font-bold text-emerald-600">0 ₫</p>
+                    </div>
+                </div>
             </div>
-            <label class="text-sm font-medium text-gray-600">
-                <span class="mb-1 block">Ghi chú nội bộ</span>
-                <textarea name="note" id="modalNote" rows="3" class="w-full rounded-lg border border-gray-300 px-3 py-2"></textarea>
-            </label>
-            <label class="text-sm font-medium text-gray-600">
-                <span class="mb-1 block">Trạng thái</span>
-                <select name="status" id="modalStatus" class="w-full rounded-lg border border-gray-300 px-3 py-2">
-                    <option value="cho_duyet">Chờ duyệt</option>
-                    <option value="da_duyet">Đã duyệt</option>
-                    <option value="da_chi_tra">Đã chi trả</option>
+
+            <!-- Allowance & Deduction Section -->
+            <div class="space-y-4">
+                <div class="relative">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Phụ cấp (₫)</label>
+                    <div class="flex items-center gap-2">
+                        <span class="text-green-600 text-lg font-bold">+</span>
+                        <input type="number" min="0" step="10000" name="allowance" id="modalAllowance" 
+                               class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 font-semibold" 
+                               placeholder="0" />
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">Nhập số tiền phụ cấp</p>
+                </div>
+
+                <div class="relative">
+                    <label class="block text-sm font-semibold text-gray-700 mb-2">Khấu trừ (₫)</label>
+                    <div class="flex items-center gap-2">
+                        <span class="text-rose-600 text-lg font-bold">−</span>
+                        <input type="number" min="0" step="10000" name="deduction" id="modalDeduction" 
+                               class="flex-1 rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-rose-500 focus:ring-2 focus:ring-rose-200 font-semibold" 
+                               placeholder="0" />
+                    </div>
+                    <p class="text-xs text-gray-500 mt-1">Nhập số tiền khấu trừ</p>
+                </div>
+            </div>
+
+            <!-- Status Section -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Trạng thái xử lý</label>
+                <select name="status" id="modalStatus" class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 font-semibold text-gray-900">
+                    <option value="cho_duyet">⏳ Chờ duyệt</option>
+                    <option value="da_duyet">✓ Đã duyệt</option>
+                    <option value="da_chi_tra">✓✓ Đã chi trả</option>
                 </select>
-            </label>
-            <div class="rounded-xl bg-slate-50 p-4 text-sm">
-                <p><span class="text-gray-500">Lương cơ bản:</span> <span id="modalBase" class="font-semibold text-gray-800"></span></p>
-                <p><span class="text-gray-500">Thưởng:</span> <span id="modalBonus" class="font-semibold text-gray-800"></span></p>
-                <p><span class="text-gray-500">Thực lĩnh dự kiến:</span> <span id="modalNetPreview" class="font-semibold text-indigo-700"></span></p>
             </div>
-            <div class="flex justify-end gap-3">
-                <button type="button" class="rounded-lg border border-gray-200 px-4 py-2 text-sm" onclick="closeSalaryModal()">Hủy</button>
-                <button type="submit" class="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white">Lưu cập nhật</button>
+
+            <!-- Note Section -->
+            <div>
+                <label class="block text-sm font-semibold text-gray-700 mb-2">Ghi chú nội bộ</label>
+                <textarea name="note" id="modalNote" rows="3" 
+                          class="w-full rounded-lg border-2 border-gray-200 px-4 py-2.5 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 text-gray-900 resize-none"
+                          placeholder="VD: Thưởng KPI, trợ cấp..."></textarea>
+                <p class="text-xs text-gray-500 mt-1">Dành cho quản lý chi nhánh theo dõi</p>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex gap-3 pt-4 border-t border-gray-200">
+                <button type="button" class="flex-1 rounded-lg border-2 border-gray-300 px-4 py-2.5 text-gray-700 font-semibold hover:bg-gray-50 transition" onclick="closeSalaryModal()">
+                    Hủy bỏ
+                </button>
+                <button type="submit" class="flex-1 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 px-4 py-2.5 text-white font-semibold shadow-lg hover:shadow-xl hover:from-indigo-700 hover:to-indigo-800 transition">
+                    Lưu cập nhật
+                </button>
             </div>
         </form>
     </div>
@@ -418,35 +530,152 @@ const form = document.getElementById('salaryForm');
 const allowanceInput = document.getElementById('modalAllowance');
 const deductionInput = document.getElementById('modalDeduction');
 const baseLabel = document.getElementById('modalBase');
-const bonusLabel = document.getElementById('modalBonus');
 const netLabel = document.getElementById('modalNetPreview');
 const formatter = new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' });
 
-function openSalaryModal(button) {
-    document.getElementById('modalEmployeeId').value = button.dataset.employee;
-    document.getElementById('modalEmployeeName').textContent = button.dataset.name;
-    document.getElementById('modalStatus').value = button.dataset.status;
-    document.getElementById('modalNote').value = button.dataset.note || '';
+// Toggle Inline Edit Mode
+function toggleInlineEdit(button, data) {
+    const row = button.closest('tr');
+    const allowanceCell = row.cells[3];
+    const deductionCell = row.cells[4];
+    
+    // Check if already in edit mode
+    if (button.classList.contains('editing')) {
+        // Save changes
+        saveInlineEdit(button, row, data);
+    } else {
+        // Enter edit mode
+        enterInlineEdit(button, row, allowanceCell, deductionCell, data);
+    }
+}
 
+function enterInlineEdit(button, row, allowanceCell, deductionCell, data) {
+    // Create inline inputs
+    const allowanceValue = data.allowance || 0;
+    const deductionValue = data.deduction || 0;
+    
+    allowanceCell.innerHTML = `
+        <input type="number" min="0" step="10000" class="inline-salary-input w-full px-2 py-1 border border-emerald-300 rounded text-right font-semibold" 
+               value="${allowanceValue}" placeholder="0" />
+    `;
+    
+    deductionCell.innerHTML = `
+        <input type="number" min="0" step="10000" class="inline-salary-input w-full px-2 py-1 border border-rose-300 rounded text-right font-semibold" 
+               value="${deductionValue}" placeholder="0" />
+    `;
+    
+    // Change button to Save/Cancel
+    button.classList.add('editing');
+    button.innerHTML = `
+        <i class="fas fa-check text-green-600"></i>
+        <span class="edit-button-text">Lưu</span>
+    `;
+    
+    // Add cancel button
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'inline-flex items-center gap-2 rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 transition ml-2';
+    cancelBtn.innerHTML = '<i class="fas fa-times"></i><span>Hủy</span>';
+    cancelBtn.onclick = (e) => {
+        e.preventDefault();
+        cancelInlineEdit(button, row, data);
+    };
+    button.parentElement.appendChild(cancelBtn);
+    
+    // Focus on allowance input
+    allowanceCell.querySelector('input').focus();
+}
+
+function saveInlineEdit(button, row, data) {
+    const allowanceInput = row.cells[3].querySelector('input');
+    const deductionInput = row.cells[4].querySelector('input');
+    
+    const allowance = parseInt(allowanceInput.value) || 0;
+    const deduction = parseInt(deductionInput.value) || 0;
+    
+    // Submit form
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = './components/manager_salary_action.php';
+    
+    form.innerHTML = `
+        <input type="hidden" name="employee_id" value="${data.id}" />
+        <input type="hidden" name="month" value="${document.querySelector('input[name="month"]').value}" />
+        <input type="hidden" name="year" value="${document.querySelector('input[name="year"]').value}" />
+        <input type="hidden" name="allowance" value="${allowance}" />
+        <input type="hidden" name="deduction" value="${deduction}" />
+        <input type="hidden" name="status" value="${data.status}" />
+        <input type="hidden" name="note" value="${data.note}" />
+        <input type="hidden" name="return_url" value="${window.location.href}" />
+    `;
+    
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function cancelInlineEdit(button, row, data) {
+    const allowanceCell = row.cells[3];
+    const deductionCell = row.cells[4];
+    
+    // Restore original display
+    allowanceCell.innerHTML = `
+        <span class="inline-edit-display">${formatter.format(data.allowance || 0)}</span>
+    `;
+    
+    deductionCell.innerHTML = `
+        <span class="inline-edit-display">-${formatter.format(data.deduction || 0)}</span>
+    `;
+    
+    // Reset button
+    button.classList.remove('editing');
+    button.innerHTML = '<i class="fas fa-edit"></i><span class="edit-button-text">Sửa</span>';
+    
+    // Remove cancel button
+    const cancelBtn = button.nextElementSibling;
+    if (cancelBtn && cancelBtn.textContent.includes('Hủy')) {
+        cancelBtn.remove();
+    }
+}
+
+function openSalaryModal(button) {
+    const employeeId = button.dataset.employee;
+    const name = button.dataset.name;
     const base = Number(button.dataset.base || 0);
     const bonus = Number(button.dataset.bonus || 0);
-    const totalCore = base + bonus;
+    const allowance = Number(button.dataset.allowance || 0);
+    const deduction = Number(button.dataset.deduction || 0);
+    const status = button.dataset.status || 'cho_duyet';
+    const note = button.dataset.note || '';
 
-    allowanceInput.value = button.dataset.allowance || 0;
-    deductionInput.value = button.dataset.deduction || 0;
+    // Set form values
+    document.getElementById('modalEmployeeId').value = employeeId;
+    document.getElementById('modalEmployeeName').textContent = name;
+    document.getElementById('modalStatus').value = status;
+    document.getElementById('modalNote').value = note;
+
+    // Store base info for calculation
+    const totalCore = base + bonus;
+    allowanceInput.value = allowance;
+    deductionInput.value = deduction;
     allowanceInput.dataset.totalCore = totalCore;
 
-    baseLabel.textContent = formatter.format(base);
-    bonusLabel.textContent = formatter.format(bonus);
+    // Display base salary
+    baseLabel.textContent = formatter.format(totalCore);
+
+    // Calculate and display net salary
     updateNetPreview();
 
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
+    // Show modal
+    modal.classList.add('visible');
+
+    // Focus on first input
+    setTimeout(() => allowanceInput.focus(), 100);
 }
 
 function closeSalaryModal() {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
+    modal.classList.remove('visible');
+    
+    setTimeout(() => form.reset(), 300);
 }
 
 function updateNetPreview() {
@@ -457,6 +686,60 @@ function updateNetPreview() {
     netLabel.textContent = formatter.format(net);
 }
 
+// Update preview on input
 allowanceInput.addEventListener('input', updateNetPreview);
 deductionInput.addEventListener('input', updateNetPreview);
+
+// Close modal with Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('visible')) {
+        closeSalaryModal();
+    }
+});
+
+// Prevent modal close when clicking form
+document.getElementById('salaryModal').addEventListener('click', (e) => {
+    if (e.target === modal) {
+        closeSalaryModal();
+    }
+});
+
+// Inline base salary edit handlers
+function enterBaseSalaryEdit(rowId) {
+    const row = document.querySelector(`tr[data-row-id='${rowId}']`);
+    if (!row) return;
+    const display = row.querySelector('.base-salary-display');
+    const form = row.querySelector('.base-salary-form');
+    if (display && form) {
+        display.style.display = 'none';
+        form.style.display = 'block';
+        const input = form.querySelector('input[name="base_salary"]');
+        if (input) input.focus();
+    }
+}
+
+function cancelBaseSalaryEdit(rowId) {
+    const row = document.querySelector(`tr[data-row-id='${rowId}']`);
+    if (!row) return;
+    const display = row.querySelector('.base-salary-display');
+    const form = row.querySelector('.base-salary-form');
+    if (display && form) {
+        form.style.display = 'none';
+        display.style.display = 'block';
+    }
+}
+
+function saveBaseSalaryEdit(rowId) {
+    const row = document.querySelector(`tr[data-row-id='${rowId}']`);
+    if (!row) return;
+    const input = row.querySelector('.base-salary-form input[name="base_salary"]');
+    const form = row.querySelector('.base-salary-form');
+    if (!input || !form) return;
+    const val = input.value.trim();
+    if (val === '' || isNaN(Number(val))) {
+        alert('Vui lòng nhập số hợp lệ cho lương cơ bản');
+        return;
+    }
+    form.submit();
+}
 </script>

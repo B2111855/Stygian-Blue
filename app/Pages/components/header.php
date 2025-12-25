@@ -22,7 +22,7 @@ require_once __DIR__ . '/../../helpers/assets.php';
     }
     body{
       font-family:'Roboto', sans-serif;
-      background:linear-gradient(180deg,#020617 0%,#0b1220 20%,#f8fafc 68%);
+      /* background:linear-gradient(180deg,#020617 0%,#0b1220 20%,#f8fafc 68%); */
       color:var(--sb-primary);
     }
     [data-sb-header]{
@@ -274,7 +274,37 @@ require_once __DIR__ . '/../../helpers/assets.php';
         animation:none!important;
       }
     }
+
+    /* --- Reusable Hero Overlay for detail pages --- */
+    .sb-hero{ position:relative; isolation:isolate; }
+    .sb-hero::after{
+      content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+      background:linear-gradient(
+        to bottom,
+        rgba(0,0,0,calc(var(--scrim-alpha, .42) + .10)) 0%,
+        rgba(0,0,0,var(--scrim-alpha, .42)) 45%,
+        rgba(0,0,0,calc(var(--scrim-alpha, .42) - .12)) 100%
+      );
+    }
+    .sb-hero > *{ position:relative; z-index:1; }
+    .sb-hero .hero-title{ color:#fff; text-shadow:0 1px 2px rgba(0,0,0,.55), 0 8px 20px rgba(0,0,0,.35); }
+    .sb-hero .hero-subtitle{ color:rgba(255,255,255,.92); text-shadow:0 1px 1px rgba(0,0,0,.45); }
+    .sb-hero [data-crumbs]{ color:rgba(255,255,255,.85); text-shadow:0 1px 1px rgba(0,0,0,.45); }
+    .sb-hero[data-luma="light"]{ --scrim-alpha:.50; }
+    .sb-hero[data-luma="dark"]{ --scrim-alpha:.28; }
+    /* Optional: glass pill utility */
+    .glass-pill{
+      -webkit-backdrop-filter: blur(8px) saturate(150%);
+      backdrop-filter: blur(8px) saturate(150%);
+      background: rgba(255,255,255,.66);
+      border: 1px solid rgba(255,255,255,.28);
+      box-shadow: 0 8px 26px rgba(0,0,0,.15);
+      color: #101828;
+      border-radius: 999px;
+      padding: 8px 14px;
+    }
   </style>
+  <script src="../../../public/js/hero_scrim.js" defer></script>
 </head>
 
 <body class="bg-slate-50/60 pt-28">
@@ -297,11 +327,11 @@ require_once __DIR__ . '/../../helpers/assets.php';
         <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
           <span class="flex items-center gap-2">
             <i class="fas fa-phone text-xs text-cyan-300"></i>
-            <span>Hotline đặt lịch: <strong class="font-semibold text-white">0901 234 567</strong></span>
+            <span>Hotline đặt lịch: <strong class="font-semibold text-white">0907814560</strong></span>
           </span>
           <span class="hidden xl:flex items-center gap-2">
             <i class="fas fa-location-dot text-xs text-cyan-300"></i>
-            <span>Studio: 85 Nguyễn Trãi, Quận 1, TP.HCM</span>
+            <span>Studio: 12B2 - KDC 30 - Nguyễn Văn Linh - Cần Thơ </span>
           </span>
         </div>
         <div class="flex items-center gap-4">
@@ -331,7 +361,7 @@ require_once __DIR__ . '/../../helpers/assets.php';
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-6">
         <!-- Logo -->
         <a href="./home.php" class="group flex items-center gap-3 shrink-0">
-          <img src="../../../public/images/logo5.png" alt="Stygian Blue" class="h-11 w-auto transition-transform duration-300 group-hover:scale-105" />
+          <img src="../../../public/images/StygianBlueLogo.png" alt="Stygian Blue" class="h-11 w-auto transition-transform duration-300 group-hover:scale-105" />
           <span class="hidden sm:flex flex-col leading-tight">
             <span class="text-[color:var(--sb-primary)] font-bold text-lg tracking-wide">Stygian Blue Studio</span>
             <span class="text-xs uppercase tracking-[0.32em] text-slate-400">Fine Art Photography</span>
@@ -487,7 +517,7 @@ require_once __DIR__ . '/../../helpers/assets.php';
                 <a href="xemLichhen.php" class="sb-menu-item<?= $scheduleCountSafe > 0 ? ' sb-menu-item--alert' : '' ?>" role="menuitem">
                   <span class="sb-menu-icon sb-menu-icon--schedule"><i class="fas fa-calendar-check"></i></span>
                   <span class="sb-menu-text">
-                    <span class="sb-menu-title">Lịch hẹn của bạn</span>
+                    <span class="sb-menu-title">Lịch hẹn & Đơn thuê</span>
                     <span class="sb-menu-sub">
                       <?php if ($scheduleCountSafe > 0): ?>
                         Có <?= $scheduleCountSafe > 99 ? '99+' : $scheduleCountSafe ?> cập nhật lịch hẹn mới trong 7 ngày qua
@@ -564,7 +594,7 @@ require_once __DIR__ . '/../../helpers/assets.php';
       <nav class="ml-auto h-full w-[86%] max-w-sm bg-white shadow-2xl p-6 flex flex-col gap-3 overflow-y-auto" aria-label="Menu di động">
         <div class="flex items-center justify-between mb-1">
           <div class="flex items-center gap-2">
-            <img src="../../../public/images/logo5.png" alt="Stygian Blue" class="h-9 w-auto" />
+            <img src="../../../public/images/StygianBlueLogo.png" alt="Stygian Blue" class="h-9 w-auto" />
             <span class="font-bold text-[color:var(--sb-primary)]">Menu</span>
           </div>
           <button id="btnMobileClose" class="text-2xl p-1 rounded hover:bg-gray-100" aria-label="Đóng menu">

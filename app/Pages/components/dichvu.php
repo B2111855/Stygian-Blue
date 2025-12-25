@@ -1,12 +1,38 @@
 <?php
 include '../../../database/config.php'; // $conn = new mysqli(...)
+require_once __DIR__ . '/../../helpers/assets.php';
 
 // -------- Helpers --------
 function img_url($path) {
-  if (!$path) return '/public/images/placeholder.jpg';
+  // Trả về URL ảnh, ưu tiên file nằm trong project; fallback sang docroot nếu cần
+  $placeholder = 'public/images/placeholder.jpg';
+  if (!$path) return sb_asset_href($placeholder);
   if (preg_match('~^https?://~i', $path)) return $path;            // URL tuyệt đối giữ nguyên
-  if (strpos($path, 'public/images/') === 0) return '/'.$path;     // đã có prefix public/images
-  return '/public/images/dichvu/'.$path;                           // mặc định thư mục dịch vụ
+
+  $normalized = ltrim(str_replace('\\', '/', $path), '/');
+  $projectPath = rtrim(sb_project_root(), '/\\') . '/' . $normalized;
+  $docRootPath = rtrim($_SERVER['DOCUMENT_ROOT'] ?? '', '/\\') . '/' . $normalized;
+
+  // Nếu dữ liệu cũ chứa prefix cache hoặc đã được encode (%2F), fallback placeholder để tránh 404
+  if (strpos($normalized, 'cache/') === 0 || stripos($normalized, 'cache%2f') !== false) {
+    return sb_asset_href($placeholder);
+  }
+
+  if (is_file($projectPath)) {
+    return sb_asset_href($normalized);
+  }
+
+  // Fallback: file lưu nhầm ngoài project (docroot/public/...)
+  if (is_file($docRootPath)) {
+    return '/' . $normalized;
+  }
+
+  // Nếu đã có prefix public/images thì gắn base project; ngược lại mặc định thư mục dịch vụ
+  if (strpos($normalized, 'public/images/') === 0) {
+    return sb_asset_href($normalized);
+  }
+
+  return sb_asset_href('public/images/dichvu/' . $normalized);
 }
 
 // -------- Query: dịch vụ lẻ --------
@@ -112,10 +138,10 @@ if ($combos && $combos->num_rows > 0) {
     <div class="sb-hero grid gap-8 md:grid-cols-[1.15fr,1fr] items-center mb-10">
       <div class="hero-copy">
         <p class="hero-kicker">Stygian Blue Studio</p>
-        <h1 class="hero-title">Trọn vẹn từng khuôn hình nghệ thuật</h1>
+        <h1 class="hero-title">Trọn vẹn từng khuôn hình nghệ&nbsp;thuật</h1>
         <p class="hero-subtitle">
           Đội ngũ nhiếp ảnh gia của chúng tôi giúp bạn kể lại câu chuyện bằng ánh sáng,
-          gam màu tinh tế và phong cách cá nhân hóa cho từng shoot hình.
+          gam màu tinh tế và phong cách cá nhân hóa cho từng shoot&nbsp;hình.
         </p>
         <div class="hero-tags" aria-label="Các phong cách chủ đạo">
           <span><i class="fas fa-burst"></i> Fine-art Portrait</span>
@@ -203,7 +229,8 @@ if ($combos && $combos->num_rows > 0) {
       $detailUrl    = '/StygianBlue/app/Pages/views/chitiet.php?type=service&id='.$serviceId;
 
       // Link đặt lịch (form liên hệ), truyền sẵn dịch vụ
-      $bookingUrl   = 'http://localhost:8080/StygianBlue/app/Pages/views/lienhe.php?dv='.$serviceId;
+      // Link đặt lịch (form liên hệ), truyền sẵn dịch vụ
+      $bookingUrl   = '/StygianBlue/app/Pages/Views/lienhe.php?id_dv='.$serviceId;
 
       // Link xem danh sách & giá thiết bị
       $equipListUrl = '/StygianBlue/app/Pages/views/thietbi.php';
@@ -334,7 +361,8 @@ if ($combos && $combos->num_rows > 0) {
             }
           }
           $savePercent = ($tienLe>0 && $tong>0) ? round( (1 - ($tong/$tienLe))*100 ) : 0;
-          $comboUrl  = '/StygianBlue/app/Pages/views/chitiet.php?type=combo&id='.$gid;
+          $comboUrl  = '/StygianBlue/app/Pages/Views/goi_chitiet.php?id_goi='.$gid;
+          $comboBookingUrl = '/StygianBlue/app/Pages/Views/lienhe.php?id_goi='.$gid;
       ?>
       <article class="sb-card group rounded-2xl overflow-hidden bg-white/85 backdrop-blur-xl border border-slate-200 hover:shadow-xl transition focus-within:ring-2 focus-within:ring-orange-300/60"
                tabindex="0"
@@ -372,7 +400,7 @@ if ($combos && $combos->num_rows > 0) {
           </div>
           <p class="mt-2 text-sm text-slate-600 line-clamp-3"><?= htmlspecialchars($g['MO_TA']) ?></p>
           <div class="mt-4 flex gap-2">
-            <button class="btn-primary"><i class="fas fa-check-circle"></i> Chọn gói</button>
+            <a class="btn-primary" href="<?= htmlspecialchars($comboBookingUrl) ?>"><i class="fas fa-calendar-check"></i> Đặt lịch gói</a>
             <a class="btn-soft" href="<?= htmlspecialchars($comboUrl) ?>"><i class="fas fa-list"></i> Xem chi tiết</a>
           </div>
         </div>
@@ -436,7 +464,7 @@ if ($combos && $combos->num_rows > 0) {
   }
   [data-sb-services] .hero-subtitle{
     color:#475569;
-    max-width:38ch;
+    max-width:48ch;
     font-size:1rem;
     margin-bottom:1.6rem;
   }

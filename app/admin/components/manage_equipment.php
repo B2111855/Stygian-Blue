@@ -1,6 +1,7 @@
 <?php
 include '../../database/config.php';
 require_once __DIR__ . '/../../helpers/assets.php';
+require_once __DIR__ . '/../../helpers/equipment_media.php';
 
 /**
  * ADMIN — QUẢN LÝ THIẾT BỊ (NỘI BỘ)
@@ -19,6 +20,12 @@ $hasPriceHistory = false;
 if ($checkPrice = $conn->query("SHOW TABLES LIKE 'don_gia_trang_thiet_bi'")) {
     $hasPriceHistory = $checkPrice->num_rows > 0;
     $checkPrice->free();
+}
+
+$hasAppointmentEquipment = false;
+if ($checkAppt = $conn->query("SHOW TABLES LIKE 'lich_hen_thiet_bi'")) {
+    $hasAppointmentEquipment = $checkAppt->num_rows > 0;
+    $checkAppt->free();
 }
 
 // ====== helper ======
@@ -146,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
         $stmt->bind_param('sisss', $ten_tb, $id_cn, $tinh_trang, $ngay_bao_tri, $image_path);
         if (!$stmt->execute()) {
             $_SESSION['error'] = 'Lỗi thêm thiết bị: '.$stmt->error;
+            $stmt->close();
         } else {
             $id_tb = $stmt->insert_id;
             $stmt->close();
@@ -166,9 +174,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add')
             } else {
                 $_SESSION['success'] = 'Đã thêm thiết bị thành công.';
             }
-        }
-        if ($stmt->errno) {
-            $stmt->close();
         }
     }
 }
@@ -237,43 +242,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'edit'
     }
 }
 
-// ====== xóa thiết bị (an toàn) ======
+// ====== xóa thiết bị ======
 if (isset($_GET['delete'])) {
     $id_tb = (int)$_GET['delete'];
 
-    $sqlCheck = "
-        SELECT 1
-        FROM lich_hen_thiet_bi lhtb
-        JOIN lich_hen lh ON lh.ID_LICHHEN = lhtb.ID_LICHHEN
-        WHERE lhtb.ID_TB = ? AND lh.TRANGTHAI = 'Đã xác nhận'
-        LIMIT 1
-    ";
-    $stmt = $conn->prepare($sqlCheck);
-    if ($stmt) {
-        $stmt->bind_param('i', $id_tb);
-        $stmt->execute();
-        $stmt->store_result();
-
-        if ($stmt->num_rows > 0) {
-            $_SESSION['error'] = 'Không thể xóa: thiết bị đang ở lịch hẹn đã xác nhận.';
-        } else {
-            if ($hasPriceHistory) {
-                if ($delPrice = $conn->prepare('DELETE FROM don_gia_trang_thiet_bi WHERE ID_TB = ?')) {
-                    $delPrice->bind_param('i', $id_tb);
-                    $delPrice->execute();
-                    $delPrice->close();
-                }
-            }
-            if ($delEquip = $conn->prepare('DELETE FROM trang_thiet_bi WHERE ID_TB = ?')) {
-                $delEquip->bind_param('i', $id_tb);
-                $delEquip->execute();
-                $delEquip->close();
-            }
-            $_SESSION['success'] = 'Đã xóa thiết bị.';
+    // Xóa lịch sử giá trước (nếu có)
+    if ($hasPriceHistory) {
+        if ($delPrice = $conn->prepare('DELETE FROM don_gia_trang_thiet_bi WHERE ID_TB = ?')) {
+            $delPrice->bind_param('i', $id_tb);
+            $delPrice->execute();
+            $delPrice->close();
         }
-        $stmt->close();
+    }
+    
+    // Xóa thiết bị
+    if ($delEquip = $conn->prepare('DELETE FROM trang_thiet_bi WHERE ID_TB = ?')) {
+        $delEquip->bind_param('i', $id_tb);
+        if ($delEquip->execute()) {
+            $_SESSION['success'] = 'Đã xóa thiết bị.';
+        } else {
+            $_SESSION['error'] = 'Lỗi xóa thiết bị: ' . $delEquip->error;
+        }
+        $delEquip->close();
     } else {
-        $_SESSION['error'] = 'Không thể kiểm tra thiết bị: '.$conn->error;
+        $_SESSION['error'] = 'Không thể xóa thiết bị: ' . $conn->error;
     }
 }
 
@@ -379,7 +371,7 @@ if ($stmt) {
 <?php endif; ?>
 
 <div class="max-w-6xl mx-auto bg-white p-6 rounded-lg shadow-xl space-y-6">
-    <h1 class="text-3xl font-bold text-indigo-700 text-center">Quản Lý Thiết Bị (Nội bộ)</h1>
+    <h1 class="text-3xl font-bold text-indigo-700 text-center">Quản Lý Thiết Bị</h1>
 
     <div class="flex flex-wrap justify-between items-center gap-4 mb-6">
         <form method="GET" class="flex flex-wrap items-center gap-2">
@@ -555,8 +547,9 @@ if ($stmt) {
                             <td class="px-4 py-2"><?= ($row['DON_GIA']!==null) ? number_format((int)$row['DON_GIA'],0,',','.') . ' VND' : '—' ?></td>
                         <?php endif; ?>
                         <td class="px-4 py-2">
-                            <?php if (!empty($row['IMAGE'])): ?>
-                                <img src="../../<?= htmlspecialchars($row['IMAGE']) ?>" alt="Ảnh thiết bị" loading="lazy" class="h-12 w-12 object-cover rounded-full mx-auto">
+                            <?php $imageUrl = sb_equipment_image_url($row['IMAGE'] ?? null); ?>
+                            <?php if ($imageUrl): ?>
+                                <img src="../../<?= htmlspecialchars($imageUrl) ?>" alt="Ảnh thiết bị" loading="lazy" class="h-12 w-12 object-cover rounded-full mx-auto">
                             <?php else: ?>—<?php endif; ?>
                         </td>
                         <td class="px-4 py-2 space-x-2 text-center">

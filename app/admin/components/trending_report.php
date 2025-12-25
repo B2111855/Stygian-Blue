@@ -27,12 +27,12 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 <div class="space-y-6" id="adminReport">
   <div class="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
     <div>
-      <h1 class="text-3xl font-semibold text-indigo-900">📊 Báo cáo xu hướng</h1>
+      <h1 class="text-3xl font-semibold text-indigo-900">Báo cáo xu hướng</h1>
       <p class="text-sm text-gray-500">Theo dõi sức khỏe tài chính, dịch vụ và hiệu suất nhân viên theo thời gian thực.</p>
     </div>
     <div class="flex gap-2">
-      <button id="refreshReport" class="px-4 py-2 text-sm font-semibold text-indigo-700 bg-white border border-indigo-200 rounded-lg shadow-sm hover:bg-indigo-50">↻ Làm mới</button>
-      <button id="exportReport" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg shadow hover:bg-indigo-500">⬇️ Xuất báo cáo</button>
+      <button id="refreshReport" class="px-4 py-2 text-sm font-semibold text-indigo-700 bg-white border border-indigo-200 rounded-lg shadow-sm hover:bg-indigo-50">Làm mới</button>
+      <button id="exportReport" class="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg shadow hover:bg-indigo-500">Xuất báo cáo</button>
     </div>
   </div>
 
@@ -101,7 +101,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-indigo-900">📌 Biểu đồ tài chính</h2>
+          <h2 class="text-lg font-semibold text-indigo-900">Biểu đồ tài chính</h2>
           <span class="text-xs text-gray-400">Chi tiết dòng tiền</span>
         </div>
         <canvas id="financialChart" class="mt-4 h-64"></canvas>
@@ -110,7 +110,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
       <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-indigo-900">🧑‍💼 Phân công nhân viên</h2>
+          <h2 class="text-lg font-semibold text-indigo-900">Phân công nhân viên</h2>
           <span class="text-xs text-gray-400">Tần suất đảm nhiệm</span>
         </div>
         <canvas id="staffAssignChart" class="mt-4 h-64"></canvas>
@@ -121,7 +121,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
       <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-indigo-900">📈 Tỉ lệ dịch vụ</h2>
+          <h2 class="text-lg font-semibold text-indigo-900">Tỉ lệ dịch vụ</h2>
           <span class="text-xs text-gray-400">Phân bổ đặt lịch</span>
         </div>
         <canvas id="serviceShareChart" class="mt-4 h-64"></canvas>
@@ -130,7 +130,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
       <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
         <div class="flex items-center justify-between">
-          <h2 class="text-lg font-semibold text-indigo-900">🕒 Khung giờ đặt lịch</h2>
+          <h2 class="text-lg font-semibold text-indigo-900">Khung giờ đặt lịch</h2>
           <span class="text-xs text-gray-400">Độ nóng theo giờ</span>
         </div>
         <canvas id="timeSlotChart" class="mt-4 h-64"></canvas>
@@ -141,7 +141,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
     <div class="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
       <div class="flex items-center justify-between">
         <div>
-          <h2 class="text-lg font-semibold text-indigo-900">💡 Góc nhìn nhanh</h2>
+          <h2 class="text-lg font-semibold text-indigo-900">Góc nhìn nhanh</h2>
           <p class="text-sm text-gray-500">Máy học nhỏ gợi ý các điểm đáng chú ý trong kỳ được chọn.</p>
         </div>
       </div>
@@ -364,29 +364,35 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
   function updateFinancialSummary(data) {
     const totalRevenue = sum(data.revenue);
-    const totalExpense = sum(data.expense);
-    const salaryExpense = Array.isArray(data.salary_expense)
-      ? data.salary_expense.reduce((acc, value) => acc + Number(value || 0), 0)
-      : Number(data.salary_expense || 0);
-    const profit = totalRevenue - totalExpense;
+    const totalOperatingExpense = sum(data.expense);
+    
+    // FIXED: Separate salary calculation - use array data if available
+    const salarySeries = Array.isArray(data.salary_expense) ? data.salary_expense : [];
+    const totalSalaryExpense = salarySeries.reduce((acc, value) => acc + Number(value || 0), 0);
+    
+    // FIXED: Profit = Revenue - Operating Expense - Salary
+    const totalProfit = totalRevenue - totalOperatingExpense - totalSalaryExpense;
 
     els.summary.innerHTML = `
       <div class="grid gap-2 text-sm md:grid-cols-2">
-        <div>💰 <strong>Doanh thu:</strong> ${formatCurrency(totalRevenue)}</div>
-        <div>🧾 <strong>Chi phí:</strong> ${formatCurrency(totalExpense)}</div>
-        <div>💼 <strong>Lương nhân viên:</strong> ${formatCurrency(salaryExpense)}</div>
-        <div>📈 <strong>Lợi nhuận:</strong> ${formatCurrency(profit)}</div>
+        <div><strong>Doanh thu:</strong> ${formatCurrency(totalRevenue)}</div>
+        <div><strong>Chi phí hoạt động:</strong> ${formatCurrency(totalOperatingExpense)}</div>
+        <div><strong>Chi phí lương:</strong> ${formatCurrency(totalSalaryExpense)}</div>
+        <div><strong>Lợi nhuận ròng:</strong> ${formatCurrency(totalProfit)}</div>
       </div>
     `;
 
     els.metrics.revenue.textContent = formatCurrency(totalRevenue);
-    els.metrics.expense.textContent = formatCurrency(totalExpense);
-    els.metrics.profit.textContent = formatCurrency(profit);
-    els.metrics.salary.textContent = formatCurrency(salaryExpense);
+    els.metrics.expense.textContent = formatCurrency(totalOperatingExpense);
+    els.metrics.profit.textContent = formatCurrency(totalProfit);
+    els.metrics.salary.textContent = formatCurrency(totalSalaryExpense);
 
     const revenueSeries = Array.isArray(data.revenue) ? data.revenue : [];
     const expenseSeries = Array.isArray(data.expense) ? data.expense : [];
-    const profitSeries = revenueSeries.map((val, idx) => Number(val || 0) - Number(expenseSeries[idx] || 0));
+    // FIXED: Profit per period = Revenue - Operating - Salary
+    const profitSeries = revenueSeries.map((val, idx) => 
+      Number(val || 0) - Number(expenseSeries[idx] || 0) - Number(salarySeries[idx] || 0)
+    );
 
     setTrendBadge(els.metrics.revenueTrend, calculateGrowth(revenueSeries));
     setTrendBadge(els.metrics.expenseTrend, calculateGrowth(expenseSeries));
@@ -398,8 +404,11 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
 
     if (Array.isArray(finance.labels) && finance.labels.length) {
       const lastLabel = finance.labels[finance.labels.length - 1];
-      const growth = calculateGrowth(finance.revenue);
-      insights.push(`Doanh thu kỳ "${lastLabel}" ${growth >= 0 ? 'tăng' : 'giảm'} ${Math.abs(growth).toFixed(1)}% so với kỳ trước.`);
+      const growthObj = calculateGrowth(finance.revenue);
+      const growthValue = growthObj.value || 0;
+      const growthText = Number.isNaN(growthValue) || !Number.isFinite(growthValue) ? 'N/A' : Math.abs(growthValue).toFixed(1);
+      const direction = growthValue >= 0 ? 'tăng' : 'giảm';
+      insights.push(`Doanh thu kỳ "${lastLabel}" ${direction} ${growthText}% so với kỳ trước.`);
     } else {
       insights.push('Chưa có số liệu tài chính cho bộ lọc hiện tại.');
     }
@@ -462,7 +471,7 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
           </style>
         </head>
         <body>
-          <h1>STYGIAN BLUE • BÁO CÁO XU HƯỚNG</h1>
+          <h1>STYGIAN BLUE - BÁO CÁO XU HƯỚNG</h1>
           <table>
             <tbody>
               <tr><th>Doanh thu</th><td>${escapeHtml(totalRevenue)}</td></tr>
@@ -525,24 +534,85 @@ while ($row = mysqli_fetch_assoc($branchQuery)) {
     return arr.reduce((total, value) => total + Number(value || 0), 0);
   }
 
+  // FIXED: Handle edge cases like division by zero, flat data, insufficient data
   function calculateGrowth(arr) {
     if (!Array.isArray(arr) || arr.length < 2) {
-      return 0;
+      return { value: 0, status: 'insufficient' };
     }
+    
     const previous = Number(arr[arr.length - 2] || 0);
     const current = Number(arr[arr.length - 1] || 0);
-    if (previous === 0) {
-      return current > 0 ? 100 : 0;
+    
+    // Case 1: Both periods have no data
+    if (previous === 0 && current === 0) {
+      return { value: 0, status: 'flat' };
     }
-    return ((current - previous) / Math.abs(previous)) * 100;
+    
+    // Case 2: Previous was 0, current has data (growth from zero)
+    if (previous === 0) {
+      return { value: 100, status: 'growth_from_zero' };
+    }
+    
+    // Case 3: Normal case - calculate percentage change
+    const growth = ((current - previous) / Math.abs(previous)) * 100;
+    
+    // Validate result is a valid number
+    if (!isFinite(growth)) {
+      return { value: 0, status: 'error' };
+    }
+    
+    return { value: growth, status: 'normal' };
   }
 
-  function setTrendBadge(element, value) {
+  function setTrendBadge(element, growthObj) {
     if (!element) return;
-    const rounded = Number.isFinite(value) ? value.toFixed(1) : '0.0';
-    const prefix = value > 0 ? '+' : '';
-    element.textContent = `${prefix}${rounded}%`;
-    element.classList.toggle('text-green-600', value >= 0);
+    
+    // Handle both old format (number) and new format (object) for backward compatibility
+    let value, status;
+    if (typeof growthObj === 'number') {
+      value = growthObj;
+      status = 'normal';
+    } else {
+      value = growthObj.value || 0;
+      status = growthObj.status || 'normal';
+    }
+    
+    let text = '—';
+    let colorClass = 'text-gray-500';
+    
+    switch (status) {
+      case 'insufficient':
+        text = 'N/A';
+        colorClass = 'text-gray-400';
+        break;
+      case 'flat':
+        text = '0%';
+        colorClass = 'text-gray-500';
+        break;
+      case 'growth_from_zero':
+        text = 'Mới';
+        colorClass = 'text-green-600';
+        break;
+      case 'normal':
+        // Validate value is a valid number
+        if (Number.isNaN(value) || !Number.isFinite(value)) {
+          text = 'N/A';
+          colorClass = 'text-gray-400';
+        } else {
+          const rounded = value.toFixed(1);
+          const prefix = value >= 0 ? '+' : '';
+          text = `${prefix}${rounded}%`;
+          colorClass = value >= 0 ? 'text-green-600' : 'text-red-600';
+        }
+        break;
+      case 'error':
+        text = 'Lỗi';
+        colorClass = 'text-red-600';
+        break;
+    }
+    
+    element.className = `ml-1 font-semibold ${colorClass}`;
+    element.textContent = text;
     element.classList.toggle('text-red-600', value < 0);
   }
 

@@ -11,100 +11,68 @@ if (!isset($conn)) {
 require_once __DIR__ . '/../../helpers/assets.php';
 
 if (!function_exists('tp_escape')) {
-    function tp_escape($value): string
-    {
-        return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
-    }
+  function tp_escape($value): string {
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+  }
 }
 
-$mode = isset($_GET['type_id']) ? 'type' : 'item';
-$costumeId = $mode === 'item' ? ($_GET['id'] ?? '') : ($_GET['type_id'] ?? '');
-$defaultFromRaw = $_GET['from'] ?? '';
-$defaultToRaw   = $_GET['to']   ?? '';
-$defaultDaysParam = isset($_GET['days']) ? (int)$_GET['days'] : null;
-$defaultQty  = isset($_GET['qty']) ? (int)$_GET['qty'] : 1;
-if ($defaultQty < 1) {
-    $defaultQty = 1;
-}
-
-$costume   = null;
-$branches  = []; // for type mode
-$errorText = null;
-
-if (!ctype_digit((string)$costumeId)) {
-  $errorText = $mode === 'type' ? 'Loại trang phục không hợp lệ.' : 'Trang phục không tồn tại hoặc đã bị xóa.';
-} else {
-  if ($mode === 'item') {
-    $sql = "SELECT tp.ID_TRANG_PHUC AS ID_TP, tp.TEN AS TEN_TP, tp.SIZE, tp.MAU_SAC AS MAU, tp.ID_CN, tp.TRANG_THAI AS TINH_TRANG, cn.TEN_CN, cn.DIA_CHI_CN,
-        COALESCE(tp.GIA_THUE, 0) AS DON_GIA
-      FROM trang_phuc tp
-      JOIN chi_nhanh cn ON cn.ID_CN = tp.ID_CN
-      WHERE tp.ID_TRANG_PHUC = ?
-      LIMIT 1";
-    if ($stmt = $conn->prepare($sql)) {
-      $stmt->bind_param('i', $costumeId);
-      if ($stmt->execute()) {
-        $result = $stmt->get_result();
-        if ($result) { $costume = $result->fetch_assoc(); }
+// Chỉ hỗ trợ trang phục lẻ; không còn mode/type
+$mode = 'costume';
+$defaultFromRaw = $defaultFromRaw ?? ($_GET['from'] ?? '');
+$defaultToRaw = $defaultToRaw ?? ($_GET['to'] ?? '');
+$defaultDaysParam = $defaultDaysParam ?? (isset($_GET['days']) ? (int)$_GET['days'] : null);
+$costume = $costume ?? [];
+$costumeId = $costumeId ?? (isset($_GET['id']) ? (int)$_GET['id'] : ($costume['ID_TRANG_PHUC'] ?? 0));
+$branchId = isset($branchId) ? (int)$branchId : 0;
+$defaultQty = isset($defaultQty) ? max(1, (int)$defaultQty) : 1;
+$errorText = $errorText ?? null;
+$isLoggedIn = $isLoggedIn ?? (!empty($_SESSION['ID_TK']) || !empty($_SESSION['user']['ID_TK']));
+$userInfo = $userInfo ?? [];
+// Tham khảo trang đặt thuê gói: nạp thông tin KH từ phiên
+if ($isLoggedIn && (!$userInfo || empty($userInfo['HO_TEN']))) {
+  $idTk = $_SESSION['user']['ID_TK'] ?? $_SESSION['ID_TK'] ?? null;
+  if ($idTk) {
+    if ($st = $conn->prepare('SELECT HO_TEN, EMAIL, SDT FROM TAI_KHOAN WHERE ID_TK = ?')) {
+      $st->bind_param('s', $idTk);
+      if ($st->execute()) {
+        $st->bind_result($name, $email, $phone);
+        if ($st->fetch()) {
+          $userInfo = ['HO_TEN' => (string)$name, 'EMAIL' => (string)$email, 'SDT' => (string)$phone];
+        }
       }
-      $stmt->close();
-    }
-    if (!$costume) { $errorText = 'Không tìm thấy trang phục hoặc trang phục đã ngưng cho thuê.'; }
-  } else { // type mode
-    $sqlType = "SELECT tl.ID_LOAI AS ID_LOAI, tl.TEN_LOAI, tl.MAU_SAC_CHINH, tl.SIZE_CHUNG, tl.GIA_THUE_CO_SO,
-            tl.TRANG_THAI
-          FROM trang_phuc_loai tl
-          WHERE tl.ID_LOAI = ? AND tl.TRANG_THAI='active' LIMIT 1";
-    if ($stmt = $conn->prepare($sqlType)) {
-      $stmt->bind_param('i', $costumeId);
-      if ($stmt->execute()) {
-        $res = $stmt->get_result();
-        if ($res) { $row = $res->fetch_assoc(); if ($row) {
-          $costume = [
-            'ID_TP'   => null, // not used in type mode
-            'ID_LOAI' => $row['ID_LOAI'],
-            'TEN_TP'  => $row['TEN_LOAI'],
-            'SIZE'    => $row['SIZE_CHUNG'] ?? '—',
-            'MAU'     => $row['MAU_SAC_CHINH'] ?? '—',
-            'ID_CN'   => null,
-            'TINH_TRANG' => $row['TRANG_THAI'],
-            'TEN_CN'  => null,
-            'DIA_CHI_CN' => null,
-            'DON_GIA' => (int)$row['GIA_THUE_CO_SO']
-          ];
-        }}
-      }
-      $stmt->close();
-    }
-    if (!$costume) { $errorText = 'Loại trang phục không hoạt động hoặc không tồn tại.'; }
-    // Branch list for this type
-    if (!$errorText) {
-      $bSql = "SELECT DISTINCT tp.ID_CN, cn.TEN_CN
-           FROM trang_phuc tp JOIN chi_nhanh cn ON cn.ID_CN=tp.ID_CN
-           WHERE tp.ID_LOAI = ?";
-      if ($bStmt = $conn->prepare($bSql)) {
-        $bStmt->bind_param('i', $costumeId);
-        if ($bStmt->execute()) { $bRes = $bStmt->get_result(); while ($bRow = $bRes->fetch_assoc()) { $branches[] = $bRow; } }
-        $bStmt->close();
-      }
+      $st->close();
     }
   }
 }
 
-$isLoggedIn = !empty($_SESSION['ID_TK']);
-$userInfo   = null;
-if ($isLoggedIn) {
-    $accountId = $_SESSION['ID_TK'];
-    if ($accStmt = $conn->prepare('SELECT HO_TEN, EMAIL, SDT FROM tai_khoan WHERE ID_TK = ? LIMIT 1')) {
-        $accStmt->bind_param('s', $accountId);
-        if ($accStmt->execute()) {
-            $accResult = $accStmt->get_result();
-            if ($accResult) {
-                $userInfo = $accResult->fetch_assoc();
-            }
-        }
-        $accStmt->close();
+// Fallback: luôn tải trang phục theo id (lẻ)
+if ($costumeId > 0 && empty($costume) && isset($conn)) {
+  if ($stmt = $conn->prepare("SELECT tp.ID_TRANG_PHUC, tp.TEN, tp.SIZE, tp.MAU_SAC, COALESCE(tp.GIA_THUE,0) AS GIA_THUE, tp.ID_CN, cn.TEN_CN 
+                              FROM trang_phuc tp LEFT JOIN chi_nhanh cn ON cn.ID_CN=tp.ID_CN 
+                              WHERE tp.ID_TRANG_PHUC=? LIMIT 1")) {
+    $stmt->bind_param('i', $costumeId);
+    if ($stmt->execute()) {
+      $res = $stmt->get_result();
+      if ($res) { $costume = $res->fetch_assoc() ?: []; }
     }
+    $stmt->close();
+    if (empty($costume)) {
+      $errorText = 'Không tìm thấy trang phục hoặc đã bị ẩn.';
+    }
+  }
+}
+
+$branchId = $branchId ?: (isset($costume['ID_CN']) ? (int)$costume['ID_CN'] : (isset($_SESSION['selected_branch_id']) ? (int)$_SESSION['selected_branch_id'] : 0));
+$pricePerDay = isset($costume['GIA_THUE']) ? (int)$costume['GIA_THUE'] : 0;
+
+if (!$errorText && $costumeId <= 0) {
+  $errorText = 'Thiếu mã trang phục cần đặt thuê.';
+}
+if (!$errorText && $branchId <= 0) {
+  $errorText = 'Trang phục chưa gắn chi nhánh, không thể đặt thuê.';
+}
+if (!$errorText && $pricePerDay <= 0) {
+  $errorText = 'Trang phục chưa có đơn giá, vui lòng liên hệ hỗ trợ.';
 }
 
 try {
@@ -130,9 +98,9 @@ $defaultEnd = $defaultStart->modify("+{$defaultDays} days");
 $defaultFrom = $defaultStart->format('Y-m-d\\TH:i');
 $defaultTo   = $defaultEnd->format('Y-m-d\\TH:i');
 $defaultFromDisplay = str_replace('T',' ',$defaultFrom);
+$defaultToDisplay   = str_replace('T',' ',$defaultTo);
 
 $minDate = date('Y-m-d\TH:i');
-$pricePerDay = isset($costume['DON_GIA']) ? (int)$costume['DON_GIA'] : 0;
 $flashMessage = $_SESSION['message'] ?? null;
 $flashType    = $_SESSION['message_type'] ?? null;
 if ($flashMessage !== null) {
@@ -144,7 +112,7 @@ if ($flashMessage !== null) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title><?= $mode==='type' ? 'Đặt thuê theo loại' : 'Đặt thuê trang phục' ?><?= $costume ? ' – ' . tp_escape($costume['TEN_TP']) : '' ?></title>
+  <title>Đặt thuê trang phục<?= $costume ? ' – ' . tp_escape($costume['TEN'] ?? '') : '' ?></title>
   <?= sb_tailwind_link_tag(); ?>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -255,15 +223,15 @@ if ($flashMessage !== null) {
           <p class="text-xs font-bold uppercase tracking-[0.3em] text-sky-300">Stygian Blue Studio</p>
         </div>
         <h1 class="text-3xl sm:text-4xl font-bold bg-gradient-to-r from-white to-sky-200 bg-clip-text text-transparent mb-3">
-          <?= $mode==='type' ? 'Đặt thuê theo loại' : 'Đặt thuê trang phục' ?>
+          Đặt thuê trang phục
         </h1>
         <?php if ($costume): ?>
           <div class="flex flex-wrap items-center gap-2 text-sm text-sky-100/90">
-            <span class="font-semibold"><?= tp_escape($costume['TEN_TP']) ?></span>
+            <span class="font-semibold"><?= tp_escape($costume['TEN']) ?></span>
             <span class="text-sky-300">•</span>
             <span><?= tp_escape($costume['SIZE']) ?></span>
             <span class="text-sky-300">•</span>
-            <span><?= tp_escape($costume['MAU']) ?></span>
+            <span><?= tp_escape($costume['MAU_SAC']) ?></span>
             <span class="text-sky-300">•</span>
             <span class="inline-flex items-center gap-1">
               <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/></svg>
@@ -272,14 +240,14 @@ if ($flashMessage !== null) {
           </div>
         <?php endif; ?>
       </div>
-      <a href="<?= $mode==='type' ? 'trangphuc_loai_chitiet.php?id='.tp_escape($costumeId) : 'trangphuc_chitiet.php?id='.tp_escape($costumeId) ?>" 
+      <a href="<?= 'trangphuc_chitiet.php?id='.tp_escape($costumeId) ?>" 
          class="inline-flex items-center gap-2 rounded-xl border-2 border-sky-300/70 px-5 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/20 hover:border-sky-300">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
         Quay lại
       </a>
     </header>
 
-    <?php if ($flashMessage): ?>
+    <?php if ($flashMessage) { ?>
       <?php
         $flashSuccess  = $flashType === 'success';
         $flashContainer = $flashSuccess
@@ -303,9 +271,9 @@ if ($flashMessage !== null) {
           <p class="text-sm <?= $flashSubColor ?> mt-1"><?= tp_escape($flashMessage) ?></p>
         </div>
       </div>
-    <?php endif; ?>
+    <?php } ?>
 
-    <?php if ($errorText): ?>
+    <?php if ($errorText) { ?>
       <section class="fade-in glass-card rounded-3xl px-8 py-20 text-center max-w-2xl mx-auto">
         <div class="inline-flex items-center justify-center w-20 h-20 rounded-full bg-red-500/20 border-2 border-red-400/50 mb-6">
           <svg class="w-10 h-10 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -324,20 +292,17 @@ if ($flashMessage !== null) {
           Xem danh sách trang phục
         </a>
       </section>
-    <?php else: ?>
-      <section class="fade-in grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)] items-start">
+    <?php } else { ?>
+      <section class="fade-in grid gap-6 lg:grid-cols-3 items-start">
         <!-- Main Form -->
-        <form method="POST" action="<?= $mode==='type' ? '../Controller/process_costume_type_booking.php' : '../Controller/process_costume_booking.php' ?>" id="bookingForm" class="glass-card rounded-3xl p-6 sm:p-8 space-y-8">
-          <?php if ($mode==='type'): ?>
-            <input type="hidden" name="type_id" value="<?= tp_escape($costumeId) ?>">
-            <input type="hidden" name="price_per_day" value="<?= $pricePerDay ?>">
-            <input type="hidden" name="return_to" value="trangphuc_loai_chitiet.php?id=<?= tp_escape($costumeId) ?>">
-          <?php else: ?>
-            <input type="hidden" name="costume_id" value="<?= tp_escape($costumeId) ?>">
-            <input type="hidden" name="branch_id" value="<?= tp_escape($costume['ID_CN']) ?>">
-            <input type="hidden" name="price_per_day" value="<?= $pricePerDay ?>">
-            <input type="hidden" name="return_to" value="trangphuc_chitiet.php?id=<?= tp_escape($costumeId) ?>">
-          <?php endif; ?>
+        <form method="POST" action="../Controller/process_costume_booking.php" id="bookingForm" class="glass-card rounded-3xl p-6 sm:p-8 space-y-8 lg:col-span-2">
+          <input type="hidden" name="costume_id" value="<?= tp_escape($costumeId) ?>">
+          <input type="hidden" name="branch_id" value="<?= tp_escape($branchId) ?>">
+          <input type="hidden" name="price_per_day" value="<?= $pricePerDay ?>">
+          <input type="hidden" name="return_to" value="<?= 'trangphuc_chitiet.php?id='.tp_escape($costumeId) ?>">
+          <input type="hidden" name="rent_from" id="rentFrom" value="<?= tp_escape($defaultFrom) ?>">
+          <input type="hidden" name="rent_to" id="rentTo" value="<?= tp_escape($defaultTo) ?>">
+          <input type="hidden" id="rentDays" value="<?= (int)$defaultDays ?>">
 
           <!-- Rental Period Section -->
           <div class="space-y-5">
@@ -353,104 +318,62 @@ if ($flashMessage !== null) {
               </div>
             </div>
 
-            <div class="space-y-4">
-              <label class="group block">
+            <div class="grid gap-4 lg:grid-cols-3">
+              <label class="group lg:col-span-2 block">
                 <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" clip-rule="evenodd"/></svg>
-                  Ngày & giờ nhận
+                  Thời gian nhận
                 </span>
-                <input type="text" id="rentStart" placeholder="Chọn ngày giờ nhận" value="<?= tp_escape($defaultFromDisplay) ?>" 
-                       class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none" required />
+                <div class="flex flex-col sm:flex-row sm:items-center gap-3">
+                  <input type="text" id="rentStart" name="rent_start_display" autocomplete="off"
+                         value="<?= tp_escape($defaultFromDisplay) ?>"
+                         placeholder="Chọn thời gian nhận"
+                         class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
+                  <div class="text-sm text-sky-200/80 flex items-center gap-2">
+                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-white/10 border border-white/20">→</span>
+                    <div>
+                      <p class="text-xs text-sky-200/60">Trả dự kiến</p>
+                      <p class="font-semibold text-white" id="returnPreview"><?= tp_escape($defaultToDisplay) ?></p>
+                    </div>
+                  </div>
+                </div>
+                <p class="text-xs text-sky-200/70 mt-2">Giờ làm việc 08:00 - 21:00 (tự động cộng ngày thuê vào thời gian trả).</p>
               </label>
 
-              <div class="grid gap-4 sm:grid-cols-2">
+              <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
                 <label class="group">
-                  <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM13 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2h-2z"/></svg>
-                    Số ngày thuê
-                  </span>
+                  <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">Số ngày thuê</span>
                   <div class="flex items-center gap-2">
-                    <button type="button" onclick="adjustDays(-1)" class="qty-btn flex items-center justify-center w-10 h-10 rounded-xl border border-white/30 bg-white/10 text-white hover:bg-white/20" aria-label="Giảm ngày thuê">-</button>
-                    <input type="number" id="rentDaysInput" min="1" max="30" value="<?= tp_escape($defaultDays) ?>"
-                           class="input-field flex-1 text-center rounded-xl border border-white/30 px-4 py-3 text-lg font-semibold text-white focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
-                    <button type="button" onclick="adjustDays(1)" class="qty-btn flex items-center justify-center w-10 h-10 rounded-xl border border-white/30 bg-white/10 text-white hover:bg-white/20" aria-label="Tăng ngày thuê">+</button>
+                    <button type="button" class="qty-btn w-10 h-10 rounded-lg border border-white/30" onclick="adjustDays(-1)">-</button>
+                    <input type="number" id="rentDaysInput" min="1" max="30" value="<?= (int)$defaultDays ?>"
+                           class="input-field w-full text-center rounded-lg border border-white/30 px-3 py-2.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
+                    <button type="button" class="qty-btn w-10 h-10 rounded-lg border border-white/30" onclick="adjustDays(1)">+</button>
                   </div>
-                  <p class="text-xs text-sky-200/70 mt-1">Nhận giờ nào trả giờ đó vào ngày trả.</p>
+                  <p class="text-xs text-sky-200/60 mt-2">Tối đa 30 ngày.</p>
                 </label>
 
-                <div class="group">
-                  <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1H6z"/></svg>
-                    Thời gian trả dự kiến
-                  </span>
-                  <div class="rounded-xl border border-white/30 bg-white/5 px-4 py-3 text-sm text-sky-200">
-                    <p id="returnPreview" class="font-semibold"><?= tp_escape(str_replace('T',' ',$defaultTo)) ?></p>
-                    <p class="text-xs text-sky-200/60">Được tự động cập nhật theo số ngày thuê.</p>
-                  </div>
-                </div>
-              </div>
-
-              <input type="hidden" name="rent_from" id="rentFrom" value="<?= tp_escape($defaultFrom) ?>">
-              <input type="hidden" name="rent_to" id="rentTo" value="<?= tp_escape($defaultTo) ?>">
-              <input type="hidden" name="rent_days" id="rentDays" value="<?= tp_escape($defaultDays) ?>">
-              <p class="text-xs text-sky-200/70 leading-relaxed">Chọn ngày nhận, sau đó nhập số ngày thuê (tối đa 30) để hệ thống tự tính giờ trả.</p>
-            </div>
-
-            <!-- Quick Duration Presets -->
-            <div class="flex flex-wrap gap-2 pt-2">
-              <span class="text-xs text-sky-200/70 font-medium">Gợi ý nhanh:</span>
-              <button type="button" data-days="1" onclick="presetDuration(this)" class="preset-btn text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sky-100 border border-white/20 transition">1 ngày <span class="font-semibold text-sky-300 ml-1" data-price></span></button>
-              <button type="button" data-days="3" onclick="presetDuration(this)" class="preset-btn text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sky-100 border border-white/20 transition">3 ngày <span class="font-semibold text-sky-300 ml-1" data-price></span></button>
-              <button type="button" data-days="7" onclick="presetDuration(this)" class="preset-btn text-xs px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-sky-100 border border-white/20 transition">1 tuần <span class="font-semibold text-sky-300 ml-1" data-price></span></button>
-            </div>
-
-            <!-- Branch select (type mode only) -->
-            <?php if ($mode==='type'): ?>
-              <div class="grid gap-5 sm:grid-cols-2">
                 <label class="group">
-                  <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">Chi nhánh</span>
-                  <?php if (count($branches) <= 1): ?>
-                    <input type="hidden" name="branch_id" value="<?= count($branches)===1? tp_escape($branches[0]['ID_CN']) : '' ?>">
-                    <input type="text" readonly class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white" value="<?= count($branches)===1? tp_escape($branches[0]['TEN_CN']) : 'Không có dữ liệu' ?>">
-                  <?php else: ?>
-                    <select name="branch_id" required class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white bg-transparent">
-                      <option value="" disabled selected>Chọn chi nhánh</option>
-                      <?php foreach($branches as $b): ?>
-                        <option value="<?= tp_escape($b['ID_CN']) ?>"><?= tp_escape($b['TEN_CN']) ?></option>
-                      <?php endforeach; ?>
-                    </select>
-                  <?php endif; ?>
+                  <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">Số lượng</span>
+                  <div class="flex items-center gap-2">
+                    <button type="button" class="qty-btn w-10 h-10 rounded-lg border border-white/30" onclick="changeQty(-1)">-</button>
+                    <input type="number" name="quantity" id="quantity" min="1" max="10" value="<?= (int)$defaultQty ?>"
+                           class="input-field w-full text-center rounded-lg border border-white/30 px-3 py-2.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
+                    <button type="button" class="qty-btn w-10 h-10 rounded-lg border border-white/30" onclick="changeQty(1)">+</button>
+                  </div>
+                  <p class="text-xs text-sky-200/60 mt-2">Giữ lại 1 bộ để đảm bảo khả dụng.</p>
                 </label>
-            <?php endif; ?>
-
-            <!-- Quantity with +/- buttons -->
-            <div class="grid gap-5 sm:grid-cols-2">
-              <label class="group">
-                <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM11 5a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V5zM13 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2h-2z"/></svg>
-                  Số lượng
-                </span>
-                <div class="flex items-center gap-2">
-                  <button type="button" onclick="changeQty(-1)" class="qty-btn flex items-center justify-center w-11 h-11 rounded-xl bg-white/10 border border-white/30 text-white hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M20 12H4"/></svg>
-                  </button>
-                  <input type="number" name="quantity" id="quantity" min="1" max="10" value="<?= tp_escape($defaultQty) ?>" 
-                         class="input-field flex-1 text-center rounded-xl border border-white/30 px-4 py-3 text-lg font-semibold text-white focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
-                  <button type="button" onclick="changeQty(1)" class="qty-btn flex items-center justify-center w-11 h-11 rounded-xl bg-white/10 border border-white/30 text-white hover:bg-white/20 disabled:opacity-50 disabled:cursor-not-allowed transition">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 4v16m8-8H4"/></svg>
-                  </button>
-                </div>
-              </label>
-
-              <label class="group">
-                <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
-                  <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-                  Ghi chú phối đồ
-                </span>
-                <input type="text" name="style_note" maxlength="120" placeholder="Concept, phụ kiện..." 
-                       class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
-              </label>
+              </div>
             </div>
+
+            
+
+            <label class="group block">
+              <span class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-sky-200/90 mb-2">
+                <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                Ghi chú phối đồ
+              </span>
+              <input type="text" name="style_note" maxlength="120" placeholder="Concept, phụ kiện..." 
+                     class="input-field w-full rounded-xl border border-white/30 px-4 py-3.5 text-base text-white placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-400/50 focus:outline-none">
+            </label>
           </div>
 
           <!-- Contact Information Section -->
@@ -515,7 +438,7 @@ if ($flashMessage !== null) {
             </div>
           </div>
 
-          <?php if (!$isLoggedIn): ?>
+          <?php if (!$isLoggedIn) { ?>
             <div class="flex items-start gap-3 rounded-2xl border-2 border-amber-400/60 bg-gradient-to-r from-amber-500/20 to-orange-500/20 px-5 py-4">
               <svg class="w-6 h-6 text-amber-300 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
@@ -529,7 +452,7 @@ if ($flashMessage !== null) {
                 </p>
               </div>
             </div>
-          <?php endif; ?>
+          <?php } ?>
 
           <!-- Availability Status -->
           <div id="availabilityStatus" class="hidden rounded-2xl border px-5 py-4"></div>
@@ -555,7 +478,7 @@ if ($flashMessage !== null) {
         </form>
 
         <!-- Cost Summary Sidebar -->
-        <aside class="glass-card rounded-3xl p-6 sm:p-8 space-y-6 lg:sticky lg:top-8">
+        <aside class="glass-card rounded-3xl p-6 sm:p-8 space-y-6 lg:sticky lg:top-8 lg:col-span-1">
           <div class="flex items-center gap-3 pb-5 border-b border-white/20">
             <div class="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500/30 to-sky-500/30 border border-emerald-400/30">
               <svg class="w-6 h-6 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -577,14 +500,14 @@ if ($flashMessage !== null) {
                 </svg>
               </div>
               <div class="flex-1 min-w-0">
-                <h3 class="font-semibold text-white text-sm mb-1 truncate"><?= tp_escape($costume['TEN_TP']) ?></h3>
+                <h3 class="font-semibold text-white text-sm mb-1 truncate"><?= tp_escape($costume['TEN']) ?></h3>
                 <div class="flex flex-wrap items-center gap-1.5 text-xs text-sky-200/80">
                   <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-sky-500/20 border border-sky-400/30">
                     <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg>
                     <?= tp_escape($costume['SIZE']) ?>
                   </span>
                   <span>•</span>
-                  <span><?= tp_escape($costume['MAU']) ?></span>
+                  <span><?= tp_escape($costume['MAU_SAC']) ?></span>
                 </div>
               </div>
             </div>
@@ -686,15 +609,13 @@ if ($flashMessage !== null) {
           </div>
         </aside>
       </section>
-    <?php endif; ?>
+    <?php } ?>
   </div>
 
     <?php if (!$errorText && $pricePerDay > 0): ?>
   <script>
     (function(){
       const pricePerDay = <?= (int)$pricePerDay ?>;
-      const isTypeMode = <?= $mode==='type' ? 'true' : 'false' ?>;
-      const typeId = isTypeMode ? <?= $mode==='type' ? (int)$costumeId : 0 ?> : null;
       const fromInput = document.getElementById('rentFrom');
       const toInput = document.getElementById('rentTo');
       const startInput = document.getElementById('rentStart');
@@ -703,6 +624,7 @@ if ($flashMessage !== null) {
       const returnPreview = document.getElementById('returnPreview');
       const qtyInput = document.getElementById('quantity');
       const dayLabel = document.getElementById('dayCount');
+      const daysDisplay = document.getElementById('daysDisplay');
       const qtyLabel = document.getElementById('qtyLabel');
       const totalLabel = document.getElementById('estimateTotal');
       const depositLabel = document.getElementById('depositLabel');
@@ -807,6 +729,12 @@ if ($flashMessage !== null) {
           errors.push('Vui lòng chọn thời gian nhận');
         } else if (from < now) {
           errors.push('Thời gian nhận phải sau thời điểm hiện tại');
+        } else {
+          // Kiểm tra giờ làm việc (8h-21h)
+          const hour = from.getHours();
+          if (hour < 8 || hour >= 21) {
+            errors.push('Giờ nhận phải trong khoảng 8:00 - 21:00');
+          }
         }
         if (!isNaN(from.getTime()) && !isNaN(to.getTime()) && to <= from) {
           errors.push('Thời gian trả phải sau thời gian nhận');
@@ -886,6 +814,9 @@ if ($flashMessage !== null) {
             dayLabel.innerHTML = '<span class="skeleton inline-block w-16 h-5 rounded"></span>';
           }
         }
+        if (daysDisplay) {
+          daysDisplay.textContent = (days > 0 ? days : clampDays(daysVisibleInput?.value || '1')) + ' ngày';
+        }
 
         if (!totalLabel || !depositLabel) return;
 
@@ -938,6 +869,41 @@ if ($flashMessage !== null) {
       if (form) {
         form.addEventListener('submit', function(e){
           e.preventDefault();
+          
+          // Check availability status first
+          if (lastAvailabilityCheck === false) {
+            availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-red-400/60 bg-red-500/20 px-5 py-4';
+            availabilityStatus.innerHTML = `
+              <svg class="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+              </svg>
+              <div>
+                <p class="text-sm font-semibold text-red-100">Không thể đặt thuê</p>
+                <p class="text-sm text-red-200/90 mt-1">Trang phục không khả dụng trong khoảng thời gian này.</p>
+              </div>
+            `;
+            availabilityStatus.classList.remove('hidden');
+            availabilityStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            return;
+          }
+          
+          if (lastAvailabilityCheck === null) {
+            availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-amber-400/60 bg-amber-500/20 px-5 py-4';
+            availabilityStatus.innerHTML = `
+              <svg class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16z" clip-rule="evenodd"/>
+              </svg>
+              <div>
+                <p class="text-sm font-semibold text-amber-100">Chưa kiểm tra khả dụng</p>
+                <p class="text-sm text-amber-200/90 mt-1">Vui lòng đợi hệ thống kiểm tra khả dụng.</p>
+              </div>
+            `;
+            availabilityStatus.classList.remove('hidden');
+            availabilityStatus.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            checkAvailability();
+            return;
+          }
+          
           const isValid = validateDates() && validatePhone() && validateEmail();
           if (!isValid) {
             availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-red-400/60 bg-red-500/20 px-5 py-4';
@@ -965,6 +931,10 @@ if ($flashMessage !== null) {
         clampDays(this.value);
         syncRentalPeriod();
       });
+      daysVisibleInput?.addEventListener('change', function(){
+        clampDays(this.value);
+        syncRentalPeriod();
+      });
       startInput?.addEventListener('blur', function(){
         const iso = parseDisplayDate(this.value);
         if (!iso || iso === fromInput.value) return;
@@ -973,7 +943,10 @@ if ($flashMessage !== null) {
         syncRentalPeriod();
         validateDates();
       });
-      qtyInput?.addEventListener('input', updateSummary);
+      qtyInput?.addEventListener('input', function(){
+        updateSummary();
+        availabilityDebounced();
+      });
 
       document.getElementById('contactPhone')?.addEventListener('blur', validatePhone);
       document.getElementById('contactEmail')?.addEventListener('blur', validateEmail);
@@ -989,41 +962,75 @@ if ($flashMessage !== null) {
         availTimer = setTimeout(checkAvailability, 450);
       }
       let availTimer;
+      let lastAvailabilityCheck = null;
       async function checkAvailability(){
         if (!fromInput.value || !toInput.value) return;
         availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-sky-400/60 bg-sky-500/20 px-5 py-4';
-        availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-sky-300 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 100 16A8 8 0 0010 2zm1 11H9V9h2v4z"/></svg><p class="text-sm text-sky-200">Đang kiểm tra khả dụng...</p>';
+        availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-sky-300 animate-pulse" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a8 8 0 100 16 8 8 0 000-16zM11 13H9V9h2v4zm0-6H9v2h2V7z"/></svg><p class="text-sm text-sky-200">Đang kiểm tra khả dụng...</p>';
         availabilityStatus.classList.remove('hidden');
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.title = 'Đang kiểm tra khả dụng...';
+        }
         try {
-          let url;
-          if (isTypeMode) {
-            const branchField = document.querySelector('[name=branch_id]');
-            const branchVal = branchField ? branchField.value : '';
-            if (!branchVal) {
-              availabilityStatus.className='flex items-start gap-3 rounded-2xl border-2 border-amber-400/60 bg-amber-500/20 px-5 py-4';
-              availabilityStatus.innerHTML='<p class="text-sm text-amber-200">Chọn chi nhánh để kiểm tra.</p>';
-              return;
-            }
-            const qtyVal = parseInt(qtyInput.value||'1',10);
-            url = '../Controller/check_costume_type_availability.php?type_id='+encodeURIComponent(typeId)+'&branch_id='+encodeURIComponent(branchVal)+'&from='+encodeURIComponent(fromInput.value)+'&to='+encodeURIComponent(toInput.value)+'&requested_qty='+qtyVal;
-          } else {
-            url = '../Controller/check_costume_availability.php?id=<?= tp_escape($costumeId) ?>&from=' + encodeURIComponent(fromInput.value) + '&to=' + encodeURIComponent(toInput.value);
-          }
+          const url = '../Controller/check_costume_availability.php?id=<?= tp_escape($costumeId) ?>&from=' + encodeURIComponent(fromInput.value) + '&to=' + encodeURIComponent(toInput.value);
           const res = await fetch(url);
-          const data = await res.json();
-          const ok = isTypeMode ? (data.can_fulfill === true) : (data.available === true);
+          let data = null;
+          let rawText = '';
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            try { rawText = await res.clone().text(); } catch(_) {}
+          }
+          if (!res.ok || data === null) {
+            console.warn('[Availability] Non-OK or non-JSON response', { status: res.status, statusText: res.statusText, rawText: rawText && rawText.substring(0, 300) });
+            const detail = (res.status ? ('Mã trạng thái: ' + res.status + (res.statusText ? ' ' + res.statusText : '')) : '') + (rawText ? ('\n' + rawText.substring(0, 160)) : '');
+            const sanitized = detail.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+            availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-amber-400/60 bg-amber-500/20 px-5 py-4';
+            availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-amber-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-amber-100">Không kiểm tra được</p><p class="text-xs text-amber-200 mt-1">Thử lại sau.</p>' + (detail ? ('<pre class="mt-2 whitespace-pre-wrap text-[11px] text-amber-200/80">'+ sanitized +'</pre>') : '') + '<div class="mt-2"><button type="button" class="underline text-amber-100 font-semibold" onclick="window.checkAvailability && window.checkAvailability()">Thử lại</button></div></div>';
+            lastAvailabilityCheck = false;
+            if (submitBtn) {
+              submitBtn.disabled = true;
+              submitBtn.title = 'Không thể kiểm tra khả dụng. Vui lòng thử lại.';
+            }
+            return;
+          }
+          const ok = data.available === true;
           if (ok) {
+            console.info('[Availability] Available');
             availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-emerald-400/60 bg-emerald-500/20 px-5 py-4';
-            availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-emerald-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 100-16 8 8 0 000 16zm3.707-9.707a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-emerald-100">Khoảng thời gian khả dụng</p><p class="text-xs text-emerald-200 mt-1">'+(isTypeMode?('Còn '+data.available+' / '+data.total_instances+' bộ khả dụng.'):'Chưa có lịch trùng.')+'</p></div>';
+            availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-emerald-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M13.707 8.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-2-2a1 1 0 111.414-1.414L9 11.586l3.293-3.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-emerald-100">Khoảng thời gian khả dụng</p><p class="text-xs text-emerald-200 mt-1">Chưa có lịch trùng.</p></div>';
+            lastAvailabilityCheck = true;
+            if (submitBtn && <?= $isLoggedIn ? 'true' : 'false' ?>) {
+              submitBtn.disabled = false;
+              submitBtn.title = 'Gửi yêu cầu đặt thuê';
+            }
           } else {
+            const hint = data.next_available || data.earliest_start || '';
+            console.info('[Availability] Unavailable', { hint, conflicts: data.conflicts || null, next_available: data.next_available || null });
+            const extra = hint ? ('<p class="text-xs text-red-200 mt-1">Có thể đặt trước từ: <strong>'+ hint +'</strong></p>') : '<p class="text-xs text-red-200 mt-1">Vui lòng chọn thời gian khác.</p>';
             availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-red-400/60 bg-red-500/20 px-5 py-4';
-            availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-red-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-red-100">Không khả dụng</p><p class="text-xs text-red-200 mt-1">'+(isTypeMode?('Chỉ còn '+data.available+' bộ khả dụng.'):'Vui lòng chọn thời gian khác.')+'</p></div>';
+            availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-red-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-red-100">Không khả dụng</p>'+extra+'</div>';
+            lastAvailabilityCheck = false;
+            if (submitBtn) {
+              submitBtn.disabled = true;
+              submitBtn.title = 'Trang phục không khả dụng trong khoảng thời gian này';
+            }
           }
         } catch(e) {
+          console.error('[Availability] Error', e);
           availabilityStatus.className = 'flex items-start gap-3 rounded-2xl border-2 border-amber-400/60 bg-amber-500/20 px-5 py-4';
-          availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-amber-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 100-16 8 8 0 000 16zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg><div><p class="text-sm font-semibold text-amber-100">Không kiểm tra được</p><p class="text-xs text-amber-200 mt-1">Thử lại sau.</p></div>';
+          const msg = (e && e.message) ? String(e.message).substring(0,160) : '';
+          const sanitized = msg.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+          availabilityStatus.innerHTML = '<svg class="w-5 h-5 text-amber-300" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16z" clip-rule="evenodd"/><path fill-rule="evenodd" d="M9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/><path d="M9 7a1 1 0 102 0 1 1 0 00-2 0z"/></svg><div><p class="text-sm font-semibold text-amber-100">Không kiểm tra được</p><p class="text-xs text-amber-200 mt-1">Thử lại sau.</p>'+ (msg ? ('<pre class="mt-2 whitespace-pre-wrap text-[11px] text-amber-200/80">'+ sanitized +'</pre>') : '') + '<div class="mt-2"><button type="button" class="underline text-amber-100 font-semibold" onclick="window.checkAvailability && window.checkAvailability()">Thử lại</button></div></div>';
+          lastAvailabilityCheck = false;
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.title = 'Lỗi khi kiểm tra khả dụng. Vui lòng thử lại.';
+          }
         }
       }
+      window.checkAvailability = checkAvailability;
 
       function initStartPicker(){
         if (!startInput || typeof flatpickr === 'undefined') return;
@@ -1033,12 +1040,25 @@ if ($flashMessage !== null) {
           time_24hr: true,
           dateFormat: 'Y-m-d H:i',
           minDate: 'today',
+          minTime: '08:00',
+          maxTime: '21:00',
           defaultDate: defaultDisplay,
           onChange: function(selected){
             if (!selected[0]) return;
             setStartFromDate(selected[0]);
             syncRentalPeriod();
             validateDates();
+          },
+          onReady: function(selectedDates, dateStr, instance) {
+            // Add hint text
+            const cal = instance.calendarContainer;
+            if (cal && !cal.querySelector('.working-hours-hint')) {
+              const hint = document.createElement('div');
+              hint.className = 'working-hours-hint';
+              hint.style.cssText = 'padding: 8px 12px; text-align: center; background: rgba(59, 130, 246, 0.1); color: #38bdf8; font-size: 11px; border-top: 1px solid rgba(148, 163, 184, 0.2);';
+              hint.textContent = 'Giờ làm việc: 8:00 - 21:00';
+              cal.appendChild(hint);
+            }
           }
         });
       }
@@ -1057,6 +1077,19 @@ if ($flashMessage !== null) {
       clampDays(daysVisibleInput?.value ?? hiddenDaysInput?.value ?? '1');
       syncRentalPeriod({ skipAvailability: true });
       updateSummary();
+      
+      // Initial availability check & disable submit until verified
+      <?php if ($isLoggedIn): ?>
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.title = 'Đang kiểm tra khả dụng...';
+      }
+      setTimeout(() => {
+        if (fromInput?.value && toInput?.value) {
+          checkAvailability();
+        }
+      }, 500);
+      <?php endif; ?>
 
       document.querySelectorAll('.input-field').forEach(input => {
         input.addEventListener('focus', function() {

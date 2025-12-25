@@ -581,7 +581,7 @@ $branches = getBranches($conn, $search, $limit, $offset);
                 <div class="p-6 space-y-3 text-sm text-gray-700">
                     <p>Hành động này không thể hoàn tác.</p>
                     <p>Chi nhánh: <span id="delete_branch_name" class="font-semibold"></span></p>
-                    <p class="text-red-600 whitespace-nowrap">Lưu ý: Không thể xóa nếu còn nhân viên, thiết bị hoặc lịch hẹn đã xác nhận.</p>
+                    <p class="text-red-600 whitespace-nowrap">Lưu ý: Không thể xóa nếu còn nhân viên, thiết bị hoặc lịch hẹn chưa hoàn thành. </p>
                 </div>
                 <div class="px-6 py-4 border-t flex justify-end gap-2">
                     <button type="button" id="delete_confirm_cancel" class="inline-flex items-center bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 rounded h-11">Hủy</button>

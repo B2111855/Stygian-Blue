@@ -13,7 +13,7 @@ if (!function_exists('sbManagerNavClasses')) {
 
 // Lấy thông báo cho manager
 require_once __DIR__ . '/get_notification_counts.php';
-$managerNotifications = ['appointments_pending' => 0, 'appointments_need_assignment' => 0, 'schedule_change_requests' => 0];
+$managerNotifications = ['appointments_pending' => 0, 'appointments_need_assignment' => 0, 'schedule_change_requests' => 0, 'rentals_pending' => 0];
 
 if (isset($_SESSION['ID_TK']) && isset($conn)) {
     $currentAccount = $_SESSION['ID_TK'];
@@ -32,67 +32,74 @@ if (isset($_SESSION['ID_TK']) && isset($conn)) {
 }
 
 $managerSidebarSections = [
-    'Điều hành chi nhánh' => [
+  'Điều hành' => [
         [
-            'label'   => 'Tổng quan chi nhánh',
+            'label'   => 'Tổng quan',
             'icon'    => 'fas fa-tachometer-alt',
             'href'    => '?page=overview',
             'targets' => ['overview'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Thống kê & báo cáo',
+            'label'   => 'Thống kê',
             'icon'    => 'fas fa-chart-pie',
             'href'    => '?page=reports',
             'targets' => ['reports'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Phân công ca/kíp',
+            'label'   => 'Phân công',
             'icon'    => 'fas fa-user-cog',
             'href'    => '?page=assignments',
             'targets' => ['assignments'],
             'badge'   => 'schedule_change_requests', // Key trong $managerNotifications
         ],
         [
-            'label'   => 'Lịch hẹn chi nhánh',
+            'label'   => 'Lịch hẹn',
             'icon'    => 'fas fa-calendar-check',
             'href'    => '?page=appointments',
             'targets' => ['appointments', 'appointment_detail'],
             'badge'   => 'appointments_pending', // Chỉ hiển thị số lịch hẹn cần xác nhận (đang chờ)
         ],
-    ],
-    'Vận hành & nguồn lực' => [
         [
-            'label'   => 'Quản lý hóa đơn',
+            'label'   => 'Nhân viên',
+            'icon'    => 'fas fa-users',
+            'href'    => '?page=employees',
+            'targets' => ['employees'],
+            'badge'   => null,
+        ],
+    ],
+    'Nguồn lực' => [
+        [
+            'label'   => 'Hóa đơn',
             'icon'    => 'fas fa-file-invoice-dollar',
             'href'    => '?page=invoices',
             'targets' => ['invoices', 'hoa_don_chi_tiet'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Lương/duyệt lương',
+            'label'   => 'Lương',
             'icon'    => 'fas fa-hand-holding-usd',
             'href'    => '?page=salaries',
             'targets' => ['salaries'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Thiết bị/tồn kho',
+            'label'   => 'Thiết bị',
             'icon'    => 'fas fa-cogs',
             'href'    => '?page=equipment',
             'targets' => ['equipment'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Trang phục chi nhánh',
+            'label'   => 'Trang phục',
             'icon'    => 'fas fa-tshirt',
             'href'    => '?page=costumes',
             'targets' => ['costumes'],
             'badge'   => null,
         ],
       [
-        'label'   => 'Gói dịch vụ',
+        'label'   => 'Dịch vụ',
         'icon'    => 'fas fa-box-open',
         'href'    => '?page=packages',
         'targets' => ['packages'],
@@ -106,39 +113,39 @@ $managerSidebarSections = [
         'badge'   => null,
       ],
         [
-          'label'   => 'Đơn thuê trang phục',
+          'label'   => 'Đơn thuê',
           'icon'    => 'fas fa-file-signature',
           'href'    => '?page=costume_rentals',
           'targets' => ['costume_rentals'],
-          'badge'   => null,
+          'badge'   => 'rentals_pending',
         ],
         [
-            'label'   => 'Chi phí phát sinh',
+            'label'   => 'Chi phí',
             'icon'    => 'fas fa-money-bill-wave',
             'href'    => '?page=expenses',
             'targets' => ['expenses'],
             'badge'   => null,
         ],
     ],
-    'Khách hàng & chất lượng' => [
+    'Khách hàng' => [
         [
-            'label'   => 'Khách hàng chi nhánh',
+            'label'   => 'Khách hàng',
             'icon'    => 'fas fa-user-friends',
             'href'    => '?page=customers',
             'targets' => ['customers'],
             'badge'   => null,
         ],
         [
-            'label'   => 'Phản hồi khách',
+            'label'   => 'Phản hồi',
             'icon'    => 'fas fa-comments',
             'href'    => '?page=feedback',
             'targets' => ['feedback'],
             'badge'   => null,
         ],
     ],
-    'Tài khoản cá nhân' => [
+    'Cá nhân' => [
         [
-            'label'   => 'Thông tin cá nhân',
+            'label'   => 'Thông tin',
             'icon'    => 'fas fa-user-circle',
             'href'    => '?page=selfInfo',
             'targets' => ['selfInfo'],
@@ -278,6 +285,12 @@ $managerSidebarSections = [
 .group\/link:hover {
   transform: translateX(4px);
 }
+
+body.sidebar-initializing .section-toggle,
+body.sidebar-initializing .section-content,
+body.sidebar-initializing .section-icon {
+  transition: none !important;
+}
 </style>
 
 <script>
@@ -306,16 +319,44 @@ function toggleSection(sectionId) {
 
 // Restore collapsed state on page load
 document.addEventListener('DOMContentLoaded', function() {
+  document.body.classList.add('sidebar-initializing');
   const collapsedSections = JSON.parse(localStorage.getItem('manager-collapsed-sections') || '[]');
-  
-  collapsedSections.forEach(sectionId => {
-    const section = document.querySelector(`[data-section-id="${sectionId}"]`);
-    if (section) {
+  const sidebar = document.querySelector('nav[data-persist-scroll="manager-sidebar"]');
+
+  if (sidebar) {
+    sidebar.querySelectorAll('[data-section-id]').forEach(section => {
+      const sectionId = section.getAttribute('data-section-id');
       const content = section.querySelector('.section-content');
       const icon = section.querySelector('.section-icon');
-      content.classList.add('collapsed');
-      icon.classList.add('collapsed');
+
+      if (!sectionId || !content || !icon) {
+        return;
+      }
+
+      const shouldCollapse = collapsedSections.includes(sectionId);
+      content.classList.toggle('collapsed', shouldCollapse);
+      icon.classList.toggle('collapsed', shouldCollapse);
+    });
+  }
+
+  document.querySelectorAll('[data-persist-scroll]').forEach(container => {
+    const key = 'scroll-pos-' + container.getAttribute('data-persist-scroll');
+    const savedPosition = localStorage.getItem(key);
+
+    if (savedPosition !== null) {
+      const numericPosition = parseInt(savedPosition, 10);
+      if (!Number.isNaN(numericPosition)) {
+        container.scrollTop = numericPosition;
+      }
     }
+
+    container.addEventListener('scroll', () => {
+      localStorage.setItem(key, String(container.scrollTop));
+    });
+  });
+
+  requestAnimationFrame(() => {
+    document.body.classList.remove('sidebar-initializing');
   });
 });
 </script>

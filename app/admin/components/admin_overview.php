@@ -63,7 +63,7 @@ function growthBadgeClass(?float $value): string
     return $value >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700';
 }
 
-$adminName = $_SESSION['HO_TEN'] ?? ($_SESSION['ID_TK'] ?? 'Quản trị viên');
+$adminName = $_SESSION['HO_TEN'] ?? 'Quản trị viên';
 $now = new DateTime('now');
 
 $currentMonthRevenue = fetchScalar("SELECT COALESCE(SUM(TONG_TIEN), 0) FROM hoa_don WHERE TRANGTHAI_THANHTOAN = 'Đã thanh toán' AND YEAR(NGAY_GIO) = YEAR(CURDATE()) AND MONTH(NGAY_GIO) = MONTH(CURDATE())");
@@ -120,7 +120,7 @@ foreach ($timelineBookingRows as $row) {
 }
 $chartPayload = array_values($timeline);
 
-$serviceShare = fetchRows("SELECT dv.TEN_DV AS name, COUNT(*) AS total FROM lich_hen lh JOIN dich_vu dv ON dv.ID_DV = lh.ID_DV WHERE lh.THOI_GIAN_BAT_DAU >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) GROUP BY dv.ID_DV ORDER BY total DESC LIMIT 6");
+$serviceShare = fetchRows("SELECT dv.TEN_DV AS name, COUNT(*) AS total FROM BOOKING_ITEM bi JOIN dich_vu dv ON dv.ID_DV = bi.REF_ID JOIN lich_hen lh ON lh.ID_LICHHEN = bi.ID_LICHHEN WHERE bi.ITEM_TYPE = 'service' AND lh.THOI_GIAN_BAT_DAU >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) GROUP BY dv.ID_DV ORDER BY total DESC LIMIT 6");
 $branchPerformance = fetchRows("SELECT cn.TEN_CN AS name, COUNT(DISTINCT lh.ID_LICHHEN) AS bookings, SUM(CASE WHEN hd.TRANGTHAI_THANHTOAN = 'Đã thanh toán' THEN hd.TONG_TIEN ELSE 0 END) AS revenue, SUM(CASE WHEN lh.TRANGTHAI = 'Đã hoàn thành' THEN 1 ELSE 0 END) AS completed FROM chi_nhanh cn LEFT JOIN lich_hen lh ON lh.ID_CHINHANH = cn.ID_CN LEFT JOIN hoa_don hd ON hd.ID_LICHHEN = lh.ID_LICHHEN GROUP BY cn.ID_CN ORDER BY revenue DESC LIMIT 5");
 $recentInvoices = fetchRows("SELECT hd.ID_HD, hd.TONG_TIEN, hd.TRANGTHAI_THANHTOAN, hd.NGAY_GIO, tk.HO_TEN FROM hoa_don hd JOIN lich_hen lh ON lh.ID_LICHHEN = hd.ID_LICHHEN JOIN tai_khoan tk ON tk.ID_TK = lh.ID_TK ORDER BY hd.NGAY_GIO DESC LIMIT 5");
 $upcomingAppointments = fetchRows("SELECT lh.ID_LICHHEN, lh.THOI_GIAN_BAT_DAU, lh.TRANGTHAI, tk.HO_TEN, dv.TEN_DV, cn.TEN_CN FROM lich_hen lh JOIN tai_khoan tk ON tk.ID_TK = lh.ID_TK JOIN dich_vu dv ON dv.ID_DV = lh.ID_DV LEFT JOIN chi_nhanh cn ON cn.ID_CN = lh.ID_CHINHANH WHERE lh.THOI_GIAN_BAT_DAU >= DATE_SUB(NOW(), INTERVAL 1 DAY) ORDER BY lh.THOI_GIAN_BAT_DAU ASC LIMIT 6");
